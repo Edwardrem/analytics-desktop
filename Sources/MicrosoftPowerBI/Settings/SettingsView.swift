@@ -118,7 +118,7 @@ private struct GeneralSettings: View {
             }
             Section("Updates") {
                 Toggled("Tell me when an update is available", .updateNotifications)
-                Toggled("Share anonymous usage data", .usageData, help: "Off by default. Power BI never sends your data or documents.")
+                Toggled("Share anonymous usage data", .usageData, help: "Off by default. \(AppIdentity.name) never sends your data or documents.")
             }
         }.formStyle(.grouped)
     }
@@ -238,7 +238,7 @@ private struct DiagnosticsSettings: View {
         let info = Bundle.main.infoDictionary
         Form {
             Section("Version") {
-                LabeledContent("Power BI", value: "\(info?["CFBundleShortVersionString"] as? String ?? "1.0") (\(info?["CFBundleVersion"] as? String ?? "dev"))")
+                LabeledContent(AppIdentity.name, value: "\(info?["CFBundleShortVersionString"] as? String ?? "1.0") (\(info?["CFBundleVersion"] as? String ?? "dev"))")
                 LabeledContent("macOS", value: ProcessInfo.processInfo.operatingSystemVersionString)
                 LabeledContent("Architecture", value: architecture)
                 LabeledContent("Memory", value: ByteCountFormatter.string(fromByteCount: Int64(ProcessInfo.processInfo.physicalMemory), countStyle: .memory))
@@ -246,7 +246,7 @@ private struct DiagnosticsSettings: View {
             Section("Tracing") {
                 Toggled("Enable tracing", .tracing, help: "Writes engine timings to the traces folder.")
                 Button("Open Traces Folder") {
-                    let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Power BI/Traces")
+                    let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("\(AppIdentity.name)/Traces")
                     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
                     NSWorkspace.shared.open(url)
                 }

@@ -4,7 +4,7 @@ import FacetCore
 /// One user-invocable action. Every command appears in the menu bar and in the command
 /// palette (⌘K); toolbars and buttons run the same commands by id, so behaviour never forks.
 struct AppCommand: Identifiable {
-    enum Menu: String, CaseIterable { case file = "File", edit = "Edit", insert = "Insert", data = "Data", modeling = "Modeling", format = "Format", view = "View", optimize = "Optimize", account = "Account", help = "Help" }
+    enum Menu: String, CaseIterable { case file = "File", edit = "Edit", insert = "Insert", data = "Data", modeling = "Modeling", format = "Format", view = "View", optimize = "Optimize", account = "Account", tools = "External Tools", help = "Help" }
     var id: String
     var title: String
     var menu: Menu
@@ -12,6 +12,8 @@ struct AppCommand: Identifiable {
     var shortcut: KeyboardShortcut?
     /// Starts a new menu section before this item.
     var separatorBefore = false
+    /// Extra tooltip text, shown after the title (for example an external tool's description).
+    var help = ""
     var isEnabled: @MainActor (DocumentStore) -> Bool = { _ in true }
     var isOn: (@MainActor (DocumentStore) -> Bool)?
     var run: @MainActor (DocumentStore) -> Void
@@ -20,23 +22,37 @@ struct AppCommand: Identifiable {
 @MainActor
 enum AppCommands {
     /// Command providers. Feature areas append their own in `registerAll()`.
-    static var providers: [() -> [AppCommand]] = [CoreCommands.commands]
+    static var providers: [() -> [AppCommand]] = [CoreCommands.commands, ExternalTools.commands]
     private static var cache: [AppCommand]?
+    private static var index: [String: AppCommand] = [:]
+    /// Bumped whenever the set of commands may have changed, so views can cache what they derive from it.
+    private(set) static var generation = 0
 
     static var all: [AppCommand] {
         if let cache { return cache }
         let list = providers.flatMap { $0() }
         cache = list
+        // The first registration of an id wins, as it always has.
+        index = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return list
     }
-    static func register(_ provider: @escaping () -> [AppCommand]) { providers.append(provider); cache = nil }
-    static func command(_ id: String) -> AppCommand? { all.first { $0.id == id } }
+    static func register(_ provider: @escaping () -> [AppCommand]) { providers.append(provider); invalidate() }
+    /// Rebuild the command list on next use (a provider's commands changed, e.g. external tools were reloaded).
+    static func invalidate() { cache = nil; generation += 1 }
+    static func command(_ id: String) -> AppCommand? { _ = all; return index[id] }
     static func run(_ id: String, _ store: DocumentStore) {
         guard let c = command(id) else {
             store.status = StatusMessage(kind: .warning, text: "“\(id)” isn't available yet.")
             return
         }
-        if c.isEnabled(store) { c.run(store) }
+        perform(c, store)
+    }
+    /// The one way a command runs — from the ribbon, the menu bar, a shortcut or the palette — so
+    /// window chrome that reacts to "a command ran" (a peeking ribbon) always hears about it.
+    static func perform(_ c: AppCommand, _ store: DocumentStore) {
+        guard c.isEnabled(store) else { return }
+        ShellState.of(store).commandWillRun()
+        c.run(store)
     }
 }
 
@@ -131,11 +147,18 @@ enum CoreCommands {
             c.append(AppCommand(id: "view.\(v.rawValue)", title: "\(v.title) View", menu: .view, symbol: v.symbol,
                                 shortcut: .init(KeyEquivalent(Character("\(i + 1)"))), isOn: { $0.view == v }) { $0.view = v })
         }
-        c.append(AppCommand(id: "view.inspector", title: "Show Inspector", menu: .view, symbol: "sidebar.right", shortcut: .init("i", modifiers: [.command, .option]), separatorBefore: true, isOn: { $0.inspectorVisible }) { $0.inspectorVisible.toggle() })
+        c.append(AppCommand(id: "view.inspector", title: "Show Panes", menu: .view, symbol: "sidebar.right", shortcut: .init("i", modifiers: [.command, .option]), separatorBefore: true, isOn: { $0.inspectorVisible }) { $0.inspectorVisible.toggle() })
+        c.append(AppCommand(id: "view.ribbon", title: "Collapse Ribbon", menu: .view, symbol: "rectangle.topthird.inset.filled",
+                            shortcut: .init("r", modifiers: [.command, .option]), isOn: { ShellState.of($0).ribbonCollapsed }) {
+            ShellState.of($0).toggleRibbon()
+        })
+        // Pane switches: each shows its pane in the dock, or closes it when it is already showing.
         for (i, p) in InspectorPane.allCases.enumerated() {
             c.append(AppCommand(id: "view.pane.\(p.rawValue)", title: "\(p.title) Pane", menu: .view, symbol: p.symbol,
                                 shortcut: i < 9 ? .init(KeyEquivalent(Character("\(i + 1)")), modifiers: [.command, .option]) : nil,
-                                isOn: { $0.inspectorVisible && $0.inspector == p }) { $0.inspector = p; $0.inspectorVisible = true })
+                                separatorBefore: i == 0,
+                                isEnabled: { ShellState.of($0).isAvailable(p) },
+                                isOn: { ShellState.of($0).isShowing(p) }) { ShellState.of($0).toggle(p) })
         }
         c.append(AppCommand(id: "view.fit", title: "Fit to Page", menu: .view, shortcut: .init("0"), separatorBefore: true, isOn: { $0.fitToWindow }) { $0.fitToWindow = true })
         c.append(AppCommand(id: "view.actualSize", title: "Actual Size", menu: .view, shortcut: .init("0", modifiers: [.command, .option])) { $0.fitToWindow = false; $0.zoom = 1 })
@@ -146,8 +169,9 @@ enum CoreCommands {
         c.append(AppCommand(id: "view.lock", title: "Lock Objects", menu: .view, symbol: "lock", isOn: { $0.lockObjects }) { $0.lockObjects.toggle() })
         c.append(AppCommand(id: "view.mobile", title: "Mobile Layout", menu: .view, symbol: "iphone", isOn: { $0.mobileLayout }) { $0.mobileLayout.toggle(); $0.selection = [] })
         c.append(AppCommand(id: "view.present", title: "Present", menu: .view, symbol: "play.rectangle", shortcut: .init(.return, modifiers: [.command, .option]), separatorBefore: true) { $0.view = .report; $0.selection = []; $0.presenting = true })
-        c.append(AppCommand(id: "view.palette", title: "Command Palette…", menu: .view, symbol: "command", shortcut: .init("k")) { _ in
-            NotificationCenter.default.post(name: .facetShowPalette, object: nil)
+        c.append(AppCommand(id: "view.palette", title: "Command Palette…", menu: .view, symbol: "command", shortcut: .init("k")) { store in
+            // Addressed to this document's window; every window hears the notification.
+            NotificationCenter.default.post(name: .facetShowPalette, object: store)
         })
 
         // Optimize
@@ -172,11 +196,83 @@ enum CoreCommands {
             }
         })
         c.append(AppCommand(id: "optimize.performance", title: "Performance Analyzer", menu: .optimize, symbol: "gauge.with.needle", separatorBefore: true) { $0.inspector = .performance; $0.inspectorVisible = true })
-        c.append(AppCommand(id: "optimize.clearSlicers", title: "Clear All Slicers", menu: .optimize) { $0.clearAllSlicers() })
+        c.append(AppCommand(id: "optimize.clearSlicers", title: "Clear Slicer Selections Now", menu: .optimize, symbol: "xmark.circle") { $0.clearAllSlicers() })
+        // Buttons that apply or clear every slicer on the page, for reports that use query reduction.
+        let slicerButtons: [(String, String, String, ActionSpec.Kind, String)] = [
+            ("optimize.applyAllSlicers", "Add Apply All Slicers Button", "Apply all slicers", .applyAllSlicers, "checkmark.rectangle"),
+            ("optimize.clearAllSlicersButton", "Add Clear All Slicers Button", "Clear all slicers", .clearAllSlicers, "xmark.rectangle"),
+        ]
+        for (id, title, caption, kind, symbol) in slicerButtons {
+            c.append(AppCommand(id: id, title: title, menu: .optimize, symbol: symbol, separatorBefore: kind == .applyAllSlicers,
+                                isEnabled: { $0.view == .report }) { s in
+                s.addVisual(.button) { v in
+                    v.setFmt("button", "text", .string(caption))
+                    var action = ActionSpec()
+                    action.kind = kind
+                    v.action = action
+                }
+            })
+        }
+
+        // Drill and data actions for the one selected data visual (the Data / Drill tab).
+        let dataVisual: @MainActor (DocumentStore) -> VisualSpec? = { s in
+            guard s.view == .report, let v = s.selectedVisual, !v.type.isPageElement else { return nil }
+            return v
+        }
+        let drillLevels: (VisualSpec) -> Int = { v in v.fields(.category).count + (v.type == .matrix ? v.fields(.rows).count : 0) }
+        c.append(AppCommand(id: "drill.showAsTable", title: "Show as Table", menu: .data, symbol: "tablecells", separatorBefore: true,
+                            isEnabled: { dataVisual($0) != nil }) { s in
+            if let v = dataVisual(s) { s.drill(.showAsTable, in: v.id) }
+        })
+        c.append(AppCommand(id: "drill.focus", title: "Focus Mode", menu: .data, symbol: "arrow.up.left.and.arrow.down.right",
+                            isEnabled: { dataVisual($0) != nil }) { s in
+            if let v = dataVisual(s) { s.focusVisualID = v.id }
+        })
+        c.append(AppCommand(id: "drill.up", title: "Drill Up", menu: .data, symbol: "arrow.up",
+                            isEnabled: { (dataVisual($0)?.drillLevel ?? 0) > 0 }) { s in
+            if let v = dataVisual(s) { s.drill(.up, in: v.id) }
+        })
+        c.append(AppCommand(id: "drill.nextLevel", title: "Go to the Next Level", menu: .data, symbol: "arrow.down.to.line",
+                            isEnabled: { s in dataVisual(s).map { $0.drillLevel < drillLevels($0) - 1 } ?? false }) { s in
+            if let v = dataVisual(s) { s.drill(.down(nil), in: v.id) }
+        })
+        c.append(AppCommand(id: "drill.expand", title: "Expand All Down One Level", menu: .data, symbol: "arrow.triangle.branch",
+                            isEnabled: { s in dataVisual(s).map { $0.drillLevel < $0.fields(.category).count - 1 } ?? false }) { s in
+            if let v = dataVisual(s) { s.drill(.expandAll, in: v.id) }
+        })
+        c.append(AppCommand(id: "drill.exportData", title: "Export Visual Data…", menu: .data, symbol: "square.and.arrow.up",
+                            isEnabled: { dataVisual($0) != nil }) { s in
+            if let v = dataVisual(s) { VisualExport.exportData(of: v, store: s, format: "csv") }
+        })
+        c.append(AppCommand(id: "drill.copyImage", title: "Copy Visual as Image", menu: .data, symbol: "photo.on.rectangle",
+                            isEnabled: { $0.view == .report && $0.selectedVisual != nil }) { s in
+            if let v = s.selectedVisual { VisualExport.copyImage(of: v, store: s) }
+        })
 
         // Data (basics; Get Data, Transform, etc. are registered by the data feature)
         c.append(AppCommand(id: "data.refresh", title: "Refresh", menu: .data, symbol: "arrow.triangle.2.circlepath", shortcut: .init("r")) { $0.refreshData() })
         c.append(AppCommand(id: "data.sample", title: "Load Sample Data", menu: .data, symbol: "shippingbox") { SampleData.install(into: $0) })
+
+        // Help
+        let references: [(String, String, String, String)] = [
+            ("help.dax", "DAX Reference", "function", "https://learn.microsoft.com/dax/"),
+            ("help.powerQuery", "Power Query M Reference", "wand.and.rays", "https://learn.microsoft.com/powerquery-m/"),
+        ]
+        for (id, title, symbol, address) in references {
+            c.append(AppCommand(id: id, title: title, menu: .help, symbol: symbol) { s in
+                guard let url = URL(string: address), NSWorkspace.shared.open(url) else {
+                    s.status = StatusMessage(kind: .error, text: "Couldn't open \(address) in your browser.")
+                    return
+                }
+            })
+        }
+        c.append(AppCommand(id: "help.shortcuts", title: "Keyboard Shortcuts", menu: .help, symbol: "keyboard", separatorBefore: true) { s in
+            s.present { KeyboardShortcutsSheet() }
+        })
+        c.append(AppCommand(id: "help.about", title: "About \(AppIdentity.name)", menu: .help, symbol: "info.circle") { _ in
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.orderFrontStandardAboutPanel(nil)
+        })
         return c
     }
 }
