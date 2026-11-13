@@ -26,10 +26,11 @@ import FacetCore
 /// - By order date: 2024 → 220 (6 rows), 2025 → 480 (5). By ship date (only dates present in the
 ///   Date dimension match; Jan 4–6 join the blank date row): 2024 → 70, 2025 → 380.
 /// - By category: Tools 140, Toys 230, Office 300, blank product 30.
-/// - By colour: Red 490 (7 rows), Blue 180 (4), blank 30.
+/// - By colour: Red 490 (7 rows), Blue 180 (3), blank 30 (1).
 /// - By customer: Ann 410, Ben 30, Cal 90, Dee 170. By country: US 440, UK 260.
 /// - By store: North 130, South 250, East 320.
 /// - Product totals: Widget 40 (3 rows), Gadget 100 (2), Gizmo 150 (2), Doohickey 80 (1), Thing 300 (2), blank 30 (1).
+/// - Qty by product: Widget 4, Gadget 5, Gizmo 5, Doohickey 2, Thing 6, blank 1.
 enum StarSchema {
 
     /// A UTC date value for fixture literals, failing loudly on a bad format.
@@ -149,5 +150,46 @@ enum StarSchema {
         let errors = engine.load(model: model(), data: data())
         if !errors.isEmpty { XCTFail("fixture failed to load: \(errors)") }
         return engine
+    }
+}
+
+/// Base class of the star-schema suites: a fresh engine per test and the shared evaluation helpers.
+class StarSchemaTestCase: XCTestCase {
+    var engine: DAXEngine!
+
+    override func setUpWithError() throws {
+        engine = StarSchema.makeEngine()
+    }
+
+    /// A basic filter specification: `filter("Product", "Color", "Red")`.
+    func filter(_ table: String, _ column: String, _ values: Value...) -> FilterSpec {
+        var spec = FilterSpec(field: .column(table, column))
+        spec.values = values
+        return spec
+    }
+
+    func scalar(_ expression: String, filters: [FilterSpec] = []) throws -> Value {
+        try engine.scalar(expression, filters: filters)
+    }
+
+    func num(_ expression: String, filters: [FilterSpec] = []) throws -> Double {
+        (try scalar(expression, filters: filters)).asDouble ?? .nan
+    }
+
+    /// The first result table of a query.
+    func table(_ dax: String, filters: [FilterSpec] = [], crossFilters: [[DataPointSelection]] = []) throws -> DataTable {
+        let tables = try engine.query(dax, filters: filters, crossFilters: crossFilters)
+        return try XCTUnwrap(tables.first, "query returned no result tables")
+    }
+
+    /// One column of the first result table of a query, in result order.
+    func column(_ dax: String, name: String, filters: [FilterSpec] = [], crossFilters: [[DataPointSelection]] = []) throws -> [Value] {
+        let result = try table(dax, filters: filters, crossFilters: crossFilters)
+        return try XCTUnwrap(result.column(name)?.values, "missing column \(name); have \(result.columns.map(\.name))")
+    }
+
+    /// A column as doubles (NaN for blanks and non-numbers), for tolerant comparisons.
+    func numbers(_ dax: String, name: String, filters: [FilterSpec] = []) throws -> [Double] {
+        try column(dax, name: name, filters: filters).map { $0.asDouble ?? .nan }
     }
 }

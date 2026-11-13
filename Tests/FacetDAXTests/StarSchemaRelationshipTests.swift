@@ -5,26 +5,7 @@ import FacetCore
 /// Relationship semantics over the star-schema fixture: propagation, inactive relationships,
 /// USERELATIONSHIP, CROSSFILTER, RELATED, RELATEDTABLE, LOOKUPVALUE and context transition.
 /// All expected values are hand-computed from the fixture (see StarSchemaFixture).
-final class StarSchemaRelationshipTests: XCTestCase {
-    private var engine: DAXEngine!
-
-    override func setUpWithError() throws {
-        engine = StarSchema.makeEngine()
-    }
-
-    /// A basic filter specification: `filter("Product", "Color", "Red")`.
-    private func filter(_ table: String, _ column: String, _ values: Value...) -> FilterSpec {
-        var spec = FilterSpec(field: .column(table, column))
-        spec.values = values
-        return spec
-    }
-    private func scalar(_ expression: String, filters: [FilterSpec] = []) throws -> Value {
-        try engine.scalar(expression, filters: filters)
-    }
-    private func num(_ expression: String, filters: [FilterSpec] = []) throws -> Double {
-        (try scalar(expression, filters: filters)).asDouble ?? .nan
-    }
-
+final class StarSchemaRelationshipTests: StarSchemaTestCase {
     // MARK: Propagation directions
 
     func testSingleDirectionDoesNotFilterDimensions() throws {
@@ -39,7 +20,7 @@ final class StarSchemaRelationshipTests: XCTestCase {
 
     func testBidirectionalModelRelationship() throws {
         // Sales → Store is bidirectional, so filters on Sales reach Store.
-        // Office sales: rows 6 (South? no — row 6 is store 3 East, row 10 store 1 North) → 2 stores.
+        // Office sales are rows 6 (East) and 10 (North) → 2 stores.
         XCTAssertEqual(try num("CALCULATE(COUNTROWS(Store), Product[Category]=\"Office\")"), 2)
         // 2024 sales touch all three stores (rows 1,2,3,4,10,11 → stores 1,1,2,3,1,1) → 3.
         XCTAssertEqual(try num("CALCULATE(COUNTROWS(Store), Date[Year]=2024)"), 3)

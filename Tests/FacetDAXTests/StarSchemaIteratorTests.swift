@@ -4,26 +4,7 @@ import FacetCore
 
 /// Iterator functions, RANKX and TOPN over the star-schema fixture.
 /// All expected values are hand-computed from the fixture (see StarSchemaFixture).
-final class StarSchemaIteratorTests: XCTestCase {
-    private var engine: DAXEngine!
-
-    override func setUpWithError() throws {
-        engine = StarSchema.makeEngine()
-    }
-
-    /// A basic filter specification: `filter("Date", "Year", 2024)`.
-    private func filter(_ table: String, _ column: String, _ values: Value...) -> FilterSpec {
-        var spec = FilterSpec(field: .column(table, column))
-        spec.values = values
-        return spec
-    }
-    private func scalar(_ expression: String, filters: [FilterSpec] = []) throws -> Value {
-        try engine.scalar(expression, filters: filters)
-    }
-    private func num(_ expression: String, filters: [FilterSpec] = []) throws -> Double {
-        (try scalar(expression, filters: filters)).asDouble ?? .nan
-    }
-
+final class StarSchemaIteratorTests: StarSchemaTestCase {
     // MARK: Iterators over the fact table
 
     func testIteratorsOverSales() throws {

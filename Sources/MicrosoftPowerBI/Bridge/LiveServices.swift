@@ -193,7 +193,9 @@ final class LiveCalculation: CalculationService {
         case .topN:
             guard let by = f.topN.by else { return nil }
             let order = f.topN.isBottom ? "ASC" : "DESC"
-            return "TOPN(\(f.topN.count), ALL(\(ref)), \(ModelDAX.aggregate(by, model: model)), \(order))"
+            // CALCULATE gives the order expression context transition: a bare aggregate would be
+            // the same grand total for every candidate value, so all would tie and be kept.
+            return "TOPN(\(f.topN.count), ALL(\(ref)), CALCULATE(\(ModelDAX.aggregate(by, model: model))), \(order))"
         case .relativeDate, .relativeTime:
             let window = relativeWindow(f.relative)
             return "FILTER(ALL(\(ref)), \(ref) >= \(ModelDAX.literal(.date(window.lowerBound))) && \(ref) < \(ModelDAX.literal(.date(window.upperBound))))"

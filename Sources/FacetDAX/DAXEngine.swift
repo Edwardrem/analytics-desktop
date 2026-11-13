@@ -381,15 +381,8 @@ public final class DAXEngine {
             guard !alternatives.isEmpty else { return nil }
             return CtxFilter(.union(alternatives))
         case .topN:
-            guard let by = f.topN.by, let byCid = db.columnID(table: by.table, column: by.name) else { return nil }
-            let n = col.values.count
-            let byValues = db.column(byCid).values
-            var idx = Array(0..<n)
-            idx.sort { DAXOps.sortCompare(byValues[$0], byValues[$1]) < 0 }
-            // "Top N" keeps the largest values, "Bottom N" the smallest.
-            if !f.topN.isBottom { idx.reverse() }
-            let keep = Set(idx.prefix(max(0, f.topN.count))).map { Int32($0) }
-            return CtxFilter(.rows(cid.table, RowSel(n: n, rows: keep.count == n ? nil : keep, blank: false)))
+            guard let by = f.topN.by else { return nil }
+            return CtxFilter(.values(cid, try topNValues(of: cid, count: f.topN.count, by: by, bottom: f.topN.isBottom)))
         case .relativeDate, .relativeTime:
             let r = f.relative
             let now = Date()
