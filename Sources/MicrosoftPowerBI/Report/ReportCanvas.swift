@@ -45,6 +45,20 @@ extension DocumentStore {
         c.onSpecChange = { [weak self] new in
             self?.updateVisual(id, name: "Change Visual", coalesce: "spec-\(id)") { $0 = new }
         }
+        c.modernTooltips = report.settings.modernTooltips
+        c.drillthroughTargets = { [weak self] point in
+            self?.drillthroughTargets(for: point).map { NavItem(id: $0.id, name: $0.name) } ?? []
+        }
+        c.canRunAction = { [weak self] action in
+            guard let self else { return true }
+            return ReportActions.canRun(action, selections: self.pointSelections, page: self.currentPage, report: self.report)
+        }
+        if interactive, let page = TooltipPages.page(for: spec, in: report), page.id != currentPageID {
+            c.pageTooltip = { [weak self] point in
+                guard let self else { return nil }
+                return AnyView(TooltipPageView(runtime: ReportRuntime.of(self), store: self, page: page, point: point, sourceID: id))
+            }
+        }
         c.extensionView = { [weak self] spec, data, ctx in
             guard let self else { return nil }
             return VisualExtensions.provider?(spec, data, ctx, self)

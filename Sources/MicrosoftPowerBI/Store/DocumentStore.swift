@@ -333,13 +333,7 @@ final class DocumentStore: ObservableObject {
                 $0.report.filters.append(filter)
             }
         case .drillthrough:
-            guard field.kind == .column else { return }
-            var f = filter
-            f.drillthroughUsedAsCategory = true
-            var list = drillthroughFilters[currentPageID] ?? []
-            guard !list.contains(where: { $0.field.key == field.key }) else { return }
-            list.append(f)
-            drillthroughFilters[currentPageID] = list
+            addDrillthroughField(field)
         }
     }
 
@@ -354,9 +348,15 @@ final class DocumentStore: ObservableObject {
         case .report:
             mutate("Remove Report Filter") { $0.report.filters.removeAll { $0.id == id } }
         case .drillthrough:
-            var list = drillthroughFilters[currentPageID] ?? []
-            list.removeAll { $0.id == id }
-            drillthroughFilters[currentPageID] = list
+            // A drillthrough field belongs to the page; a kept filter only to this visit.
+            if currentPage.drillthroughFilters.contains(where: { $0.id == id }) {
+                updatePage(name: "Remove Drillthrough Field", invalidates: .visuals(nil)) { $0.drillthroughFilters.removeAll { $0.id == id } }
+            }
+            if var list = drillthroughFilters[currentPageID] {
+                list.removeAll { $0.id == id }
+                drillthroughFilters[currentPageID] = list.isEmpty ? nil : list
+                refreshVisuals()
+            }
         }
     }
 
@@ -377,10 +377,29 @@ final class DocumentStore: ObservableObject {
                 if let i = $0.report.filters.firstIndex(where: { $0.id == id }) { body(&$0.report.filters[i]) }
             }
         case .drillthrough:
-            var list = drillthroughFilters[currentPageID] ?? []
-            if let i = list.firstIndex(where: { $0.id == id }) { body(&list[i]) }
-            drillthroughFilters[currentPageID] = list
+            // Author controls (lock, hide, name) are saved with the page's drillthrough field; the value
+            // that arrived, and any kept filter, change only for this visit.
+            if currentPage.drillthroughFilters.contains(where: { $0.id == id }) {
+                updatePage(name: name) { p in
+                    guard let i = p.drillthroughFilters.firstIndex(where: { $0.id == id }) else { return }
+                    var edited = p.drillthroughFilters[i]
+                    body(&edited)
+                    p.drillthroughFilters[i].isLocked = edited.isLocked
+                    p.drillthroughFilters[i].isHidden = edited.isHidden
+                    p.drillthroughFilters[i].displayName = edited.displayName
+                }
+            }
+            if var list = drillthroughFilters[currentPageID], let i = list.firstIndex(where: { $0.id == id }) {
+                body(&list[i])
+                drillthroughFilters[currentPageID] = list
+                refreshVisuals()
+            }
         }
+    }
+
+    /// Replaces the filters a drillthrough carried to a page (nil clears them).
+    func setAppliedDrillthrough(_ filters: [FilterSpec]?, for pageID: UUID) {
+        drillthroughFilters[pageID] = filters
     }
 
     func request(for spec: VisualSpec, on page: Page) -> VisualRequest {
@@ -868,43 +887,17 @@ final class DocumentStore: ObservableObject {
                 v.drillLevel += 1; v.expandedAllLevels = true; v.drillPath = []
             }
         case .drillthrough(let point, let pageID):
-            drillthrough(point, to: pageID)
+            drillthrough(point, to: pageID, from: id)
         case .showAsTable:
             showAsTableID = id
         }
     }
 
-    /// Pages a data point can drill through to: those with a drillthrough filter on one of its fields.
-    func drillthroughTargets(for point: DataPointSelection) -> [Page] {
-        let keys = Set(point.fields.map { "\($0.table)|\($0.name)" })
-        return doc.report.pages.filter { p in
-            p.id != currentPageID && p.drillthroughFilters.contains { keys.contains("\($0.field.table)|\($0.field.name)") }
-        }
-    }
-    func drillthrough(_ point: DataPointSelection, to pageID: UUID?) {
-        guard let target = pageID.flatMap(doc.report.page) ?? drillthroughTargets(for: point).first else {
-            status = StatusMessage(kind: .info, text: "No drillthrough page is set up for this field.")
+    func perform(_ action: ActionSpec, from visualID: UUID? = nil) {
+        if let measure = action.conditionalMeasure, [.bookmark, .pageNavigation, .drillthrough, .webURL].contains(action.kind) {
+            performConditional(action, measure: measure, from: visualID)
             return
         }
-        var filters: [FilterSpec] = []
-        for (field, value) in zip(point.fields, point.values) {
-            var f = FilterSpec(field: FieldRef(kind: .column, table: field.table, name: field.name), kind: .basic)
-            f.values = [value]
-            filters.append(f)
-        }
-        if target.keepAllFiltersOnDrillthrough {
-            filters += currentPage.filters.filter { !$0.isEmpty }
-            for v in currentPage.visuals where v.type.isSlicer {
-                if let s = v.slicerState, !s.selected.isEmpty, let field = v.fields(.field).first {
-                    var f = FilterSpec(field: field, kind: .basic); f.values = s.selected; filters.append(f)
-                }
-            }
-        }
-        drillthroughFilters[target.id] = filters
-        goToPage(target.id)
-    }
-
-    func perform(_ action: ActionSpec, from visualID: UUID? = nil) {
         switch action.kind {
         case .none: break
         case .back: goBack()
@@ -917,9 +910,7 @@ final class DocumentStore: ObservableObject {
         case .clearAllSlicers: clearAllSlicers()
         case .applyAllSlicers: refreshVisuals()
         case .qna: inspector = .assistant; inspectorVisible = true
-        case .drillthrough:
-            if let point = pointSelections.values.first?.first { drillthrough(point, to: action.pageID) }
-            else { status = StatusMessage(kind: .info, text: "Select a data point first, then drill through.") }
+        case .drillthrough: performDrillthroughButton(action)
         case .dataFunction:
             NotificationCenter.default.post(name: .facetRunDataFunction, object: self, userInfo: ["action": action])
         }

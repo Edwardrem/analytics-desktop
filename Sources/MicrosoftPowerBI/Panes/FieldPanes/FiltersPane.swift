@@ -15,7 +15,7 @@ struct FiltersPane: View {
                 }
                 FiltersSection(scope: .page, title: "Filters on this page", filters: store.currentPage.filters)
                 FiltersSection(scope: .report, title: "Filters on all pages", filters: store.doc.report.filters)
-                FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughFilters[store.currentPageID] ?? [])
+                FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughDisplay)
             }
         }
     }
@@ -67,7 +67,7 @@ private struct FiltersSection: View {
         case .visual: return "Select a visual, then add a filter from the Data pane's field menu."
         case .page: return "Add a page filter from the Data pane's field menu."
         case .report: return "Add a filter that applies to every page from the Data pane."
-        case .drillthrough: return "Drillthrough filters arrive when a visual is drilled into."
+        case .drillthrough: return "Add a column from the Data pane’s field menu to make this page a drillthrough destination."
         }
     }
 }
