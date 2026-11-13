@@ -1,0 +1,303 @@
+import Foundation
+import FacetCore
+
+/// Reads and writes Power BI Project (PBIP) folders: TMDL semantic model + PBIR report, as text files for source control.
+public enum PBIPProject {
+    public struct WriteOptions: Sendable {
+        /// Also drop Facet's table data in `<Name>.SemanticModel/.pbi/facet-cache/` (git-ignored), so reopening needs no refresh.
+        public var includeFacetDataCache = false
+        /// Store the full Facet objects in `Facet_*` annotations for a lossless round trip. Turn off for a pure Power BI project.
+        public var includeFacetAnnotations = true
+        public init(includeFacetDataCache: Bool = false, includeFacetAnnotations: Bool = true) {
+            self.includeFacetDataCache = includeFacetDataCache; self.includeFacetAnnotations = includeFacetAnnotations
+        }
+    }
+
+    static let platformSchema = "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json"
+    static let gitignore = "**/.pbi/localSettings.json\n**/.pbi/cache.abf\n**/.pbi/facet-cache/\n"
+
+    /// Generates every file of the project in memory (paths relative to the project folder), plus export warnings.
+    public static func files(for document: FacetDocument, name: String, options: WriteOptions = WriteOptions(),
+                             logicalIDs: (report: String, model: String) = (UUID().uuidString.lowercased(), UUID().uuidString.lowercased())) -> (files: [(path: String, data: Data)], warnings: [ImportWarning]) {
+        var out: [(String, Data)] = []
+        var warnings: [ImportWarning] = []
+        let annotate = options.includeFacetAnnotations
+        func add(_ path: String, _ j: JSONValue) { out.append((path, j.serialized())) }
+        let model = "\(name).SemanticModel", report = "\(name).Report"
+
+        add("\(name).pbip", jo(["$schema": js("https://developer.microsoft.com/json-schemas/fabric/pbip/pbipProperties/1.0.0/schema.json"),
+                                "version": js("1.0"), "artifacts": ja([jo(["report": jo(["path": js(report)])])]),
+                                "settings": jo(["enableAutoRecovery": jb(true)])]))
+        out.append((".gitignore", Data(gitignore.utf8)))
+
+        // Semantic model.
+        func platform(_ type: String, _ id: String) -> JSONValue {
+            jo(["$schema": js(platformSchema), "metadata": jo(["type": js(type), "displayName": js(name)]),
+                "config": jo(["version": js("2.0"), "logicalId": js(id)])])
+        }
+        add("\(model)/.platform", platform("SemanticModel", logicalIDs.model))
+        add("\(model)/definition.pbism", jo(["$schema": js("https://developer.microsoft.com/json-schemas/fabric/item/semanticModel/definitionProperties/1.0.0/schema.json"),
+                                             "version": js("4.2"), "settings": jo([:])]))
+        for f in TMDL.serialize(model: document.model, queries: document.queries) {
+            out.append(("\(model)/definition/\(f.path)", Data(f.text.utf8)))
+        }
+        if options.includeFacetDataCache {
+            let e = JSONEncoder()
+            e.outputFormatting = [.sortedKeys]
+            var used = Set<String>()
+            for (tableName, table) in document.data.tables.sorted(by: { $0.key < $1.key }) {
+                var file = DocumentPackage.fileName(for: tableName)
+                while !used.insert(file.lowercased()).inserted { file += "_" }
+                var t = table
+                t.name = tableName
+                if let d = try? e.encode(t) { out.append(("\(model)/.pbi/facet-cache/\(file).json", d)) }
+            }
+        }
+
+        // Report.
+        add("\(report)/.platform", platform("Report", logicalIDs.report))
+        add("\(report)/definition.pbir", jo(["$schema": js("https://developer.microsoft.com/json-schemas/fabric/item/report/definitionProperties/2.0.0/schema.json"),
+                                             "version": js("4.0"), "datasetReference": jo(["byPath": jo(["path": js("../\(model)")])])]))
+        let def = "\(report)/definition"
+        add("\(def)/version.json", jo(["$schema": PBIR.schema("versionMetadata"), "version": js("2.0.0")]))
+        let themeFile = PowerBITheme.resourceName(for: document.report.theme)
+        add("\(def)/report.json", PBIR.reportJSON(document, themeFile: themeFile, includeAnnotations: annotate))
+        out.append(("\(report)/StaticResources/RegisteredResources/\(themeFile)", PowerBITheme.export(document.report.theme, includeFacetExtensions: annotate)))
+
+        let r = document.report
+        let active = r.landingPageID.flatMap { id in r.pages.first { $0.id == id } } ?? r.pages.first
+        var pagesIndex: [String: JSONValue] = ["$schema": PBIR.schema("pagesMetadata"), "pageOrder": ja(r.pages.map { js($0.id.lower) })]
+        if let active { pagesIndex["activePageName"] = js(active.id.lower) }
+        add("\(def)/pages/pages.json", .object(pagesIndex))
+        for p in r.pages {
+            let dir = "\(def)/pages/\(p.id.lower)"
+            add("\(dir)/page.json", PBIR.pageJSON(p, includeAnnotations: annotate))
+            for v in p.visuals {
+                add("\(dir)/visuals/\(v.id.lower)/visual.json", PBIR.visualJSON(v, includeAnnotations: annotate))
+                if let m = v.mobileFrame { add("\(dir)/visuals/\(v.id.lower)/mobile.json", PBIR.mobileJSON(m, z: v.zIndex)) }
+                if !PowerBIMapping.hasPowerBIEquivalent(v.type) {
+                    warnings.append(ImportWarning("“\(v.name)” is a \(v.type.displayName), which Power BI doesn't have; it was written as custom visual type “\(PowerBIMapping.powerBIType(for: v.type))” and will only render in Facet.",
+                                                  location: "\(p.name)/\(v.name)"))
+                }
+            }
+            for (gid, gname) in p.groups.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+                add("\(dir)/visuals/\(gid.lower)/visual.json", PBIR.groupJSON(id: gid, name: gname, members: p.visuals.filter { $0.groupID == gid }))
+            }
+        }
+        if !r.bookmarks.isEmpty {
+            add("\(def)/bookmarks/bookmarks.json", PBIR.bookmarksIndex(r.bookmarks))
+            for b in r.bookmarks { add("\(def)/bookmarks/\(b.id.lower).bookmark.json", PBIR.bookmarkJSON(b, includeAnnotations: annotate)) }
+        }
+        if !document.data.tables.isEmpty, !options.includeFacetDataCache {
+            warnings.append(ImportWarning("Table data isn't stored in a project; it is reloaded by refreshing the queries.", severity: .info))
+        }
+        return (out, warnings)
+    }
+
+    /// Writes the project into `folder` (created if needed). Unchanged files are left untouched and files for deleted
+    /// pages, visuals, bookmarks and tables are removed, so the folder diffs cleanly in Git.
+    @discardableResult
+    public static func write(document: FacetDocument, to folder: URL, name: String, options: WriteOptions = WriteOptions()) throws -> [ImportWarning] {
+        let fm = FileManager.default
+        let safeName = DocumentPackage.fileName(for: name)
+        // Keep the logical ids of an existing project stable.
+        func existingID(_ item: String) -> String? {
+            let url = folder.appendingPathComponent("\(safeName).\(item)/.platform")
+            return (try? Data(contentsOf: url)).flatMap { try? JSONValue.parse($0) }?.at("config", "logicalId")?.stringValue
+        }
+        let ids = (report: existingID("Report") ?? UUID().lower, model: existingID("SemanticModel") ?? UUID().lower)
+        let generated = files(for: document, name: safeName, options: options, logicalIDs: ids)
+        do {
+            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+            var written = Set<String>()
+            for (path, data) in generated.files {
+                written.insert(path)
+                let url = folder.appendingPathComponent(path)
+                if let old = try? Data(contentsOf: url), old == data { continue }
+                try fm.writeCreatingDirectories(data, to: url)
+            }
+            // Prune stale generated files.
+            for managed in ["\(safeName).Report/definition", "\(safeName).SemanticModel/definition", "\(safeName).SemanticModel/.pbi/facet-cache",
+                            "\(safeName).Report/StaticResources/RegisteredResources"] {
+                let base = folder.appendingPathComponent(managed)
+                guard let walker = fm.enumerator(atPath: base.path) else { continue }
+                var dirs: [URL] = []
+                for case let rel as String in walker {
+                    let url = base.appendingPathComponent(rel)
+                    if fm.isDirectory(url) { dirs.append(url); continue }
+                    if !written.contains(managed + "/" + rel) { try? fm.removeItem(at: url) }
+                }
+                for d in dirs.sorted(by: { $0.path.count > $1.path.count }) where (try? fm.contentsOfDirectory(atPath: d.path))?.isEmpty == true {
+                    try? fm.removeItem(at: d)
+                }
+            }
+        } catch {
+            throw InteropError.io("Couldn't write the project to “\(folder.path)”: \(error.localizedDescription)")
+        }
+        return generated.warnings
+    }
+
+    /// Opens a project: pass the project folder, the `.pbip` file, or a `.Report` / `.SemanticModel` folder.
+    /// Unknown content never fails the import; it is reported in the warnings.
+    public static func read(from url: URL) throws -> (FacetDocument, [ImportWarning]) {
+        let fm = FileManager.default
+        var warnings: [ImportWarning] = []
+        var reportDir: URL?, modelDir: URL?
+        func json(_ u: URL) -> JSONValue? { (try? Data(contentsOf: u)).flatMap { try? JSONValue.parse($0) } }
+
+        var pbip: URL?
+        if url.pathExtension.lowercased() == "pbip" { pbip = url }
+        else if fm.isDirectory(url) {
+            if url.lastPathComponent.hasSuffix(".Report") { reportDir = url }
+            else if url.lastPathComponent.hasSuffix(".SemanticModel") || url.lastPathComponent.hasSuffix(".Dataset") { modelDir = url }
+            else {
+                let items = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
+                pbip = items.filter { $0.pathExtension.lowercased() == "pbip" }.sorted { $0.path < $1.path }.first
+                if pbip == nil {
+                    reportDir = items.first { $0.lastPathComponent.hasSuffix(".Report") }
+                    modelDir = items.first { $0.lastPathComponent.hasSuffix(".SemanticModel") || $0.lastPathComponent.hasSuffix(".Dataset") }
+                }
+            }
+        }
+        if let pbip {
+            guard let j = json(pbip) else { throw InteropError.invalidFormat("“\(pbip.lastPathComponent)” is not a valid Power BI project file.") }
+            if let path = j["artifacts"]?[0]?["report"]?["path"]?.stringValue {
+                reportDir = pbip.deletingLastPathComponent().appendingPathComponent(path).standardizedFileURL
+            }
+        }
+        if let reportDir, modelDir == nil {
+            if let pbir = json(reportDir.appendingPathComponent("definition.pbir")) {
+                if let path = pbir["datasetReference"]?["byPath"]?["path"]?.stringValue {
+                    modelDir = reportDir.appendingPathComponent(path).standardizedFileURL
+                } else if pbir["datasetReference"]?["byConnection"] != nil {
+                    warnings.append(ImportWarning("The report uses a live connection to a published semantic model; no model was imported.", location: "definition.pbir"))
+                }
+            }
+        }
+        guard reportDir != nil || modelDir != nil else {
+            throw InteropError.missingFile("“\(url.lastPathComponent)” doesn't contain a Power BI project (.pbip, .Report or .SemanticModel).")
+        }
+
+        var doc = FacetDocument()
+        doc.report.pages = []
+        // Semantic model.
+        if let modelDir {
+            let defDir = modelDir.appendingPathComponent("definition")
+            if fm.isDirectory(defDir) {
+                var tmdl: [TMDLFile] = []
+                if let walker = fm.enumerator(at: defDir, includingPropertiesForKeys: nil) {
+                    for case let f as URL in walker where f.pathExtension.lowercased() == "tmdl" {
+                        guard let text = (try? Data(contentsOf: f)).flatMap(TextDecoding.string(from:)) else { continue }
+                        tmdl.append(TMDLFile(path: String(f.path.dropFirst(defDir.path.count + 1)), text: text))
+                    }
+                }
+                tmdl.sort { $0.path < $1.path }
+                let parsed = try TMDL.parseDetailed(files: tmdl)
+                doc.model = parsed.model
+                doc.queries = parsed.queries
+                warnings += parsed.warnings
+            } else if let bim = json(modelDir.appendingPathComponent("model.bim")) {
+                let converted = TMSLConverter.convert(bim)
+                doc.model = converted.model; doc.queries = converted.queries; warnings += converted.warnings
+            } else {
+                warnings.append(ImportWarning("No semantic model definition was found in “\(modelDir.lastPathComponent)”.", location: modelDir.lastPathComponent))
+            }
+            let cache = modelDir.appendingPathComponent(".pbi/facet-cache")
+            for f in (try? fm.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "json" {
+                if let t = try? JSONDecoder().decode(DataTable.self, from: Data(contentsOf: f)) { doc.data[t.name] = t }
+            }
+        }
+        // Report.
+        if let reportDir {
+            let def = reportDir.appendingPathComponent("definition")
+            let resources = reportDir.appendingPathComponent("StaticResources/RegisteredResources")
+            if let reportJSON = json(def.appendingPathComponent("report.json")) {
+                try readPBIR(def: def, reportJSON: reportJSON, resources: resources, into: &doc, warnings: &warnings)
+            } else if let legacy = json(reportDir.appendingPathComponent("report.json")) {
+                let converted = LegacyReportLayout.convert(legacy) { name in try? Data(contentsOf: resources.appendingPathComponent(name)) }
+                doc.report = converted.report
+                warnings += converted.warnings
+            } else {
+                warnings.append(ImportWarning("No report definition was found in “\(reportDir.lastPathComponent)”.", location: reportDir.lastPathComponent))
+            }
+        }
+        if doc.report.pages.isEmpty { doc.report.pages = [Page(name: "Page 1")] }
+        return (doc, warnings)
+    }
+
+    private static func readPBIR(def: URL, reportJSON: JSONValue, resources: URL, into doc: inout FacetDocument, warnings: inout [ImportWarning]) throws {
+        let fm = FileManager.default
+        func json(_ u: URL) -> JSONValue? { (try? Data(contentsOf: u)).flatMap { try? JSONValue.parse($0) } }
+        let head = PBIR.readReport(reportJSON, resource: { try? Data(contentsOf: resources.appendingPathComponent($0)) }, warnings: &warnings)
+        doc.report = head.report
+        doc.dataSources = head.dataSources
+
+        let pagesDir = def.appendingPathComponent("pages")
+        let index = json(pagesDir.appendingPathComponent("pages.json"))
+        var pageDirs = ((try? fm.contentsOfDirectory(at: pagesDir, includingPropertiesForKeys: nil)) ?? []).filter { fm.isDirectory($0) }
+        let order = index?["pageOrder"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        pageDirs.sort { a, b in
+            let ia = order.firstIndex(of: a.lastPathComponent) ?? Int.max, ib = order.firstIndex(of: b.lastPathComponent) ?? Int.max
+            return ia != ib ? ia < ib : a.lastPathComponent < b.lastPathComponent
+        }
+        for dir in pageDirs {
+            let location = "pages/\(dir.lastPathComponent)"
+            guard let pj = json(dir.appendingPathComponent("page.json")) else {
+                warnings.append(ImportWarning("page.json is missing or invalid; the page was skipped.", location: location))
+                continue
+            }
+            var visuals: [VisualSpec] = []
+            var groups: [UUID: String] = [:]
+            let visualDirs = ((try? fm.contentsOfDirectory(at: dir.appendingPathComponent("visuals"), includingPropertiesForKeys: nil)) ?? [])
+                .filter { fm.isDirectory($0) }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+            for vd in visualDirs {
+                let vloc = "\(location)/visuals/\(vd.lastPathComponent)"
+                guard let vj = json(vd.appendingPathComponent("visual.json")) else {
+                    warnings.append(ImportWarning("visual.json is missing or invalid; the visual was skipped.", location: vloc))
+                    continue
+                }
+                if let g = vj["visualGroup"] {
+                    groups[stableUUID(from: vj["name"]?.stringValue ?? vd.lastPathComponent)] = g["displayName"]?.stringValue ?? "Group"
+                } else if let v = PBIR.readVisual(vj, mobile: json(vd.appendingPathComponent("mobile.json")), warnings: &warnings, location: vloc) {
+                    visuals.append(v)
+                }
+            }
+            // Restore the saved visual order (file listing is alphabetical); otherwise order by z.
+            let saved = PBIR.annotation(pj, PBIR.Annotation.page)
+            if let savedOrder = saved?["visualOrder"]?.arrayValue?.compactMap({ $0.stringValue.flatMap(UUID.init(uuidString:)) }) {
+                visuals.sort { (savedOrder.firstIndex(of: $0.id) ?? Int.max, $0.zIndex) < (savedOrder.firstIndex(of: $1.id) ?? Int.max, $1.zIndex) }
+            } else {
+                visuals.sort { ($0.zIndex, $0.frame.y, $0.frame.x) < ($1.zIndex, $1.frame.y, $1.frame.x) }
+            }
+            doc.report.pages.append(PBIR.readPage(pj, visuals: visuals, groups: groups, warnings: &warnings, location: location))
+        }
+        if let active = index?["activePageName"]?.stringValue.map(stableUUID) {
+            // Facet writes the landing page (or the first page) as the active page; a different value is an external edit.
+            let hasSaved = PBIR.annotation(reportJSON, PBIR.Annotation.report) != nil
+            let expected = head.report.landingPageID ?? doc.report.pages.first?.id
+            if !hasSaved || expected != active { doc.report.landingPageID = active }
+        }
+
+        // Bookmarks.
+        let bmDir = def.appendingPathComponent("bookmarks")
+        if let bmIndex = json(bmDir.appendingPathComponent("bookmarks.json")) {
+            var seen = Set<String>()
+            func load(_ name: String, group: String) {
+                guard seen.insert(name).inserted else { return }
+                guard let bj = json(bmDir.appendingPathComponent("\(name).bookmark.json")) else {
+                    warnings.append(ImportWarning("Bookmark file “\(name).bookmark.json” is missing.", location: "bookmarks"))
+                    return
+                }
+                doc.report.bookmarks.append(PBIR.readBookmark(bj, group: group, warnings: &warnings, location: "bookmarks/\(name)"))
+            }
+            for item in bmIndex["items"]?.arrayValue ?? [] {
+                if let children = item["children"]?.arrayValue {
+                    for c in children.compactMap(\.stringValue) { load(c, group: item["displayName"]?.stringValue ?? "") }
+                } else if let n = item["name"]?.stringValue { load(n, group: "") }
+            }
+            if let order = head.bookmarkOrder, Set(order) == Set(doc.report.bookmarks.map(\.id)) {
+                doc.report.bookmarks.sort { (order.firstIndex(of: $0.id) ?? 0) < (order.firstIndex(of: $1.id) ?? 0) }
+            }
+        }
+    }
+}
