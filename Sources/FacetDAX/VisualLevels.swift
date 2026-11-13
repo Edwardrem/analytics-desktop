@@ -5,25 +5,27 @@ import FacetCore
 final class VisualLevels {
     private let leaf: TableValue
     private let axis: [Int]
-    /// Supplied level grids, keyed by the axis columns they keep.
     private var cache: [[Int]: TableValue] = [:]
+    /// Supplied level grids in the leaf layout (nil where the level lacks a column), keyed by the axis columns they keep.
+    private var supplied: [[Int]: [[Value?]]] = [:]
 
-    init(leaf: TableValue, axis: [Int], supplied: [DataTable]) {
+    /// - Parameter names: the grid's column names, by which supplied levels are matched.
+    init(leaf: TableValue, names: [String], axis: [Int], supplied levels: [DataTable]) {
         self.leaf = leaf
         self.axis = axis
         cache[axis.sorted()] = leaf
-        for level in supplied {
-            // Map the level's columns onto the leaf layout by name; columns it lacks are blank.
-            let source = leaf.cols.infos.map { level.columnIndex($0.name) }
-            let kept = axis.filter { source[$0] != nil }.sorted()
-            let rows: [[Value]] = (0..<level.rowCount).map { r in
-                source.map { $0.map { level.columns[$0].values[safe: r] ?? .null } ?? .null }
+        for level in levels {
+            let source = names.map { level.columnIndex($0) }
+            let kept = axis.filter { source[safe: $0].flatMap { $0 } != nil }.sorted()
+            supplied[kept] = (0..<level.rowCount).map { r in
+                source.map { $0.map { level.columns[$0].values[safe: r] ?? .null } }
             }
-            cache[kept] = TableValue(cols: leaf.cols, rows: rows)
         }
     }
 
     /// The grid that keeps only the given axis columns: one row per combination of their values.
+    /// Values come from the supplied grid of that level; a column it lacks, or a level that was
+    /// not supplied, is summed from the leaf rows.
     func grid(keeping kept: [Int]) -> TableValue {
         let key = kept.sorted()
         if let hit = cache[key] { return hit }
@@ -37,11 +39,17 @@ final class VisualLevels {
         }
         // The grand total exists even for an empty grid.
         if key.isEmpty, order.isEmpty { order = [[]]; groups[[]] = [] }
+        var real: [[Value]: [Value?]] = [:]
+        for row in supplied[key] ?? [] {
+            let k = key.map { (row[safe: $0] ?? nil) ?? .null }
+            if real[k] == nil { real[k] = row }
+        }
         let rows: [[Value]] = order.map { k in
             let members = groups[k] ?? []
             return (0..<leaf.cols.count).map { c in
-                if keptSet.contains(c) { return leaf.data[members[0]][safe: c] ?? .null }
+                if keptSet.contains(c) { return members.first.map { leaf.data[$0][safe: c] ?? .null } ?? .null }
                 if axisSet.contains(c) { return .null }
+                if let value = real[k]?[safe: c] ?? nil { return value }
                 return VisualLevels.sum(members.map { leaf.data[$0][safe: c] ?? .null })
             }
         }

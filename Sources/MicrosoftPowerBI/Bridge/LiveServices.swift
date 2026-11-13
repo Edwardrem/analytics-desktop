@@ -52,14 +52,19 @@ final class LiveCalculation: CalculationService {
 
     /// Builds the SUMMARIZECOLUMNS query for a visual, exactly as Power BI generates them:
     /// grouping fields, filter tables, then name/expression pairs for the value wells.
+    ///
+    /// The category well follows the visual's drill state (see `drillPlan`). With a cross-highlight
+    /// selection the result has one row per group of the unhighlighted query: `baseline` holds the
+    /// unhighlighted values and `table` the values under the highlight (blank where a group has none).
     func visualData(spec: VisualSpec, request: VisualRequest) -> VisualData {
         let start = CFAbsoluteTimeGetCurrent()
         if spec.type.isSlicer { return slicerData(spec, request) }
 
+        let drill = Self.drillPlan(spec)
         var groups: [(well: Well, field: FieldRef)] = []
         var values: [(well: Well, field: FieldRef)] = []
         for well in spec.type.wells where well != .tooltips {
-            for f in spec.fields(well) {
+            for f in well == .category ? drill.category : spec.fields(well) {
                 if f.isAggregate {
                     values.append((well, f))
                 } else if well.isGrouping {
@@ -82,23 +87,27 @@ final class LiveCalculation: CalculationService {
             taken.insert(name)
             valueNames.append(name)
         }
-        var args: [String] = groups.map { ModelDAX.reference($0.field) }
-        args += filterTables(request)
-        for (i, v) in values.enumerated() {
-            args.append(ModelDAX.string(valueNames[i]))
-            args.append(ModelDAX.aggregate(v.field, model: model))
+        // A highlight only makes sense on grouped values; anywhere else the selection filters.
+        let highlighting = !request.highlights.isEmpty && !groups.isEmpty && !values.isEmpty
+        var filters = filterTables(request)
+        filters += drill.path.map { "FILTER(ALL(\(ModelDAX.reference($0.field))), \(ModelDAX.reference($0.field)) IN { \(ModelDAX.literal($0.value)) })" }
+        let highlightTables = request.highlights.flatMap(crossFilterTables)
+        if !highlighting { filters += highlightTables }
+        let valueArgs = values.indices.flatMap { [ModelDAX.string(valueNames[$0]), ModelDAX.aggregate(values[$0].field, model: model)] }
+
+        /// The query grouped by the first `depth` grouping fields, with extra filter tables.
+        func summarize(depth: Int, extra: [String] = [], limited: Bool) -> String {
+            let args = groups.prefix(depth).map { ModelDAX.reference($0.field) } + filters + extra + valueArgs
+            let inner = "SUMMARIZECOLUMNS(\n" + args.map { "        " + $0 }.joined(separator: ",\n") + "\n    )"
+            if limited, request.rowLimit > 0 {
+                return "EVALUATE\n    TOPN(\(request.rowLimit),\n" + inner.split(separator: "\n").map { "        " + $0 }.joined(separator: "\n") + "\n    )"
+            }
+            return "EVALUATE\n" + inner.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
         }
-        let inner = "SUMMARIZECOLUMNS(\n" + args.map { "        " + $0 }.joined(separator: ",\n") + "\n    )"
-        var dax: String
-        if request.rowLimit > 0 {
-            dax = "EVALUATE\n    TOPN(\(request.rowLimit),\n" + inner.split(separator: "\n").map { "        " + $0 }.joined(separator: "\n") + "\n    )"
-        } else {
-            dax = "EVALUATE\n" + inner.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
-        }
+        let dax = summarize(depth: groups.count, limited: true)
 
         do {
-            let tables = try engine.query(dax)
-            guard let table = tables.first else { return VisualData(error: "The visual query returned no result.") }
+            guard let table = try engine.query(dax).first else { return VisualData(error: "The visual query returned no result.") }
             var roles: [String: [Int]] = [:]
             var fields: [FieldRef?] = []
             var formats: [String] = []
@@ -114,23 +123,35 @@ final class LiveCalculation: CalculationService {
                 formats.append(formatString(for: v.field))
             }
             var result = table
-            // Visual calculations evaluate over the visual's own result grid.
-            for calc in spec.visualCalculations {
-                let axisNames = groups.compactMap { g -> String? in
-                    guard let i = groups.firstIndex(where: { $0.field.key == g.field.key }) else { return nil }
-                    return result.columns[safe: i]?.name
+            var baseline: DataTable?
+            if highlighting {
+                let highlighted = try engine.query(summarize(depth: groups.count, extra: highlightTables, limited: false)).first ?? DataTable()
+                baseline = table
+                result = Self.aligned(highlighted, to: table, keys: groups.count)
+            }
+            // Visual calculations evaluate over the visual's own result grid, with the real
+            // subtotals of every higher level (so COLLAPSE is exact for non-additive values too).
+            if !spec.visualCalculations.isEmpty {
+                let axisNames = groups.indices.compactMap { result.columns[safe: $0]?.name }
+                let extra = highlighting ? highlightTables : []
+                let levels: [DataTable] = values.isEmpty ? [] : (0..<groups.count).compactMap { depth in
+                    (try? engine.query(summarize(depth: depth, extra: extra, limited: false)))?.first
                 }
-                guard let computed = try? engine.visualCalculation(calc.expression, on: result, rowAxis: axisNames) else { continue }
-                result.columns.append(DataColumn(name: calc.name, type: .any, values: computed))
-                fields.append(nil)
-                formats.append(calc.formatString)
+                for calc in spec.visualCalculations {
+                    guard let computed = try? engine.visualCalculation(calc.expression, on: result, rowAxis: axisNames, levels: levels) else { continue }
+                    result.columns.append(DataColumn(name: calc.name, type: .any, values: computed))
+                    fields.append(nil)
+                    formats.append(calc.formatString)
+                }
             }
             var totals = [Value](repeating: .null, count: result.columnCount)
-            if !values.isEmpty, !groups.isEmpty {
-                totals = grandTotals(values: values, names: valueNames, request: request, offset: groups.count, count: result.columnCount) ?? totals
+            if !values.isEmpty, !groups.isEmpty,
+               let row = try? engine.query(summarize(depth: 0, limited: false)).first?.rows.first, row.count == values.count {
+                for (i, v) in row.enumerated() { totals[groups.count + i] = v }
             }
             let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
             var out = VisualData(table: result, roles: roles, fields: fields, formats: formats, totals: totals)
+            out.baseline = baseline
             out.queryMilliseconds = ms
             out.daxQuery = dax
             return out
@@ -143,10 +164,44 @@ final class LiveCalculation: CalculationService {
         }
     }
 
+    /// What a visual's category well groups by at its drill state, as Power BI does:
+    /// - not drilled: the first field of the hierarchy;
+    /// - drilled into a data point: the field at the drill level, filtered to the drilled path;
+    /// - "go to next level": the field at the drill level, for every parent;
+    /// - "expand all down one level": every field down to the drill level.
+    /// A sunburst draws all its levels at once and a single field has nothing to drill.
+    static func drillPlan(_ spec: VisualSpec) -> (category: [FieldRef], path: [(field: FieldRef, value: Value)]) {
+        let all = spec.fields(.category)
+        let hierarchy = all.filter { !$0.isAggregate }
+        guard hierarchy.count > 1, hierarchy.count == all.count, spec.type != .sunburst else { return (all, []) }
+        let level = min(max(0, spec.drillLevel), hierarchy.count - 1)
+        if spec.expandedAllLevels { return (Array(hierarchy.prefix(level + 1)), []) }
+        let path = zip(hierarchy.prefix(level), spec.drillPath).map { (field: $0, value: $1) }
+        return ([hierarchy[level]], path)
+    }
+
+    /// `source` re-laid on the rows of `shape`: the same rows in the same order, matched on the
+    /// first `keys` columns, with blank values where `source` has no such row.
+    static func aligned(_ source: DataTable, to shape: DataTable, keys: Int) -> DataTable {
+        var index: [[Value]: Int] = [:]
+        for r in 0..<source.rowCount where index[(0..<keys).map { source[r, $0] }] == nil {
+            index[(0..<keys).map { source[r, $0] }] = r
+        }
+        var out = shape
+        for c in keys..<shape.columnCount {
+            let from = source.columnIndex(shape.columns[c].name)
+            out.columns[c].values = (0..<shape.rowCount).map { r in
+                guard let from, let hit = index[(0..<keys).map { shape[r, $0] }] else { return .null }
+                return source[hit, from]
+            }
+        }
+        return out
+    }
+
     /// The distinct values of a slicer's field under the other filters.
     private func slicerData(_ spec: VisualSpec, _ request: VisualRequest) -> VisualData {
         guard let field = spec.fields(.field).first, field.kind == .column else { return VisualData() }
-        var args = [ModelDAX.reference(field)] + filterTables(request)
+        let args = [ModelDAX.reference(field)] + filterTables(request)
         let inner = "SUMMARIZECOLUMNS(\n" + args.map { "        " + $0 }.joined(separator: ",\n") + "\n    )"
         let dax = "EVALUATE\n" + inner.split(separator: "\n").map { "    " + $0 }.joined(separator: "\n")
         do {
@@ -265,49 +320,9 @@ final class LiveCalculation: CalculationService {
         }
     }
 
-    /// The date window of a relative date filter, computed in Swift (UTC).
-    private func relativeWindow(_ relative: RelativeDateFilter) -> ClosedRange<Date> {
-        let now = Date()
-        let calendar = Calendar.utc
-        let unit: Calendar.Component
-        switch relative.unit {
-        case .minutes: unit = .minute
-        case .hours: unit = .hour
-        case .days, .weeks, .calendarWeeks: unit = .day
-        case .months, .calendarMonths: unit = .month
-        case .years, .calendarYears: unit = .year
-        }
-        func add(_ d: Date, _ n: Int) -> Date { calendar.date(byAdding: unit, value: n, to: d) ?? d }
-        let lower: Date, upper: Date
-        switch relative.direction {
-        case .this:
-            lower = relative.unit == .days ? calendar.startOfDay(for: now) : now
-            upper = add(lower, 1)
-        case .last:
-            upper = relative.includeToday ? add(now, 1) : now
-            lower = add(upper, -relative.count)
-        case .next:
-            lower = relative.includeToday ? now : add(now, 1)
-            upper = add(lower, relative.count)
-        }
-        return lower...upper
-    }
-
-    /// One summary row: the value expressions evaluated without grouping columns.
-    private func grandTotals(values: [(well: Well, field: FieldRef)], names: [String], request: VisualRequest,
-                             offset: Int, count: Int) -> [Value]? {
-        var args: [String] = filterTables(request)
-        for (i, v) in values.enumerated() {
-            args.append(ModelDAX.string(names[safe: i] ?? "Total \(i)"))
-            args.append(ModelDAX.aggregate(v.field, model: model))
-        }
-        let dax = "EVALUATE\n    SUMMARIZECOLUMNS(\n" + args.map { "        " + $0 }.joined(separator: ",\n") + "\n    )"
-        guard let tables = try? engine.query(dax), let row = tables.first?.rows.first, tables.first?.columnCount == values.count else { return nil }
-        var totals = [Value](repeating: .null, count: count)
-        for (i, v) in row.enumerated() where i < values.count {
-            totals[offset + i] = v
-        }
-        return totals
+    /// The date window of a relative date filter: the same one the engine's own filters use.
+    private func relativeWindow(_ relative: RelativeDateFilter) -> Range<Date> {
+        RelativeDates.window(relative)
     }
 }
 

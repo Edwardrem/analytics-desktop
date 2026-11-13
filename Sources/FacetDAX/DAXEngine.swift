@@ -610,12 +610,19 @@ public final class DAXEngine {
     public func visualCalculation(_ expression: String, on grid: DataTable, rowAxis: [String] = [], colAxis: [String] = [],
                                   levels: [DataTable] = []) throws -> [Value] {
         let node = try Parser.parseExpression(expression)
-        let cols = Columns(grid.columns.map { ColInfo(name: $0.name) })
+        // A model column arrives as `Table[Column]`: the calculation refers to it as [Column].
+        let cols = Columns(grid.columns.map { column -> ColInfo in
+            if column.name.hasSuffix("]"), let open = column.name.firstIndex(of: "["), open != column.name.startIndex {
+                let inner = column.name[column.name.index(after: open)..<column.name.index(before: column.name.endIndex)]
+                return ColInfo(name: String(inner), table: String(column.name[..<open]))
+            }
+            return ColInfo(name: column.name)
+        })
         let tv = TableValue(cols: cols, rows: grid.rows)
-        func indexOf(_ names: [String]) -> [Int] { names.compactMap { cols.byName[$0.daxKey] } }
+        func indexOf(_ names: [String]) -> [Int] { names.compactMap { grid.columnIndex($0) ?? cols.byName[$0.daxKey] } }
         let rows = indexOf(rowAxis), columns = indexOf(colAxis)
         let vc = VisualCalcContext(grid: tv, rowAxis: rows, colAxis: columns, allRowFields: rowAxis, allColFields: colAxis)
-        let builder = VisualLevels(leaf: tv, axis: rows + columns, supplied: levels)
+        let builder = VisualLevels(leaf: tv, names: grid.columnNames, axis: rows + columns, supplied: levels)
         vc.levelGrid = { kept in builder.grid(keeping: kept) }
         var ctx = Ctx(fc: FilterContext(db: db))
         var out: [Value] = []
