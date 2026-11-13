@@ -64,6 +64,10 @@ final class VisualDataTests: XCTestCase {
         model.calculationGroups = [scale]
         model.tables = [productTable, sales]
         model.relationships = [Relationship(fromTable: "Sales", fromColumn: "Product", toTable: "Product", toColumn: "Product")]
+        // Field parameters, installed the way the Parameters dialog does.
+        ParameterLogic.install(fieldParameter: "Metric", fields: [.measure("Sales", "Total Amount"), .measure("Sales", "Avg Price"),
+                                                                 .column("Sales", "Qty", .sum)], into: &model)
+        ParameterLogic.install(fieldParameter: "Axis", fields: [category, region, .column("Product", "Color")], into: &model)
         let products = DataTable(name: "Product", columnNames: ["Product", "Category", "Color"], rows: [
             ["Widget", "Tools", "Red"], ["Gadget", "Tools", "Blue"], ["Gizmo", "Toys", "Red"], ["Doohickey", "Toys", "Blue"],
         ], types: [.text, .text, .text])
@@ -225,6 +229,82 @@ final class VisualDataTests: XCTestCase {
         var west = east
         west.values = ["West"]
         XCTAssertEqual(run(card, request(filters: [west])).formats, ["$#,0"])
+    }
+
+    // MARK: Field parameters
+
+    private let metric = FieldRef.column("Metric", "Metric")
+    private let axis = FieldRef.column("Axis", "Axis")
+    private func parameterSlicer(_ field: FieldRef, _ selected: Value...) -> VisualRequest {
+        var state = SlicerState()
+        state.selected = selected
+        var r = VisualRequest()
+        r.slicers = [.init(fields: [field], state: state, type: .slicer)]
+        return r
+    }
+
+    func testUnfilteredFieldParameterShowsAllItsFieldsInOrder() {
+        let data = run(visual(.clusteredColumn, [.category: [category], .values: [metric]]))
+        XCTAssertEqual(data.fields.map { $0?.caption }, ["Category", "Total Amount", "Avg Price", "Sum of Qty"])
+        XCTAssertEqual(data.indices(.values), [1, 2, 3])
+        XCTAssertEqual(rows(data.table, value: 1), ["Tools": 170, "Toys": 220])
+        XCTAssertEqual(number(rows(data.table, value: 2), "Tools"), 17, accuracy: 1e-12)
+        XCTAssertEqual(rows(data.table, value: 3), ["Tools": 10, "Toys": 9])
+        XCTAssertEqual(data.formats, ["", "#,0", "0.00", ""])
+        XCTAssertEqual(data.totals[3].asDouble, 19)
+    }
+
+    func testSlicerOnAFieldParameterSwapsTheMeasures() {
+        let byCategory = visual(.clusteredColumn, [.category: [category], .values: [metric]])
+        let one = run(byCategory, parameterSlicer(metric, "Avg Price"))
+        XCTAssertEqual(one.fields.map { $0?.caption }, ["Category", "Avg Price"])
+        XCTAssertEqual(number(rows(one.table, value: 1), "Toys"), 220.0 / 9.0, accuracy: 1e-12)
+        // Two selected, listed in parameter order whatever the order they were picked in.
+        let two = run(byCategory, parameterSlicer(metric, "Sum of Qty", "Total Amount"))
+        XCTAssertEqual(two.fields.map { $0?.caption }, ["Category", "Total Amount", "Sum of Qty"])
+        XCTAssertEqual(rows(two.table, value: 2), ["Tools": 10, "Toys": 9])
+        // A filter on the parameter works like the slicer.
+        var filter = FilterSpec(field: metric)
+        filter.values = ["Total Amount"]
+        XCTAssertEqual(run(byCategory, request(filters: [filter])).fields.map { $0?.caption }, ["Category", "Total Amount"])
+    }
+
+    func testFieldParameterOnTheAxisSwapsColumns() {
+        let chart = visual(.clusteredColumn, [.category: [axis], .values: [amount]])
+        let byRegion = run(chart, parameterSlicer(axis, "Region"))
+        XCTAssertEqual(byRegion.fields.map { $0?.name }, ["Region", "Total Amount"])
+        XCTAssertEqual(rows(byRegion.table, value: 1), ["East": 160, "West": 230])
+        let byColor = run(chart, parameterSlicer(axis, "Color"))
+        XCTAssertEqual(rows(byColor.table, value: 1), ["Red": 150, "Blue": 240])
+        // Unfiltered, the three columns form the axis hierarchy: the first level shows until drilled.
+        let all = run(chart)
+        XCTAssertEqual(all.fields.map { $0?.name }, ["Category", "Total Amount"])
+        var expanded = chart
+        expanded.drillLevel = 1; expanded.expandedAllLevels = true
+        XCTAssertEqual(run(expanded).fields.map { $0?.name }, ["Category", "Region", "Total Amount"])
+        // In a table every selected column is shown.
+        let table = run(visual(.table, [.values: [axis, amount]]), parameterSlicer(axis, "Category", "Color"))
+        XCTAssertEqual(table.fields.map { $0?.name }, ["Category", "Color", "Total Amount"])
+        XCTAssertEqual(rows(table.table, keys: 2, value: 2), ["Tools/Red": 30, "Tools/Blue": 140, "Toys/Red": 120, "Toys/Blue": 100])
+    }
+
+    func testBothParametersAndOtherFiltersTogether() {
+        var east = FilterSpec(field: region)
+        east.values = ["East"]
+        var r = parameterSlicer(axis, "Color")
+        var metricState = SlicerState()
+        metricState.selected = ["Sum of Qty"]
+        r.slicers.append(.init(fields: [metric], state: metricState, type: .slicer))
+        r.filters = [east]
+        let data = run(visual(.clusteredBar, [.category: [axis], .values: [metric]]), r)
+        XCTAssertEqual(data.fields.map { $0?.caption }, ["Color", "Sum of Qty"])
+        // East: Widget 1 + Gizmo 1 (Red), Gadget 2 + Doohickey 4 (Blue).
+        XCTAssertEqual(rows(data.table, value: 1), ["Red": 2, "Blue": 6])
+    }
+
+    func testFieldParameterSlicerListsTheChoices() {
+        let data = run(visual(.slicer, [.field: [metric]]))
+        XCTAssertEqual(Set(data.table.columns[0].values), ["Total Amount", "Avg Price", "Sum of Qty"])
     }
 
     // MARK: Filters, slicers and cross-filtering
