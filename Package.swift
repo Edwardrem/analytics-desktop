@@ -1,7 +1,7 @@
 // swift-tools-version:5.10
 import PackageDescription
 
-// Power BI Desktop — a native, Apple-silicon business intelligence studio for macOS.
+// Analytics Desktop — a native, Apple-silicon business intelligence studio for macOS.
 // No third-party dependencies: system frameworks only.
 let swift5: [SwiftSetting] = [.unsafeFlags(["-Xfrontend", "-strict-concurrency=minimal"])]
 
@@ -30,5 +30,6 @@ let package = Package(
         .testTarget(name: "FacetInteropTests", dependencies: ["FacetInterop"], swiftSettings: swift5),
         .testTarget(name: "FacetAnalyticsTests", dependencies: ["FacetAnalytics"], swiftSettings: swift5),
         .testTarget(name: "FacetVisualsTests", dependencies: ["FacetVisuals"], swiftSettings: swift5),
+        .testTarget(name: "MicrosoftPowerBITests", dependencies: ["MicrosoftPowerBI", "FacetCore"], swiftSettings: swift5),
     ]
 )

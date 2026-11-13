@@ -1,4 +1,5 @@
 import Foundation
+import FacetCore
 import Network
 
 /// A one-shot HTTP listener on the loopback interface that receives the OAuth redirect
@@ -278,20 +279,20 @@ enum SignInPages {
         <div class="mark" aria-hidden="true">\(glyph)</div>
         <h1>\(escape(heading))</h1>
         <p>\(escape(detail))</p>
-        <p class="foot">Power BI Desktop</p>
+        <p class="foot">Analytics Desktop</p>
         </main></body></html>
         """
     }
 
     static func success() -> String {
-        page(title: "Signed in — Power BI Desktop", heading: "You're signed in",
-             detail: "Return to Power BI to continue. You can close this tab.", accent: "#1f8a4c", glyph: "&#10003;")
+        page(title: "Signed in — Analytics Desktop", heading: "You're signed in",
+             detail: "Return to \(AppIdentity.name) to continue. You can close this tab.", accent: "#1f8a4c", glyph: "&#10003;")
     }
 
     static func error(title: String, detail: String) -> String {
         // Keep long setup instructions out of the browser page; Facet shows the full message.
         let short = detail.count > 400 ? String(detail.prefix(400)) + "…" : detail
-        return page(title: "Sign-in — Power BI Desktop", heading: title, detail: short + " Return to Power BI Desktop to try again.", accent: "#c4372b", glyph: "!")
+        return page(title: "Sign-in — Analytics Desktop", heading: title, detail: short + " Return to Analytics Desktop to try again.", accent: "#c4372b", glyph: "!")
     }
 
     static func escape(_ s: String) -> String {
