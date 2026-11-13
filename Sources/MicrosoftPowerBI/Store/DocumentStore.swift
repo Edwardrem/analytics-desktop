@@ -740,39 +740,7 @@ final class DocumentStore: ObservableObject {
     /// Change a visual's type, carrying fields over to the closest wells of the new type.
     func changeType(of id: UUID, to type: VisualType) {
         updateVisual(id, name: "Change Visual Type") { v in
-            let old = v.wells
-            let groups = v.type.wells.filter(\.isGrouping).flatMap { old[$0.rawValue] ?? [] }
-            let values = v.type.wells.filter { !$0.isGrouping && $0 != .tooltips }.flatMap { old[$0.rawValue] ?? [] }
-            let tooltips = old[Well.tooltips.rawValue] ?? []
-            v.type = type
-            v.wells = [:]
-            let targetGroups = type.wells.filter(\.isGrouping)
-            let targetValues = type.wells.filter { !$0.isGrouping && $0 != .tooltips }
-            // Preserve same-named wells first, then spill the rest in order.
-            var remainingGroups = groups, remainingValues = values
-            for w in type.wells {
-                if let f = old[w.rawValue], !f.isEmpty {
-                    v.wells[w.rawValue] = f
-                    remainingGroups.removeAll { g in f.contains { $0.id == g.id } }
-                    remainingValues.removeAll { g in f.contains { $0.id == g.id } }
-                }
-            }
-            if let first = targetGroups.first(where: { v.fields($0).isEmpty }), !remainingGroups.isEmpty {
-                v.setFields(first, remainingGroups)
-            } else if let first = targetGroups.first, !remainingGroups.isEmpty {
-                v.setFields(first, v.fields(first) + remainingGroups)
-            }
-            if let first = targetValues.first, !remainingValues.isEmpty {
-                v.setFields(first, v.fields(first) + remainingValues.map { f in
-                    var f = f
-                    if f.kind == .column, f.aggregation == .none, type != .table {
-                        f.aggregation = self.defaultAggregation(for: f)
-                    }
-                    return f
-                })
-            }
-            if type.wells.contains(.tooltips), !tooltips.isEmpty { v.setFields(.tooltips, tooltips) }
-            if v.name == VisualType.allCases.first(where: { $0.displayName == v.name })?.displayName { v.name = type.displayName }
+            VisualRetype.apply(&v, to: type) { self.defaultAggregation(for: $0) }
         }
     }
 
