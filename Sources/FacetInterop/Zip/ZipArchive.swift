@@ -49,7 +49,8 @@ public final class ZipArchive {
         public var maxTotalUncompressedSize: UInt64 = 4 * 1024 * 1024 * 1024
         /// Maximum uncompressed size of one entry read into memory with `data(for:)`.
         public var maxEntrySize: UInt64 = 2 * 1024 * 1024 * 1024
-        public var maxEntryCount = 1_000_000
+        /// Maximum number of entries. Document formats hold tens to a few thousand; more is treated as hostile.
+        public var maxEntryCount = 100_000
         public init() {}
         public init(maxTotalUncompressedSize: UInt64) { self.maxTotalUncompressedSize = maxTotalUncompressedSize }
     }
