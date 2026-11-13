@@ -588,6 +588,24 @@ public final class DAXEngine {
         return try scalar(node, ctx)
     }
 
+    /// The format string in effect for a measure in a filter context: its dynamic format string
+    /// expression when it has one, then the format expressions of the calculation items selected
+    /// in that context (highest precedence outermost), else the measure's static format string.
+    /// - Parameters:
+    ///   - measure: the measure's name.
+    ///   - filters: filter specifications of the context (report, page and visual filters).
+    ///   - filterTables: further filters as DAX table expressions, as passed to SUMMARIZECOLUMNS.
+    /// - Returns: nil when the model has no such measure.
+    public func formatString(forMeasure measure: String, filters: [FilterSpec] = [], filterTables: [String] = []) throws -> String? {
+        guard let def = lookupMeasure(measure.daxKey) else { return nil }
+        var ctx = try rootContext(filters)
+        if !filterTables.isEmpty {
+            let nodes = try filterTables.map { try Parser.parseExpression($0) }
+            ctx = try calculateContext(nodes[...], ctx)
+        }
+        return formatString(for: def, ctx)
+    }
+
     /// The distinct values of a field under filters, capped at `limit`.
     public func distinctValues(field: FieldRef, filters: [FilterSpec], limit: Int = 1000) -> [Value] {
         guard field.kind == .column, field.aggregation == .none,

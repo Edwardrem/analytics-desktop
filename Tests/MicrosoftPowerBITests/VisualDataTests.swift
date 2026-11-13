@@ -49,7 +49,19 @@ final class VisualDataTests: XCTestCase {
             Measure(name: "Total Amount", expression: "SUM(Sales[Amount])", formatString: "#,0"),
             Measure(name: "Avg Price", expression: "DIVIDE(SUM(Sales[Amount]), SUM(Sales[Qty]))", formatString: "0.00"),
         ]
+        // A measure whose format follows the region in context.
+        var dynamic = Measure(name: "Amount Auto", expression: "SUM(Sales[Amount])", formatString: "0")
+        dynamic.formatExpression = "IF(SELECTEDVALUE(Sales[Region]) = \"East\", \"€#,0\", \"$#,0\")"
+        sales.measures.append(dynamic)
+        // A calculation group: Units (as is) and Share (of all products, formatted as a percentage).
+        var scale = CalculationGroup(name: "Scale")
+        scale.columnName = "Scale"
+        var share = CalculationItem(name: "Share", expression: "DIVIDE(SELECTEDMEASURE(), CALCULATE(SELECTEDMEASURE(), REMOVEFILTERS(Product)))")
+        share.formatExpression = "\"0.0%\""
+        share.ordinal = 1
+        scale.items = [CalculationItem(name: "Units", expression: "SELECTEDMEASURE()"), share]
         var model = SemanticModel()
+        model.calculationGroups = [scale]
         model.tables = [productTable, sales]
         model.relationships = [Relationship(fromTable: "Sales", fromColumn: "Product", toTable: "Product", toColumn: "Product")]
         let products = DataTable(name: "Product", columnNames: ["Product", "Category", "Color"], rows: [
@@ -175,6 +187,44 @@ final class VisualDataTests: XCTestCase {
         limited.rowLimit = 3
         XCTAssertEqual(run(visual(.table, [.values: [product, amount]]), limited).table.rowCount, 3)
         XCTAssertEqual(run(visual(.table, [.values: [product, amount]])).table.rowCount, 4)
+    }
+
+    // MARK: Format strings
+
+    func testCalculationItemFormatStringReachesTheVisual() {
+        let byCategory = visual(.clusteredColumn, [.category: [category], .values: [amount, .column("Sales", "Qty", .sum)]])
+        XCTAssertEqual(run(byCategory).formats, ["", "#,0", ""])
+        // The Share item is selected by a slicer on the calculation group.
+        var state = SlicerState()
+        state.selected = ["Share"]
+        var sliced = VisualRequest()
+        sliced.slicers = [.init(fields: [.column("Scale", "Scale")], state: state, type: .slicer)]
+        let data = run(byCategory, sliced)
+        // The measure takes the item's format and value (170 / 390, 220 / 390); the implicit measure is untouched.
+        XCTAssertEqual(data.formats, ["", "0.0%", ""])
+        XCTAssertEqual(number(rows(data.table, value: 1), "Tools"), 170.0 / 390.0, accuracy: 1e-12)
+        XCTAssertEqual(number(rows(data.table, value: 2), "Tools"), 10)
+        XCTAssertEqual(data.formatted(row: 0, col: 1).hasSuffix("%"), true)
+        // An item without a format expression keeps the measure's format; so does a filter.
+        var units = FilterSpec(field: .column("Scale", "Scale"))
+        units.values = ["Units"]
+        XCTAssertEqual(run(byCategory, request(filters: [units])).formats, ["", "#,0", ""])
+        var shareFilter = units
+        shareFilter.values = ["Share"]
+        XCTAssertEqual(run(byCategory, request(filters: [shareFilter])).formats, ["", "0.0%", ""])
+    }
+
+    func testDynamicFormatStringFollowsTheVisualsFilters() {
+        let card = visual(.card, [.values: [.measure("Sales", "Amount Auto")]])
+        XCTAssertEqual(run(card).formats, ["$#,0"])
+        var east = FilterSpec(field: region)
+        east.values = ["East"]
+        XCTAssertEqual(run(card, request(filters: [east])).formats, ["€#,0"])
+        let selection = [DataPointSelection(fields: [region], values: ["East"])]
+        XCTAssertEqual(run(card, request(crossFilters: [selection])).formats, ["€#,0"])
+        var west = east
+        west.values = ["West"]
+        XCTAssertEqual(run(card, request(filters: [west])).formats, ["$#,0"])
     }
 
     // MARK: Filters, slicers and cross-filtering

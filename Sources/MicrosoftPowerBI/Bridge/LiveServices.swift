@@ -120,7 +120,7 @@ final class LiveCalculation: CalculationService {
                 let i = groups.count + k
                 roles[v.well.rawValue, default: []].append(i)
                 fields.append(v.field)
-                formats.append(formatString(for: v.field))
+                formats.append(formatString(for: v.field, filters: filters))
             }
             var result = table
             var baseline: DataTable?
@@ -218,9 +218,12 @@ final class LiveCalculation: CalculationService {
         }
     }
 
-    private func formatString(for field: FieldRef) -> String {
-        if field.kind == .measure { return model.table(field.table)?.measure(field.name)?.formatString ?? "" }
-        return model.table(field.table)?.column(field.name)?.formatString ?? ""
+    /// The format string of a value column. A measure's is the one in effect under the visual's
+    /// filters: its dynamic format string and the format of a selected calculation item.
+    private func formatString(for field: FieldRef, filters: [String] = []) -> String {
+        guard field.kind == .measure else { return model.table(field.table)?.column(field.name)?.formatString ?? "" }
+        if let dynamic = try? engine.formatString(forMeasure: field.name, filterTables: filters) { return dynamic }
+        return model.table(field.table)?.measure(field.name)?.formatString ?? ""
     }
     /// Filter tables for the visual's filters, other slicers and cross-filter selections.
     private func filterTables(_ request: VisualRequest) -> [String] {

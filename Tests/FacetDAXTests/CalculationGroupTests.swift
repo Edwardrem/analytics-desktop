@@ -151,6 +151,22 @@ final class CalculationGroupTests: TimeSchemaTestCase {
         XCTAssertEqual(try format("Amt Auto", []), "$#,0")
     }
 
+    func testPublicFormatStringAPI() throws {
+        XCTAssertEqual(try engine.formatString(forMeasure: "Amt"), "#,0")
+        XCTAssertEqual(try engine.formatString(forMeasure: "amt", filters: [calc("YoY %")]), "0.0%")
+        // Filters given as DAX table expressions, as the visual query layer passes them.
+        let item = "FILTER(ALL('Time Calc'[Calc]), 'Time Calc'[Calc] IN { \"YoY %\" })"
+        XCTAssertEqual(try engine.formatString(forMeasure: "Amt", filterTables: [item]), "0.0%")
+        let inK = "TREATAS({ \"In K\" }, 'Averages'[Average])"
+        XCTAssertEqual(try engine.formatString(forMeasure: "Orders", filterTables: [inK]), "0K")
+        XCTAssertEqual(try engine.formatString(forMeasure: "Amt", filters: [calc("PY")], filterTables: [inK]), "#,0K")
+        // Two items of one group: no item applies.
+        let two = "FILTER(ALL('Time Calc'[Calc]), 'Time Calc'[Calc] IN { \"YoY %\", \"PY\" })"
+        XCTAssertEqual(try engine.formatString(forMeasure: "Amt", filterTables: [two]), "#,0")
+        XCTAssertNil(try engine.formatString(forMeasure: "No Such Measure"))
+        XCTAssertThrowsError(try engine.formatString(forMeasure: "Amt", filterTables: ["FILTER("]))
+    }
+
     // MARK: Loading problems
 
     func testInvalidItemIsReportedAndItsGroupIsNotApplied() throws {
