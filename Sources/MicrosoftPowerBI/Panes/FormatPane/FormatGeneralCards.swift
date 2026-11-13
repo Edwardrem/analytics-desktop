@@ -1,68 +1,61 @@
 import SwiftUI
 import FacetCore
 import FacetDesign
+import FacetVisuals
 
-/// The General tab's Properties card: position and size. These live on the visual's frame rather
-/// than in the format bag, so they write through `store.setFrames` and have no catalog default.
-struct FormatPositionCard: View {
+/// The rows of the General tab's Properties card: position, size and rotation. These live on the
+/// visual's frame rather than in the format bag, so they have no catalog default to reset to.
+struct FormatPositionRows: View {
+    /// The rows to show (a search can narrow them).
+    let properties: [FormatProperty]
+    /// The frame in the layout being edited (desktop or phone).
     let frame: Frame
-    /// Writes x / y / width / height (points).
-    let move: (String, Double) -> Void
+    /// Writes one of x / y / width / height / rotation (nil rotation = none).
+    let move: (String, Double?) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Properties").font(Design.Typeface.bodyStrong)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Design.Space.m)
-                .padding(.vertical, Design.Space.s)
-            VStack(alignment: .leading, spacing: Design.Space.s) {
-                PropertyRow("X") { field("x", frame.x, 0...4_000) }
-                PropertyRow("Y") { field("y", frame.y, 0...4_000) }
-                PropertyRow("Width") { field("width", frame.width, 20...4_000) }
-                PropertyRow("Height") { field("height", frame.height, 20...4_000) }
-                PropertyRow("Rotation") {
-                    OptionalNumberField(value: frame.rotation == 0 ? nil : frame.rotation, onCommit: {
-                        if let v = $0 { move("rotation", v) }
-                    })
-                    .accessibilityLabel("Rotation")
-                    .help("Rotation in degrees — leave empty for none")
+        ForEach(properties) { p in
+            PropertyRow(p.label) {
+                FormatNumberField(label: Self.name(p.key), value: value(p.key),
+                                  placeholder: p.key == "rotation" ? "None" : "",
+                                  bounds: p.bounds, allowsEmpty: p.key == "rotation") {
+                    move(p.key, $0)
                 }
             }
-            .padding(.leading, 14)
-            .padding(.trailing, Design.Space.m)
-            .padding(.bottom, Design.Space.m)
-            Hairline()
         }
         .controlSize(.small)
     }
 
-    private func field(_ key: String, _ value: Double, _ range: ClosedRange<Double>) -> some View {
-        CommitNumberField(value: value, range: range) { move(key, $0) }
-            .accessibilityLabel(key == "x" ? "X position" : key == "y" ? "Y position" : key)
-            .help(key == "x" || key == "y" ? "Position in points" : "Size in points")
+    private func value(_ key: String) -> Double? {
+        switch key {
+        case "x": return frame.x
+        case "y": return frame.y
+        case "width": return frame.width
+        case "height": return frame.height
+        case "rotation": return frame.rotation == 0 ? nil : frame.rotation
+        default: return nil
+        }
+    }
+
+    private static func name(_ key: String) -> String {
+        switch key {
+        case "x": return "X position in points"
+        case "y": return "Y position in points"
+        case "width": return "Width in points"
+        case "height": return "Height in points"
+        default: return "Rotation in degrees"
+        }
     }
 }
 
-/// The General tab's Alt text card: read by screen readers instead of the visual's name.
-struct FormatAltTextCard: View {
+/// The rows of the General tab's Alt text card: read by screen readers instead of the visual's name.
+struct FormatAltTextRows: View {
     let altText: String
     let commit: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Alt text").font(Design.Typeface.bodyStrong)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Design.Space.m)
-                .padding(.vertical, Design.Space.s)
-            VStack(alignment: .leading, spacing: Design.Space.xs) {
-                CommitTextField("Describe this visual", text: altText, onCommit: commit)
-                PaneNote("Read by screen readers instead of the visual's name.")
-            }
-            .padding(.leading, 14)
-            .padding(.trailing, Design.Space.m)
-            .padding(.bottom, Design.Space.m)
-            Hairline()
-        }
-        .controlSize(.small)
+        CommitTextField("Describe this visual", text: altText, onCommit: commit)
+            .accessibilityLabel("Alt text")
+        PaneNote("Read by screen readers instead of the visual's name.")
     }
 }

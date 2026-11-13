@@ -72,7 +72,7 @@ struct CartesianOptions {
         reverseValue = f.bool(valCard, "reverse", false)
         reverseCategory = f.bool(catCard, "reverse", false)
         units = DisplayUnits(f.string(valCard, "displayUnits", "auto"))
-        decimals = f.value(valCard, "decimals")?.doubleValue.map { Int($0) }
+        decimals = f.decimals(valCard)
         showCatAxis = f.bool(catCard, "show", true)
         showValAxis = f.bool(valCard, "show", true)
         valGridlines = f.bool(valCard, "gridlines", true)

@@ -1,51 +1,69 @@
 import SwiftUI
 import FacetCore
 import FacetDesign
+import FacetVisuals
 
 /// One row of the Format pane: the property label on the left, the catalog kind's control on the
-/// right. All writes go through the pane's `write` closure (never directly into the model).
+/// right. The row shows the value in effect on `specs` (one visual, or several with "Mixed" where
+/// they differ) and reports edits through `write`; it never touches the model itself.
 struct FormatPropertyRow: View {
-    let property: FormatPropertyModel
-    let spec: VisualSpec
+    let property: FormatProperty
+    /// The visuals this row edits. Fixed for the row's lifetime, so a late commit can't land elsewhere.
+    let specs: [VisualSpec]
     let theme: ThemeSpec
-    /// Writes `value` (nil = reset to the renderer default) for the property.
-    let write: (FormatPropertyModel, JSONValue?) -> Void
+    /// Writes `value` (nil = back to the default) for the property.
+    let write: (FormatProperty, JSONValue?) -> Void
 
     var body: some View {
         PropertyRow(property.label) { control }
             .controlSize(.small)
     }
 
-    /// The value currently stored, or nil when the key is absent (follows the default).
-    private var current: JSONValue? { spec.fmt(property.card, property.key) }
+    private var current: FormatValue<JSONValue?>? { FormatCatalog.value(of: property, in: specs, theme: theme) }
+    private var isMixed: Bool { current?.isMixed ?? false }
+    private var shared: JSONValue? { current?.value ?? nil }
 
     @ViewBuilder private var control: some View {
         switch property.kind {
         case .bool:
-            Toggle(property.label, isOn: Binding(
-                get: { current?.boolValue ?? property.defaultValue?.boolValue ?? false },
-                set: { write(property, .bool($0)) }))
-                .labelsHidden()
+            let state = FormatCatalog.isOn(property, in: specs, theme: theme)
+            HStack(spacing: Design.Space.s) {
+                Toggle(property.label, isOn: Binding(
+                    get: { state?.value ?? false },
+                    set: { write(property, .bool($0)) }))
+                    .labelsHidden()
+                if state?.isMixed ?? false { mixedTag }
+            }
         case .number:
-            OptionalNumberField(value: current?.doubleValue, onCommit: {
+            FormatNumberField(label: property.label, value: shared?.doubleValue,
+                              placeholder: isMixed ? "Mixed" : "Auto", bounds: property.bounds) {
                 write(property, $0.map(JSONValue.number))
-            })
-            .accessibilityLabel(property.label)
-            .help("\(property.label) — leave empty for the default")
+            }
         case .string:
-            CommitTextField(property.label,
-                            text: current?.stringValue ?? property.defaultValue?.stringValue ?? "") {
+            CommitTextField(isMixed ? "Mixed" : stringPlaceholder, text: shared?.stringValue ?? "") {
                 write(property, .string($0))
             }
+            .accessibilityLabel(property.label)
+            .help("\(property.label). Leave empty for the default.")
         case .color:
-            OptionalHexColorWell(label: property.label, hex: Binding(
-                get: { current?.stringValue },
-                set: { write(property, $0.map(JSONValue.string)) }),
-                fallback: Self.colorFallback(card: property.card, key: property.key, theme: theme))
-        case .enumeration(let options):
+            HStack(spacing: Design.Space.s) {
+                OptionalHexColorWell(label: property.label, hex: Binding(
+                    get: { isMixed ? nil : specs.first?.fmt(property.card, property.key)?.stringValue },
+                    set: { write(property, $0.map(JSONValue.string)) }),
+                    fallback: shared?.stringValue ?? FormatCatalog.defaultColor(of: property, theme: theme))
+                if isMixed { mixedTag }
+            }
+        case .options(let options):
+            // An option list with no fixed default lets the renderer decide: "Automatic" removes the override.
+            let automatic = property.defaultValue == .null
             Picker(property.label, selection: Binding(
-                get: { current?.stringValue ?? property.defaultValue?.stringValue ?? options.first ?? "" },
-                set: { write(property, .string($0)) })) {
+                get: { isMixed ? Self.mixedOption : (shared?.stringValue ?? "") },
+                set: { choice in
+                    guard choice != Self.mixedOption else { return }
+                    write(property, choice.isEmpty ? nil : .string(choice))
+                })) {
+                if isMixed { Text("Mixed").tag(Self.mixedOption) }
+                if automatic { Text("Automatic").tag("") }
                 ForEach(options, id: \.self) { Text(Self.optionName($0)).tag($0) }
             }
             .labelsHidden()
@@ -53,112 +71,87 @@ struct FormatPropertyRow: View {
         }
     }
 
-    /// The colour the well previews while the key is unset — the renderer's fallback for that card.
-    private static func colorFallback(card: String, key: String, theme: ThemeSpec) -> String {
-        switch (card, key) {
-        case ("subtitle", "color"): return theme.secondaryForeground
-        case ("divider", "color"), ("grid", "color"), ("border", "color"): return theme.gridline
-        case ("background", "color"): return theme.cardBackground
-        case ("columnHeaders", "color"), ("total", "color"): return theme.foreground
-        case ("gauge", "fillColor"), ("path", "color"): return theme.dataColors.first ?? theme.accent
-        default: break
-        }
-        switch key {
-        case "selectedColor": return theme.accent
-        case "goodColor", "increaseColor", "upColor": return theme.good
-        case "badColor", "decreaseColor", "downColor": return theme.bad
-        case "neutralColor": return theme.neutral
-        case "background", "alternateBackground": return theme.cardBackground
-        default: return theme.foreground
-        }
+    private var mixedTag: some View {
+        Text("Mixed").font(Design.Typeface.caption).foregroundStyle(.tertiary)
+            .help("The selected visuals have different values")
     }
 
-    /// "displayUnits" → "Display units" style wording for option values shown in menus.
+    /// The automatic title is shown as the placeholder of an unset title.
+    private var stringPlaceholder: String {
+        if property.card == "title", property.key == "text", specs.count == 1, let spec = specs.first {
+            let auto = VisualTitles.automatic(for: spec)
+            if !auto.isEmpty { return auto }
+        }
+        return "Auto"
+    }
+
+    private static let mixedOption = "\u{1F}mixed"
+
+    /// Wording for option values shown in menus ("insideEnd" → "Inside end").
     static func optionName(_ value: String) -> String {
         switch value {
         case "auto": return "Automatic"
-        case "none": return "None"
-        case "thousands": return "Thousands"
-        case "millions": return "Millions"
-        case "billions": return "Billions"
-        case "trillions": return "Trillions"
-        case "outsideEnd": return "Outside end"
-        case "insideEnd": return "Inside end"
-        case "insideCenter": return "Centre"
-        case "insideBase": return "Inside base"
-        case "left": return "Left"
-        case "center": return "Centre"
-        case "right": return "Right"
+        case "insideCenter", "center": return "Centre"
         case "categoryPercent": return "Category and percent"
-        case "category": return "Category"
-        case "percent": return "Percent"
-        case "value": return "Value"
-        case "smooth": return "Smooth"
+        case "categoryValue": return "Category and value"
         case "linear": return "Straight"
-        case "step": return "Step"
-        case "solid": return "Solid"
-        case "dashed": return "Dashed"
-        case "dotted": return "Dotted"
         case "first": return "First stage"
         case "previous": return "Previous stage"
-        case "count": return "Count"
-        case "top": return "Top"
-        case "bottom": return "Bottom"
-        default: return value
+        default: return FormatCatalog.sentenceCase(value)
         }
     }
 }
 
-/// One collapsible card of the Format pane: a quiet header with the card name and a reset button,
-/// then the property rows. The pane owns the expansion state so Expand/Collapse all works.
-struct FormatCardView: View {
-    let card: FormatCardModel
-    let spec: VisualSpec
-    let theme: ThemeSpec
-    @Binding var expanded: Bool
-    /// Writes one property (nil = reset).
-    let write: (FormatPropertyModel, JSONValue?) -> Void
-    /// Resets every key of the card to its renderer default.
-    let reset: () -> Void
+/// Number field for the Format pane: commits on Return or when focus leaves, clamps to the
+/// property's bounds, and says so in place when the text is not a number instead of dropping it.
+struct FormatNumberField: View {
+    let label: String
+    /// nil = no override (automatic) or mixed.
+    let value: Double?
+    var placeholder = "Auto"
+    let bounds: ClosedRange<Double>
+    /// False for values that have no automatic state (position, size).
+    var allowsEmpty = true
+    let onCommit: (Double?) -> Void
 
-    private var isOverridden: Bool { FormatCatalog.isOverridden(card, in: spec) }
+    @State private var draft = ""
+    @State private var error: String?
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: Design.Space.xs) {
-                Button { withAnimation(Design.Motion.quick) { expanded.toggle() } } label: {
-                    HStack(spacing: Design.Space.xs) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 10)
-                        Text(card.label).font(Design.Typeface.bodyStrong)
-                        Spacer(minLength: Design.Space.s)
-                    }
-                    .contentShape(Rectangle())
-                    .padding(.vertical, Design.Space.s)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(card.label)
-                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-                IconButton("arrow.counterclockwise", help: "Reset \(card.label) to default", isOn: isOverridden) {
-                    reset()
-                }
-                .disabled(!isOverridden)
+        VStack(alignment: .leading, spacing: Design.Space.xxs) {
+            TextField(placeholder, text: $draft)
+                .textFieldStyle(.roundedBorder).controlSize(.small)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 72)
+                .focused($focused)
+                .onSubmit(commit)
+                .onChange(of: focused) { _, f in if !f { commit() } }
+                .onAppear { draft = text(value) }
+                .onChange(of: value) { _, v in if !focused { draft = text(v); error = nil } }
+                .accessibilityLabel(label)
+                .help(allowsEmpty ? "\(label). Leave empty for the default." : label)
+            if let error {
+                Text(error).font(Design.Typeface.caption).foregroundStyle(Design.Palette.negative)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("\(label): \(error)")
             }
-            .padding(.horizontal, Design.Space.m)
-            if expanded {
-                VStack(alignment: .leading, spacing: Design.Space.s) {
-                    ForEach(card.properties) { property in
-                        FormatPropertyRow(property: property, spec: spec, theme: theme, write: write)
-                    }
-                }
-                .padding(.leading, 14)
-                .padding(.trailing, Design.Space.m)
-                .padding(.bottom, Design.Space.m)
-            }
-            Hairline()
+        }
+    }
+
+    private func text(_ v: Double?) -> String { v.map { Value.double($0).asString } ?? "" }
+
+    private func commit() {
+        switch FormatCatalog.numberInput(draft, bounds: bounds, allowsEmpty: allowsEmpty) {
+        case .clear:
+            error = nil
+            if value != nil { onCommit(nil) }
+        case .value(let v):
+            error = nil
+            draft = text(v)
+            if v != value { onCommit(v) }
+        case .invalid(let message):
+            error = message
         }
     }
 }
