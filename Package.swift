@@ -30,5 +30,6 @@ let package = Package(
         .testTarget(name: "FacetInteropTests", dependencies: ["FacetInterop"], swiftSettings: swift5),
         .testTarget(name: "FacetAnalyticsTests", dependencies: ["FacetAnalytics"], swiftSettings: swift5),
         .testTarget(name: "FacetVisualsTests", dependencies: ["FacetVisuals"], swiftSettings: swift5),
+        .testTarget(name: "MicrosoftPowerBITests", dependencies: ["MicrosoftPowerBI"], swiftSettings: swift5),
     ]
 )
