@@ -193,6 +193,49 @@ final class VisualDataTests: XCTestCase {
         XCTAssertEqual(run(visual(.table, [.values: [product, amount]])).table.rowCount, 4)
     }
 
+    // MARK: Aggregations
+
+    func testEveryAggregationGeneratesValidDAX() throws {
+        // Quantities are 1, 2, 3, 1, 2, 1, 5, 4: nineteen in eight rows, five distinct values.
+        let expected: [(Aggregation, String, Double)] = [
+            (.sum, "SUM('Sales'[Qty])", 19), (.average, "AVERAGE('Sales'[Qty])", 19.0 / 8.0),
+            (.min, "MIN('Sales'[Qty])", 1), (.max, "MAX('Sales'[Qty])", 5),
+            (.count, "COUNTA('Sales'[Qty])", 8), (.distinctCount, "DISTINCTCOUNT('Sales'[Qty])", 5),
+            (.median, "MEDIAN('Sales'[Qty])", 2),
+            (.first, "FIRSTNONBLANK('Sales'[Qty], 1)", 1), (.last, "LASTNONBLANK('Sales'[Qty], 1)", 5),
+        ]
+        let model = SemanticModel()
+        for (aggregation, dax, value) in expected {
+            let field = FieldRef.column("Sales", "Qty", aggregation)
+            XCTAssertEqual(ModelDAX.aggregate(field, model: model), dax)
+            XCTAssertEqual(try service.scalar(dax, filters: []).asDouble ?? .nan, value, accuracy: 1e-12, "\(aggregation)")
+            // And through a visual.
+            let data = run(visual(.card, [.values: [field]]))
+            XCTAssertEqual(data.table[0, 0].asDouble ?? .nan, value, accuracy: 1e-12, "\(aggregation)")
+        }
+        // Sample variance and standard deviation: Σ(x − 2.375)² = 15.875 over 7.
+        XCTAssertEqual(try service.scalar(ModelDAX.aggregate(.column("Sales", "Qty", .variance), model: model), filters: []).asDouble ?? .nan,
+                       15.875 / 7.0, accuracy: 1e-12)
+        XCTAssertEqual(try service.scalar(ModelDAX.aggregate(.column("Sales", "Qty", .stdDev), model: model), filters: []).asDouble ?? .nan,
+                       (15.875 / 7.0).squareRoot(), accuracy: 1e-12)
+    }
+
+    func testFirstAndLastOfATextColumn() {
+        // First and last in sort order within each category.
+        let data = run(visual(.table, [.values: [category, .column("Product", "Product", .first), .column("Product", "Product", .last)]]))
+        var first: [String: String] = [:], last: [String: String] = [:]
+        for r in 0..<data.table.rowCount {
+            first[data.table[r, 0].asString] = data.table[r, 1].asString
+            last[data.table[r, 0].asString] = data.table[r, 2].asString
+        }
+        XCTAssertEqual(first, ["Tools": "Gadget", "Toys": "Doohickey"])
+        XCTAssertEqual(last, ["Tools": "Widget", "Toys": "Gizmo"])
+        // As the by-field of a Top N filter too: the category whose last product name sorts highest is Tools (Widget).
+        let byCategory = visual(.clusteredColumn, [.category: [category], .values: [amount]])
+        let top = topN(category, 1, by: .column("Product", "Product", .last))
+        XCTAssertEqual(rows(run(byCategory, request(filters: [top])).table, value: 1), ["Tools": 170])
+    }
+
     // MARK: Format strings
 
     func testCalculationItemFormatStringReachesTheVisual() {
