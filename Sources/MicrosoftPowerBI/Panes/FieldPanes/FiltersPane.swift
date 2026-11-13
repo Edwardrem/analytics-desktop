@@ -9,28 +9,19 @@ struct FiltersPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-          ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if let visual = store.selectedVisual {
-                    FiltersSection(visual: visual, scope: .visual, title: "Filters on this visual", filters: visual.filters)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let visual = store.selectedVisual {
+                        FiltersSection(visual: visual, scope: .visual, title: "Filters on this visual", filters: visual.filters)
+                    }
+                    FiltersSection(scope: .page, title: "Filters on this page", filters: store.currentPage.filters)
+                    FiltersSection(scope: .report, title: "Filters on all pages", filters: store.doc.report.filters)
+                    FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughDisplay)
                 }
-                FiltersSection(scope: .page, title: "Filters on this page", filters: store.currentPage.filters)
-                FiltersSection(scope: .report, title: "Filters on all pages", filters: store.doc.report.filters)
-                FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughDisplay)
             }
-          }
-          Hairline()
-          FilterPaneFooter(runtime: ReportRuntime.of(store))
+            Hairline()
+            FilterPaneFooter(runtime: ReportRuntime.of(store))
         }
-    }
-
-    /// Every filter that would apply, except the one being edited (so the value list shows the
-    /// options that remain under the other conditions).
-    func otherFilters(excluding id: UUID) -> [FilterSpec] {
-        var all = store.doc.report.filters + store.currentPage.filters
-        if let visual = store.selectedVisual { all += visual.filters }
-        all += store.drillthroughFilters[store.currentPageID] ?? []
-        return all.filter { $0.id != id && !$0.isEmpty }
     }
 }
 
@@ -56,8 +47,8 @@ private struct FiltersSection: View {
                 Text(hint).font(Design.Typeface.caption).foregroundStyle(.tertiary)
                     .padding(.bottom, Design.Space.m)
             } else {
-                ForEach(filters) { f in
-                    FilterRow(filter: f, scope: scope)
+                ForEach(Array(filters.enumerated()), id: \.element.id) { i, f in
+                    FilterRow(filter: f, scope: scope, position: i, count: filters.count)
                 }
                 .padding(.bottom, Design.Space.s)
             }
@@ -81,8 +72,11 @@ private struct FiltersSection: View {
 private struct FilterRow: View {
     let filter: FilterSpec
     let scope: FilterSpec.Scope
+    let position: Int
+    let count: Int
     @EnvironmentObject var store: DocumentStore
     @State private var expanded = false
+    @State private var renaming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.xs) {
@@ -93,13 +87,25 @@ private struct FilterRow: View {
                             .font(.system(size: 9, weight: .semibold))
                             .rotationEffect(.degrees(expanded ? 90 : 0))
                             .foregroundStyle(.tertiary).frame(width: 10)
-                        Text(filter.field.caption).font(Design.Typeface.bodyStrong).lineLimit(1)
-                        Text(typeName).font(Design.Typeface.caption).foregroundStyle(.secondary)
+                        if !renaming {
+                            Text(filter.displayName ?? filter.field.caption).font(Design.Typeface.bodyStrong).lineLimit(1)
+                            Text(typeName).font(Design.Typeface.caption).foregroundStyle(.secondary)
+                        }
                         Spacer(minLength: 0)
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .overlay(alignment: .leading) {
+                    if renaming {
+                        CommitTextField(filter.field.caption, text: filter.displayName ?? filter.field.caption) { name in
+                            store.renameFilter(id: filter.id, scope: scope, to: name)
+                            renaming = false
+                        }
+                        .padding(.leading, 14)
+                        .onExitCommand { renaming = false }
+                    }
+                }
                 if filter.isLocked {
                     Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
@@ -107,6 +113,10 @@ private struct FilterRow: View {
                     Image(systemName: "eye.slash").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
                 Menu {
+                    Button("Rename…") { renaming = true }
+                    Button("Move Up") { store.moveFilter(id: filter.id, scope: scope, by: -1) }.disabled(position == 0)
+                    Button("Move Down") { store.moveFilter(id: filter.id, scope: scope, by: 1) }.disabled(position >= count - 1)
+                    Divider()
                     Button(filter.isLocked ? "Unlock" : "Lock") { toggle { $0.isLocked.toggle() } }
                     Button(filter.isHidden ? "Show" : "Hide") { toggle { $0.isHidden.toggle() } }
                     if filter.kind == .basic {
@@ -123,9 +133,9 @@ private struct FilterRow: View {
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 22, height: 20).contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Filter options")
             }
-            Text(summary).font(Design.Typeface.caption).foregroundStyle(.secondary)
+            Text(FilterTools.summary(filter)).font(Design.Typeface.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 14)
             if expanded {
@@ -147,52 +157,8 @@ private struct FilterRow: View {
         }
     }
 
-    private var summary: String {
-        if filter.isEmpty && filter.kind != .relativeDate && filter.kind != .relativeTime { return "No condition." }
-        switch filter.kind {
-        case .basic:
-            let values = filter.values.prefix(6).map(\.asString).joined(separator: ", ")
-            let more = filter.values.count > 6 ? ", …" : ""
-            return filter.isInverted ? "is not \(values)\(more)" : "is \(values)\(more)"
-        case .advanced:
-            return filter.conditions.map { "\($0.op.displayName) \($0.value.asString)" }
-                .joined(separator: filter.conditionsUseOr ? " or " : " and ")
-        case .topN:
-            let direction = filter.topN.isBottom ? "Bottom" : "Top"
-            let by = filter.topN.by.map { " by \($0.caption)" } ?? ""
-            return "\(direction) \(filter.topN.count)\(by)"
-        case .relativeDate, .relativeTime:
-            let unit = relativeUnitName
-            switch filter.relative.direction {
-            case .this: return "This \(unit)"
-            case .last: return "Last \(filter.relative.count) \(unit)\(filter.relative.includeToday ? " including today" : "")"
-            case .next: return "Next \(filter.relative.count) \(unit)\(filter.relative.includeToday ? " including today" : "")"
-            }
-        }
-    }
-
-    private var relativeUnitName: String {
-        switch filter.relative.unit {
-        case .minutes: return "minutes"
-        case .hours: return "hours"
-        case .days: return "days"
-        case .weeks, .calendarWeeks: return "weeks"
-        case .months, .calendarMonths: return "months"
-        case .years, .calendarYears: return "years"
-        }
-    }
-
     private func toggle(_ body: (inout FilterSpec) -> Void) {
         store.updateFilter(id: filter.id, scope: scope, body)
-    }
-
-    private func clear(_ f: inout FilterSpec) {
-        switch f.kind {
-        case .basic: f.values = []
-        case .advanced: f.conditions = []
-        case .topN: f.topN = TopNFilter()
-        case .relativeDate, .relativeTime: break
-        }
     }
 }
 

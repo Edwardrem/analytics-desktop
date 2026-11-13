@@ -39,7 +39,8 @@ extension DocumentStore {
         c.activeBookmarkID = activeBookmarkID
         let id = spec.id
         c.onSelect = { [weak self] points, additive in self?.selectPoints(points, in: id, additive: additive) }
-        c.onSlicerChange = { [weak self] state in self?.setSlicerState(state, for: id) }
+        c.onSlicerChange = { [weak self] state in self?.changeSlicer(state, for: id) }
+        c.slicerApplyButtons = report.settings.slicerApplyButtons
         c.onAction = { [weak self] action in self?.perform(action, from: id) }
         c.onDrill = { [weak self] action in self?.drill(action, in: id) }
         c.onSpecChange = { [weak self] new in
@@ -51,6 +52,7 @@ extension DocumentStore {
         }
         c.canRunAction = { [weak self] action in
             guard let self else { return true }
+            if action.kind == .applyAllSlicers { return !ReportRuntime.of(self).pendingSlicers(on: self.currentPage).isEmpty }
             return ReportActions.canRun(action, selections: self.pointSelections, page: self.currentPage, report: self.report)
         }
         if interactive, let page = TooltipPages.page(for: spec, in: report), page.id != currentPageID {
@@ -248,7 +250,8 @@ struct VisualContainer: View {
         let frame = store.frame(of: spec)
         let data = store.visualData[spec.id] ?? VisualData()
         ZStack(alignment: .topLeading) {
-            VisualView(spec: store.mobileLayout ? MobileLayout.effectiveSpec(spec) : spec, data: data, context: store.context(for: spec))
+            VisualView(spec: ReportRuntime.of(store).withPendingSlicer(store.mobileLayout ? MobileLayout.effectiveSpec(spec) : spec),
+                       data: data, context: store.context(for: spec))
                 .frame(width: frame.width, height: frame.height)
                 .rotationEffect(.degrees(frame.rotation))
                 .opacity(store.editInteractionsFor != nil && store.editInteractionsFor != spec.id ? 0.92 : 1)
@@ -268,7 +271,7 @@ struct VisualContainer: View {
                     .padding(6).background(.regularMaterial, in: Capsule())
                     .frame(width: frame.width, height: frame.height).allowsHitTesting(false)
             }
-            if let source = store.editInteractionsFor, source != spec.id {
+            if let source = store.editInteractionsFor, source != spec.id, !spec.type.isPageElement {
                 InteractionPicker(source: source, target: spec)
                     .frame(width: frame.width, alignment: .trailing).offset(y: -30 / scale)
             } else if (hovering || isSelected) && !store.presenting {
@@ -298,6 +301,8 @@ struct VisualContainer: View {
             store.formatPainterSource = nil
             return
         }
+        // While editing interactions, the visual clicked becomes the one whose effect is being set.
+        if store.editInteractionsFor != nil, !spec.type.isPageElement { store.editInteractionsFor = spec.id }
         if additive {
             if isSelected { store.selection.remove(spec.id) } else { store.selection.insert(spec.id) }
         } else if !isSelected {

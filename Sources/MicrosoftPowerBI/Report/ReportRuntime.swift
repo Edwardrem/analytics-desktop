@@ -3,8 +3,8 @@ import Combine
 import FacetCore
 
 /// Per-document state of the report canvas and reading view that is not part of the document:
-/// tooltip page results, the spotlighted visual, and each reader's personalised visuals (kept per
-/// user in the app's preferences, keyed by the document's location).
+/// tooltip page results, the spotlighted visual, filter and slicer changes waiting for Apply, and
+/// each reader's personalised visuals (kept per user in the app's preferences, keyed by the document's location).
 @MainActor
 final class ReportRuntime: ObservableObject {
     /// Tooltip page results: tooltip key → visual id → data.
@@ -14,8 +14,10 @@ final class ReportRuntime: ObservableObject {
     private var tooltipLoading: Set<String> = []
     /// The visual shown at full strength while the rest of the page is dimmed.
     @Published var spotlightID: UUID? { didSet { if spotlightID != oldValue { store?.objectWillChange.send() } } }
-    /// With the report's Apply button on: filter edits are saved but their queries have not run yet.
-    @Published var filtersPending = false
+    /// With the report's Apply button on: the filter lists as the visuals last ran with them.
+    @Published var heldFilters = HeldFilters()
+    /// Slicer selections made on a page with an "Apply all slicers" button, waiting for it: slicer id → state.
+    @Published var pendingSlicers: [UUID: SlicerState] = [:] { didSet { if pendingSlicers != oldValue { store?.objectWillChange.send() } } }
     /// Reader changes per visual id.
     @Published private(set) var personalizations: [UUID: Personalization] = [:]
     /// Query results for personalised visuals (the store only queries the saved ones).
@@ -38,6 +40,26 @@ final class ReportRuntime: ObservableObject {
         return runtime
     }
 
+    /// The store's runtime if one was made; never makes one (safe to call while one is being made).
+    static func existing(for store: DocumentStore) -> ReportRuntime? {
+        guard let r = all[ObjectIdentifier(store)], r.store === store else { return nil }
+        return r
+    }
+
+    /// True when Apply would change what the visuals show.
+    var filtersPending: Bool {
+        guard let store, store.report.settings.filterPaneApplyButton else { return false }
+        return heldFilters.isPending(in: store.report)
+    }
+
+    /// The slicer as it is drawn: with a selection waiting for "Apply all slicers" in place of the saved one.
+    func withPendingSlicer(_ spec: VisualSpec) -> VisualSpec {
+        guard spec.type.isSlicer, let pending = pendingSlicers[spec.id], let store, SlicerApply.defers(store.currentPage) else { return spec }
+        var s = spec
+        s.slicerState = pending.isActive ? pending : nil
+        return s
+    }
+
     private init(_ store: DocumentStore) {
         self.store = store
         // Any change to the document, its filters or selections can change what a tooltip page shows.
@@ -55,8 +77,9 @@ final class ReportRuntime: ObservableObject {
 
     /// The visual as this reader sees it.
     func effectiveSpec(_ spec: VisualSpec) -> VisualSpec {
-        guard let p = personalizations[spec.id], let store else { return spec }
-        return Personalize.apply(p, to: spec) { store.defaultAggregation(for: $0) }
+        let shown = withPendingSlicer(spec)
+        guard let p = personalizations[spec.id], let store else { return shown }
+        return Personalize.apply(p, to: shown) { store.defaultAggregation(for: $0) }
     }
 
     /// The data to draw for a visual: the personalised query's result when there is one.

@@ -41,6 +41,9 @@ public struct VisualContext {
     public var canRunAction: (ActionSpec) -> Bool = { _ in true }
     /// Show the underlying records of a data point, when the host can.
     public var onSeeRecords: ((DataPointSelection) -> Void)?
+    /// The report asks every slicer for an Apply button (query reduction); a slicer's own
+    /// `format["slicer"]["applyButton"]` still wins.
+    public var slicerApplyButtons = false
 
     public init() {}
 

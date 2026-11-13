@@ -247,6 +247,7 @@ final class DocumentStore: ObservableObject {
         undoStack.removeAll(); redoStack.removeAll(); syncUndoNames()
         currentPageID = d.report.landingPageID ?? d.report.pages.first?.id ?? UUID()
         selection = []; pointSelections = [:]; visualData = [:]; drillthroughFilters = [:]; pageHistory = []
+        if let runtime = ReportRuntime.existing(for: self) { runtime.heldFilters = HeldFilters(); runtime.pendingSlicers = [:] }
         validateWorkspace()
         reloadEngine()
     }
@@ -303,13 +304,17 @@ final class DocumentStore: ObservableObject {
     func interaction(from source: UUID, to target: VisualSpec, on page: Page) -> InteractionMode {
         if let m = page.interactions[source]?[target.id] { return m }
         var mode = doc.report.settings.disableCrossHighlightByDefault ? .filter : doc.report.settings.defaultInteraction
-        if mode == .highlight, !Self.highlightable.contains(target.type) { mode = .filter }
+        // Slicers only ever filter, and only some visuals can show a highlight.
+        if mode == .highlight, !Self.highlightable.contains(target.type) || page.visual(source)?.type.isSlicer == true { mode = .filter }
         return mode
     }
 
-    /// All filters that apply to a visual: report, page, drillthrough, and its own.
+    /// All filters that apply to a visual: report, page, drillthrough, and its own (as last applied,
+    /// when the report has an Apply button and edits are waiting).
     func filters(for spec: VisualSpec, on page: Page) -> [FilterSpec] {
-        (doc.report.filters + page.filters + (drillthroughFilters[page.id] ?? []) + spec.filters).filter { !$0.isEmpty }
+        let held = doc.report.settings.filterPaneApplyButton ? ReportRuntime.existing(for: self)?.heldFilters : nil
+        return FilterTools.effective(report: doc.report, page: page, visual: spec,
+                                     drillthrough: drillthroughFilters[page.id] ?? [], held: held)
     }
 
     /// Adds a filter on a field at the given scope, announced in the undo history.
@@ -318,17 +323,17 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let id = selectedVisual?.id else { return }
-            updateVisual(id, name: announce ? "Add Visual Filter" : "Change Visual Filters", invalidates: filterInvalidation(.visuals([id]))) {
+            updateVisual(id, name: announce ? "Add Visual Filter" : "Change Visual Filters", invalidates: filterInvalidation(.visuals([id]), holding: .visual(id))) {
                 guard !$0.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.filters.append(filter)
             }
         case .page:
-            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters", invalidates: filterInvalidation(.visuals(nil))) {
+            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters", invalidates: filterInvalidation(.visuals(nil), holding: .page(currentPageID))) {
                 guard !$0.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.filters.append(filter)
             }
         case .report:
-            mutate(announce ? "Add Report Filter" : "Change Report Filters", invalidates: filterInvalidation(.visuals(nil))) {
+            mutate(announce ? "Add Report Filter" : "Change Report Filters", invalidates: filterInvalidation(.visuals(nil), holding: .report)) {
                 guard !$0.report.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.report.filters.append(filter)
             }
@@ -342,11 +347,11 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let target = selectedVisual?.id else { return }
-            updateVisual(target, name: "Remove Visual Filter", invalidates: filterInvalidation(.visuals([target]))) { $0.filters.removeAll { $0.id == id } }
+            updateVisual(target, name: "Remove Visual Filter", invalidates: filterInvalidation(.visuals([target]), holding: .visual(target))) { $0.filters.removeAll { $0.id == id } }
         case .page:
-            updatePage(name: "Remove Page Filter", invalidates: filterInvalidation(.visuals(nil))) { $0.filters.removeAll { $0.id == id } }
+            updatePage(name: "Remove Page Filter", invalidates: filterInvalidation(.visuals(nil), holding: .page(currentPageID))) { $0.filters.removeAll { $0.id == id } }
         case .report:
-            mutate("Remove Report Filter", invalidates: filterInvalidation(.visuals(nil))) { $0.report.filters.removeAll { $0.id == id } }
+            mutate("Remove Report Filter", invalidates: filterInvalidation(.visuals(nil), holding: .report)) { $0.report.filters.removeAll { $0.id == id } }
         case .drillthrough:
             // A drillthrough field belongs to the page; a kept filter only to this visit.
             if currentPage.drillthroughFilters.contains(where: { $0.id == id }) {
@@ -365,15 +370,15 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let target = selectedVisual?.id else { return }
-            updateVisual(target, name: name, invalidates: filterInvalidation(.visuals([target]))) {
+            updateVisual(target, name: name, invalidates: filterInvalidation(.visuals([target]), holding: .visual(target))) {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .page:
-            updatePage(name: name, invalidates: filterInvalidation(.visuals(nil))) {
+            updatePage(name: name, invalidates: filterInvalidation(.visuals(nil), holding: .page(currentPageID))) {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .report:
-            mutate(name, invalidates: filterInvalidation(.visuals(nil))) {
+            mutate(name, invalidates: filterInvalidation(.visuals(nil), holding: .report)) {
                 if let i = $0.report.filters.firstIndex(where: { $0.id == id }) { body(&$0.report.filters[i]) }
             }
         case .drillthrough:
@@ -819,11 +824,19 @@ final class DocumentStore: ObservableObject {
             }
         }
     }
+    /// Clear every slicer on this page — and the slicers synced with them on other pages — including
+    /// selections still waiting for "Apply all slicers".
     func clearAllSlicers() {
-        let i = pageIndex
+        let page = currentPage
+        ReportRuntime.existing(for: self)?.dropPendingSlicers(on: page)
+        let ids = Set(page.visuals.filter(\.type.isSlicer).map(\.id))
+        let groups = Set(page.visuals.filter(\.type.isSlicer).compactMap(\.syncGroup))
         mutate("Clear All Slicers") { d in
-            for v in d.report.pages[i].visuals.indices where d.report.pages[i].visuals[v].type.isSlicer {
-                d.report.pages[i].visuals[v].slicerState = nil
+            for p in d.report.pages.indices {
+                for v in d.report.pages[p].visuals.indices where d.report.pages[p].visuals[v].type.isSlicer {
+                    let s = d.report.pages[p].visuals[v]
+                    if ids.contains(s.id) || s.syncGroup.map(groups.contains) == true { d.report.pages[p].visuals[v].slicerState = nil }
+                }
             }
         }
     }
@@ -876,7 +889,7 @@ final class DocumentStore: ObservableObject {
                 NSWorkspace.shared.open(url)
             }
         case .clearAllSlicers: clearAllSlicers()
-        case .applyAllSlicers: refreshVisuals()
+        case .applyAllSlicers: applyAllSlicers()
         case .qna: inspector = .assistant; inspectorVisible = true
         case .drillthrough: performDrillthroughButton(action)
         case .dataFunction:

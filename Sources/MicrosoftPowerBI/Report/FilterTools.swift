@@ -55,6 +55,27 @@ enum FilterTools {
         return count
     }
 
+    /// The list with one filter moved up (negative) or down (positive) by `delta` places.
+    static func moved(_ list: [FilterSpec], id: UUID, by delta: Int) -> [FilterSpec] {
+        guard let from = list.firstIndex(where: { $0.id == id }) else { return list }
+        let to = max(0, min(list.count - 1, from + delta))
+        guard to != from else { return list }
+        var out = list
+        let f = out.remove(at: from)
+        out.insert(f, at: to)
+        return out
+    }
+
+    /// Every filter that applies to a visual — the report's, the page's, the drillthrough's and its
+    /// own — with any list held for the Apply button in place of the live one.
+    static func effective(report: Report, page: Page, visual: VisualSpec, drillthrough: [FilterSpec],
+                          held: HeldFilters?) -> [FilterSpec] {
+        let r = held?.effective(.report, live: report.filters) ?? report.filters
+        let p = held?.effective(.page(page.id), live: page.filters) ?? page.filters
+        let v = held?.effective(.visual(visual.id), live: visual.filters) ?? visual.filters
+        return (r + p + drillthrough + v).filter { !$0.isEmpty }
+    }
+
     /// Filters a reader sees: hidden ones still apply but are not listed.
     static func readerVisible(_ filters: [FilterSpec]) -> [FilterSpec] { filters.filter { !$0.isHidden } }
     /// A reader may change a filter unless its author locked it.
@@ -64,16 +85,16 @@ enum FilterTools {
     static func summary(_ filter: FilterSpec) -> String {
         switch filter.kind {
         case .basic:
-            guard !filter.values.isEmpty else { return "All" }
-            let values = filter.values.prefix(6).map { $0.asString.isEmpty ? "(blank)" : $0.asString }.joined(separator: ", ")
+            guard !filter.values.isEmpty else { return "is (All)" }
+            let values = filter.values.prefix(6).map { $0.asString.isEmpty ? "(Blank)" : $0.asString }.joined(separator: ", ")
             let more = filter.values.count > 6 ? ", …" : ""
             return filter.isInverted ? "is not \(values)\(more)" : "is \(values)\(more)"
         case .advanced:
-            guard !filter.conditions.isEmpty else { return "All" }
+            guard !filter.conditions.isEmpty else { return "is (All)" }
             return filter.conditions.map { $0.op.needsValue ? "\($0.op.displayName) \($0.value.asString)" : $0.op.displayName }
                 .joined(separator: filter.conditionsUseOr ? " or " : " and ")
         case .topN:
-            guard let by = filter.topN.by else { return "All" }
+            guard let by = filter.topN.by else { return "is (All)" }
             return "\(filter.topN.isBottom ? "Bottom" : "Top") \(filter.topN.count) by \(by.caption)"
         case .relativeDate, .relativeTime:
             let unit: String
@@ -85,27 +106,70 @@ enum FilterTools {
             case .months, .calendarMonths: unit = "months"
             case .years, .calendarYears: unit = "years"
             }
+            let today = filter.kind == .relativeDate && filter.relative.includeToday ? " including today" : ""
             switch filter.relative.direction {
-            case .this: return "This \(String(unit.dropLast()))"
-            case .last: return "Last \(filter.relative.count) \(unit)"
-            case .next: return "Next \(filter.relative.count) \(unit)"
+            case .this: return "is in this \(String(unit.dropLast()))"
+            case .last: return "is in the last \(filter.relative.count) \(unit)\(today)"
+            case .next: return "is in the next \(filter.relative.count) \(unit)\(today)"
             }
         }
     }
 }
 
+/// With the report's Apply button on: the filters the visuals last ran with, for each filter list
+/// edited since. Edits are saved (and undoable) straight away; the visuals keep these until Apply.
+struct HeldFilters: Equatable {
+    enum Target: Hashable { case report, page(UUID), visual(UUID) }
+    private(set) var lists: [Target: [FilterSpec]] = [:]
+
+    var isEmpty: Bool { lists.isEmpty }
+    /// Records a list as it was before its first edit; later edits keep that first record.
+    mutating func hold(_ target: Target, _ filters: [FilterSpec]) {
+        if lists[target] == nil { lists[target] = filters }
+    }
+    /// The filters a visual runs with: the held list where there is one, otherwise the live one.
+    func effective(_ target: Target, live: [FilterSpec]) -> [FilterSpec] { lists[target] ?? live }
+
+    /// True when Apply would change what a visual shows: some held list restricts differently from
+    /// the live one. Renaming, locking or hiding a filter changes nothing a visual shows.
+    func isPending(in report: Report) -> Bool {
+        lists.contains { target, held in
+            let live: [FilterSpec]
+            switch target {
+            case .report: live = report.filters
+            case .page(let id): live = report.page(id)?.filters ?? []
+            case .visual(let id): live = report.pages.lazy.compactMap { $0.visual(id) }.first?.filters ?? []
+            }
+            return Self.effect(held) != Self.effect(live)
+        }
+    }
+    private static func effect(_ list: [FilterSpec]) -> [FilterSpec] {
+        list.filter { !$0.isEmpty }.map { f in
+            var e = f
+            e.displayName = nil; e.isLocked = false; e.isHidden = false
+            return e
+        }
+    }
+}
+
 extension DocumentStore {
-    /// What a filter edit invalidates: the visuals at once, or nothing yet when the report asks for
-    /// an Apply button (the edit is saved, and queries wait for Apply).
-    func filterInvalidation(_ immediate: Invalidation) -> Invalidation {
+    /// What a filter edit invalidates: the visuals at once or, when the report asks for an Apply
+    /// button, nothing yet (the list is held as it was, and queries wait for Apply).
+    func filterInvalidation(_ immediate: Invalidation, holding target: HeldFilters.Target) -> Invalidation {
         guard report.settings.filterPaneApplyButton else { return immediate }
-        ReportRuntime.of(self).filtersPending = true
+        let live: [FilterSpec]
+        switch target {
+        case .report: live = report.filters
+        case .page(let id): live = report.page(id)?.filters ?? []
+        case .visual(let id): live = visual(id)?.filters ?? []
+        }
+        ReportRuntime.of(self).heldFilters.hold(target, live)
         return .layout
     }
 
-    /// Run the queries for filter edits made since the last Apply.
+    /// Run the visuals with the filter edits made since the last Apply.
     func applyPendingFilters() {
-        ReportRuntime.of(self).filtersPending = false
+        ReportRuntime.existing(for: self)?.heldFilters = HeldFilters()
         refreshVisuals()
     }
 
@@ -116,9 +180,36 @@ extension DocumentStore {
             status = StatusMessage(kind: .info, text: "There are no filters to clear. Locked filters stay as they are.")
             return
         }
-        let i = pageIndex
-        mutate("Clear All Filters", invalidates: filterInvalidation(.visuals(nil))) { d in
+        let i = pageIndex, page = currentPage
+        let targets: [HeldFilters.Target] = [.report, .page(page.id)] + page.visuals.map { .visual($0.id) }
+        let invalidation = targets.map { filterInvalidation(.visuals(nil), holding: $0) }.last ?? .visuals(nil)
+        mutate("Clear All Filters", invalidates: invalidation) { d in
             FilterTools.clearAll(&d.report, pageIndex: i)
+        }
+    }
+
+    /// Edit one scope's list of filters as a whole (order, names). Nothing a visual shows changes.
+    func editFilterList(_ scope: FilterSpec.Scope, name: String, _ body: (inout [FilterSpec]) -> Void) {
+        switch scope {
+        case .visual:
+            guard let id = selectedVisual?.id else { return }
+            updateVisual(id, name: name, invalidates: .layout) { body(&$0.filters) }
+        case .page: updatePage(name: name) { body(&$0.filters) }
+        case .report: mutate(name, invalidates: .layout) { body(&$0.report.filters) }
+        case .drillthrough: updatePage(name: name) { body(&$0.drillthroughFilters) }
+        }
+    }
+
+    func moveFilter(id: UUID, scope: FilterSpec.Scope, by delta: Int) {
+        editFilterList(scope, name: "Reorder Filters") { $0 = FilterTools.moved($0, id: id, by: delta) }
+    }
+
+    /// Rename a filter card (an empty name shows the field's own name again).
+    func renameFilter(id: UUID, scope: FilterSpec.Scope, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        editFilterList(scope, name: "Rename Filter") { list in
+            guard let i = list.firstIndex(where: { $0.id == id }) else { return }
+            list[i].displayName = trimmed.isEmpty ? nil : trimmed
         }
     }
 }
@@ -129,15 +220,19 @@ struct FilterPaneFooter: View {
     @ObservedObject var runtime: ReportRuntime
 
     var body: some View {
+        let pending = runtime.filtersPending
         HStack(spacing: Design.Space.s) {
             Button("Clear all") { store.clearAllFilters() }
                 .help("Clear every filter that is not locked")
             Spacer(minLength: 0)
             if store.report.settings.filterPaneApplyButton {
+                if pending {
+                    Text("Changes waiting").font(Design.Typeface.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
                 Button("Apply") { store.applyPendingFilters() }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!runtime.filtersPending)
-                    .help(runtime.filtersPending ? "Run the visuals with your filter changes" : "No filter changes are waiting")
+                    .disabled(!pending)
+                    .help(pending ? "Run the visuals with your filter changes" : "No filter changes are waiting")
             }
         }
         .controlSize(.small)
@@ -198,7 +293,7 @@ private struct ReaderFilterRow: View {
                 .fixedSize(horizontal: false, vertical: true)
             if editable, filter.kind == .basic, filter.field.kind == .column {
                 ForEach(options.prefix(100), id: \.asString) { value in
-                    Toggle(value.asString.isEmpty ? "(blank)" : value.asString, isOn: Binding(
+                    Toggle(value.asString.isEmpty ? "(Blank)" : value.asString, isOn: Binding(
                         get: { filter.values.contains(value) },
                         set: { _ in store.updateFilter(id: filter.id, scope: scope) { $0 = FilterTools.toggling($0, value) } }))
                         .toggleStyle(.checkbox).font(Design.Typeface.caption)

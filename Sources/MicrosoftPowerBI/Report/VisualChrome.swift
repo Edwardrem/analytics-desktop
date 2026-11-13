@@ -45,17 +45,28 @@ struct VisualHeader: View {
     }
 }
 
-/// Filter / highlight / none chooser shown on every other visual while editing interactions.
+@MainActor
+enum InteractionRules {
+    /// A selection can highlight a visual that draws highlights, unless it comes from a slicer (slicers only filter).
+    static func canHighlight(from source: VisualSpec?, to target: VisualSpec) -> Bool {
+        DocumentStore.highlightable.contains(target.type) && source?.type.isSlicer != true
+    }
+    /// Edit interactions applies to visuals that show data.
+    static func canEdit(_ spec: VisualSpec?) -> Bool { spec.map { !$0.type.isPageElement } ?? false }
+}
+
+/// Filter / highlight / none chooser shown on every other data visual while editing interactions.
 struct InteractionPicker: View {
     @EnvironmentObject var store: DocumentStore
     let source: UUID
     let target: VisualSpec
 
     var body: some View {
-        let current = store.interaction(from: source, to: target, on: store.currentPage)
+        let page = store.currentPage
+        let current = store.interaction(from: source, to: target, on: page)
         HStack(spacing: 2) {
             button(.filter, "line.3.horizontal.decrease.circle", "Filter", current)
-            if DocumentStore.highlightable.contains(target.type) {
+            if InteractionRules.canHighlight(from: page.visual(source), to: target) {
                 button(.highlight, "chart.bar.fill", "Highlight", current)
             }
             button(.none, "nosign", "None", current)
