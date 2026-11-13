@@ -157,10 +157,16 @@ extension DAXEngine {
         return dateIndex(da.cid).between(periodStart(last, p, ye), dayEnd(last))
     }
 
-    func intervalArg(_ a: [Node], _ i: Int, _ ctx: Ctx, _ fn: String) throws -> (months: Int, days: Int) {
+    /// The interval keyword of a time-intelligence function. WEEK exists only for calendar-based
+    /// time intelligence (a calendar as the dates argument), not for date columns.
+    func intervalArg(_ a: [Node], _ i: Int, _ ctx: Ctx, _ fn: String, calendar: CalendarDef?) throws -> (months: Int, days: Int) {
         switch try keywordArg(a, i, ctx) ?? "" {
         case "DAY": return (0, 1)
-        case "WEEK": return (0, 7)
+        case "WEEK":
+            guard calendar != nil else {
+                throw DAXError("\(fn): WEEK can only be used with a calendar. With a date column use DAY, MONTH, QUARTER or YEAR.")
+            }
+            return (0, 7)
         case "MONTH": return (1, 0)
         case "QUARTER": return (3, 0)
         case "YEAR": return (12, 0)
@@ -223,13 +229,13 @@ extension DAXEngine {
         d["DATEADD"] = { e, a, c, _ in
             let da = try e.dateArg(a[0], c, "DATEADD")
             let n = Int(try DAXOps.number(e.scalar(a[1], c)))
-            let iv = try e.intervalArg(a, 2, c, "DATEADD")
+            let iv = try e.intervalArg(a, 2, c, "DATEADD", calendar: da.calendar)
             return .table(e.datesTable(da.cid, e.dateAdd(da, n, months: iv.months, days: iv.days)))
         }
         d["PARALLELPERIOD"] = { e, a, c, _ in
             let da = try e.dateArg(a[0], c, "PARALLELPERIOD")
             let n = Int(try DAXOps.number(e.scalar(a[1], c)))
-            let iv = try e.intervalArg(a, 2, c, "PARALLELPERIOD")
+            let iv = try e.intervalArg(a, 2, c, "PARALLELPERIOD", calendar: da.calendar)
             guard iv.months > 0, let first = da.visible.first, let last = da.visible.last else {
                 if iv.months == 0 { throw DAXError("PARALLELPERIOD: the interval must be MONTH, QUARTER or YEAR.") }
                 return .table(e.datesTable(da.cid, []))
@@ -306,7 +312,7 @@ extension DAXEngine {
             let da = try e.dateArg(a[0], c, "DATESINPERIOD")
             guard let start = try e.scalar(a[1], c).asDate else { return .table(e.datesTable(da.cid, [])) }
             let n = Int(try DAXOps.number(e.scalar(a[2], c)))
-            let iv = try e.intervalArg(a, 3, c, "DATESINPERIOD")
+            let iv = try e.intervalArg(a, 3, c, "DATESINPERIOD", calendar: da.calendar)
             let other = iv.months > 0 ? DateMath.addMonths(start, n * iv.months) : DateMath.addDays(start, n * iv.days)
             let idx = e.dateIndex(da.cid)
             if n >= 0 { return .table(e.datesTable(da.cid, idx.between(start, other.addingTimeInterval(-0.001)))) }

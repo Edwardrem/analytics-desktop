@@ -87,7 +87,7 @@ extension DAXEngine {
         return (vc, k)
     }
 
-    private static let axisKeywords: Set<String> = ["ROWS", "COLUMNS"]
+    private static let axisKeywords: Set<String> = ["ROWS", "COLUMNS", "ROWS COLUMNS", "COLUMNS ROWS"]
     private static let resetKeywords: Set<String> = ["NONE", "LOWESTPARENT", "HIGHESTPARENT"]
     private static let blanksKeywords: Set<String> = ["DEFAULT", "KEEP"]
 
@@ -126,20 +126,24 @@ extension DAXEngine {
     /// Resolves the trailing `[axis][, orderBy][, blanks][, reset]` arguments.
     ///
     /// The calculation walks the rows axis by default (`ROWS`), separately for each combination of
-    /// column-axis values; `COLUMNS` walks the column axis within each row. `reset` restarts the
+    /// column-axis values; `COLUMNS` walks the column axis within each row. `ROWS COLUMNS` walks
+    /// down the rows of the first column, then of the next column, and so on; `COLUMNS ROWS`
+    /// walks along the columns of the first row, then of the next row. `reset` restarts the
     /// walk whenever a parent level changes: `HIGHESTPARENT`, `LOWESTPARENT`, a number of levels
     /// (positive from the top, negative from the bottom) or a column of the axis.
     private func visualAxis(_ args: [Node], from start: Int, _ vc: VisualCalcContext, _ ctx: Ctx, _ fn: String) throws -> VisualAxis {
         enum Reset { case none, highest, lowest, levels(Int), column(Int) }
-        var alongColumns = false
+        var alongColumns = false, wholeGrid = false
         var reset = Reset.none
         var order: [(Int, Bool)] = []
         for i in start..<max(start, args.count) where !args[i].isMissing {
             let node = args[i]
             if let k = keyword(node, ctx) {
                 switch k {
-                case "ROWS": alongColumns = false
-                case "COLUMNS": alongColumns = true
+                case "ROWS": alongColumns = false; wholeGrid = false
+                case "COLUMNS": alongColumns = true; wholeGrid = false
+                case "ROWS COLUMNS": alongColumns = false; wholeGrid = true
+                case "COLUMNS ROWS": alongColumns = true; wholeGrid = true
                 case "NONE": reset = .none
                 case "HIGHESTPARENT": reset = .highest
                 case "LOWESTPARENT": reset = .lowest
@@ -159,8 +163,9 @@ extension DAXEngine {
                 reset = .levels(Int(try DAXOps.number(scalar(node, ctx))))
             }
         }
-        let axis = alongColumns ? vc.colAxis : vc.rowAxis
-        let fixed = alongColumns ? vc.rowAxis : vc.colAxis
+        // Over the whole grid the outer axis comes first: columns for ROWS COLUMNS, rows for COLUMNS ROWS.
+        let axis = wholeGrid ? (alongColumns ? vc.rowAxis + vc.colAxis : vc.colAxis + vc.rowAxis) : (alongColumns ? vc.colAxis : vc.rowAxis)
+        let fixed = wholeGrid ? [] : (alongColumns ? vc.rowAxis : vc.colAxis)
         let parents: Int
         switch reset {
         case .none: parents = 0
@@ -178,7 +183,29 @@ extension DAXEngine {
         guard let current = data[safe: vc.row] else { return VisualAxis(rows: [], at: nil) }
         let key = keyColumns.map { current[safe: $0] ?? .null }
         var rows = data.indices.filter { r in keyColumns.enumerated().allSatisfy { DAXOps.strictEquals(data[r][safe: $0.element] ?? .null, key[$0.offset]) } }
-        let sortBy = order.isEmpty && alongColumns ? axis.map { ($0, false) } : order
+        var sortBy = order
+        if order.isEmpty, wholeGrid {
+            // Group by the outer axis in the order its members first appear, then follow the inner axis.
+            let outer = alongColumns ? vc.rowAxis : vc.colAxis
+            var rank: [[Value]: Int] = [:]
+            for row in data {
+                let k = outer.map { row[safe: $0] ?? .null }
+                if rank[k] == nil { rank[k] = rank.count }
+            }
+            let inner = alongColumns ? vc.colAxis : []
+            rows = rows.enumerated().sorted { x, y in
+                let rx = rank[outer.map { data[x.element][safe: $0] ?? .null }] ?? 0
+                let ry = rank[outer.map { data[y.element][safe: $0] ?? .null }] ?? 0
+                if rx != ry { return rx < ry }
+                for col in inner {
+                    let cmp = DAXOps.sortCompare(data[x.element][safe: col] ?? .null, data[y.element][safe: col] ?? .null)
+                    if cmp != 0 { return cmp < 0 }
+                }
+                return x.offset < y.offset
+            }.map(\.element)
+        } else if order.isEmpty, alongColumns {
+            sortBy = axis.map { ($0, false) }
+        }
         if !sortBy.isEmpty {
             rows = rows.enumerated().sorted { x, y in
                 for (col, descending) in sortBy {
@@ -209,7 +236,7 @@ extension DAXEngine {
         var named: [Int] = []
         for node in args.dropFirst() where !node.isMissing {
             if let k = keyword(node, ctx) {
-                guard DAXEngine.axisKeywords.contains(k) else {
+                guard k == "ROWS" || k == "COLUMNS" else {
                     throw DAXError("\(fn): unknown axis '\(k)'. Use ROWS or COLUMNS.", range: node.range)
                 }
                 alongColumns = k == "COLUMNS"

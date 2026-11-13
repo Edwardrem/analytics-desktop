@@ -178,11 +178,121 @@ final class SecurityTests: StarSchemaTestCase {
         XCTAssertTrue(try engine.scalar("[Total Amount]").isNull)
     }
 
-    func testUnknownRoleIsReported() throws {
+    func testUnknownRoleGrantsNothing() throws {
         var model = StarSchema.model()
         StarSchema.addRoles(&model)
-        let errors = DAXEngine().load(model: model, data: StarSchema.data(), roles: ["No Such Role"])
+        let engine = DAXEngine()
+        let errors = engine.load(model: model, data: StarSchema.data(), roles: ["No Such Role"])
         XCTAssertEqual(errors.count, 1, "\(errors)")
         XCTAssertTrue(errors.values.first?.contains("No Such Role") ?? false, "\(errors)")
+        // A role that does not exist denies access instead of lifting every restriction.
+        XCTAssertTrue(try engine.scalar("[Total Amount]").isNull)
+        XCTAssertTrue(try engine.scalar("COUNTROWS(Customer)").isNull)
+        XCTAssertTrue(try engine.scalar("COUNTROWS(Product)").isNull)
+        XCTAssertEqual(try engine.query("EVALUATE Sales").first?.rowCount, 0)
+        // Alongside a real role, the real role is what the user has.
+        let mixed = DAXEngine()
+        let mixedErrors = mixed.load(model: model, data: StarSchema.data(), roles: ["US", "No Such Role"])
+        XCTAssertEqual(mixedErrors.count, 1, "\(mixedErrors)")
+        XCTAssertEqual(try mixed.scalar("[Total Amount]").asDouble, 440)
+    }
+
+    // MARK: Object-level security in table expressions
+
+    func testHiddenColumnIsAbsentFromTableExpressions() throws {
+        view(as: "No Prices")
+        let visible = ["Product[ProductKey]", "Product[Product]", "Product[Category]", "Product[Color]"]
+        XCTAssertEqual(try table("EVALUATE Product").columnNames, visible)
+        XCTAssertEqual(try table("EVALUATE Product").rowCount, 6)
+        XCTAssertEqual(try table("EVALUATE FILTER(Product, Product[Color] = \"Red\")").columnNames, visible)
+        XCTAssertEqual(try table("EVALUATE ALL(Product)").columnNames, visible)
+        XCTAssertEqual(try table("EVALUATE CALCULATETABLE(Product, Product[Category] = \"Toys\")").columnNames, visible)
+        XCTAssertEqual(try table("EVALUATE TOPN(2, Product, Product[Product])").columnNames, visible)
+        XCTAssertEqual(try table("EVALUATE UNION(Product, Product)").columnNames.count, 4)
+        XCTAssertEqual(try table("EVALUATE ADDCOLUMNS(Product, \"One\", 1)").columnNames, visible + ["One"])
+        XCTAssertEqual(try table("EVALUATE VAR T = Product RETURN T").columnNames, visible)
+        XCTAssertEqual(try table("EVALUATE DISTINCT(Product)").columnNames, visible)
+        // Nothing of the column leaks through text dumps either.
+        let csv = try scalar("TOCSV(Product, -1)").asString
+        XCTAssertFalse(csv.contains("Price"), csv)
+        XCTAssertTrue(csv.contains("Widget"), csv)
+        XCTAssertFalse(try scalar("TOJSON(Product, -1)").asString.contains("Price"))
+        // Every way of naming the column is an error, as if it did not exist.
+        XCTAssertThrowsError(try scalar("SUMX(Product, Product[Price])"))
+        XCTAssertThrowsError(try scalar("SUMX(Product, [Price])"))
+        XCTAssertThrowsError(try table("EVALUATE SELECTCOLUMNS(Product, \"P\", [Price])"))
+        XCTAssertThrowsError(try table("EVALUATE SUMMARIZECOLUMNS(Product[Price])"))
+        XCTAssertThrowsError(try table("EVALUATE VALUES(Product[Price])"))
+        XCTAssertThrowsError(try scalar("SUMX(Sales, RELATED(Product[Price]))"))
+        XCTAssertThrowsError(try scalar("LOOKUPVALUE(Product[Price], Product[Product], \"Widget\")"))
+        XCTAssertThrowsError(try scalar("[Total Amount]", filters: [filter("Product", "Price", 10)]))
+        XCTAssertEqual(engine.distinctValues(field: .column("Product", "Price"), filters: []), [])
+        XCTAssertEqual(engine.distinctValues(field: .column("Product", "Color"), filters: []).count, 3)
+        // The rest of the table works as before.
+        XCTAssertEqual(try num("COUNTROWS(Product)"), 6)
+        XCTAssertEqual(try num("SUMX(Product, [Total Amount])"), 700)
+    }
+
+    func testHiddenColumnOnTheFactTable() throws {
+        engine = StarSchema.makeEngine(roles: ["No Qty"]) { model, _ in
+            var role = SecurityRole(name: "No Qty")
+            role.hiddenColumns = ["Sales[Qty]"]
+            model.roles.append(role)
+        }
+        XCTAssertEqual(try table("EVALUATE Sales").columnNames,
+                       ["Sales[DateKey]", "Sales[ProductKey]", "Sales[CustomerKey]", "Sales[StoreKey]", "Sales[ShipDateKey]", "Sales[Amount]"])
+        XCTAssertEqual(try num("COUNTROWS(Sales)"), 11)
+        // Measures over the hidden column fail; the others, RELATED and context transition still work.
+        XCTAssertThrowsError(try scalar("[Total Qty]"))
+        XCTAssertThrowsError(try scalar("[Amount Per Unit]"))
+        XCTAssertEqual(try num("[Total Amount]"), 700)
+        // Price of the product of each sale: 10 + 20 + 30 + 10 + 40 + 50 + 10 + 20 + 30 + 50 (the orphan row has none).
+        XCTAssertEqual(try num("SUMX(Sales, RELATED(Product[Price]))"), 270)
+        XCTAssertEqual(try num("SUMX(Sales, CALCULATE(SUM(Sales[Amount])))"), 20 + 20 + 90 + 10 + 80 + 250 + 10 + 80 + 60 + 50 + 30)
+        XCTAssertEqual(try num("SUMX(FILTER(Sales, Sales[Amount] > 50), Sales[Amount])"), 560)
+    }
+
+    func testHiddenTableIsAbsent() throws {
+        view(as: "No Stores")
+        XCTAssertThrowsError(try table("EVALUATE Store"))
+        XCTAssertThrowsError(try table("EVALUATE ALL(Store)"))
+        XCTAssertThrowsError(try table("EVALUATE VALUES(Store[Store])"))
+        XCTAssertThrowsError(try scalar("SUMX(Sales, RELATED(Store[StoreKey]))"))
+        XCTAssertEqual(engine.distinctValues(field: .column("Store", "Store"), filters: []), [])
+        // The key on the fact table is still there.
+        XCTAssertTrue(try table("EVALUATE Sales").columnNames.contains("Sales[StoreKey]"))
+        XCTAssertEqual(try num("COUNTROWS(VALUES(Sales[StoreKey]))"), 3)
+    }
+
+    func testCalculatedObjectsMayUseHiddenColumnsAndRoleFiltersMayUseCalculatedColumns() throws {
+        func configure(_ model: inout SemanticModel) {
+            StarSchema.addRoles(&model)
+            var double = ModelColumn(name: "Double Price", dataType: .integer)
+            double.expression = "Product[Price] * 2"
+            model.tables[1].columns.append(double)
+            var pricey = SecurityRole(name: "Pricey")
+            pricey.tableFilters = ["Product": "Product[Double Price] > 50"]
+            model.roles.append(pricey)
+            var hideComputed = SecurityRole(name: "No Double")
+            hideComputed.hiddenColumns = ["Product[Double Price]"]
+            model.roles.append(hideComputed)
+        }
+        // The calculated column is computed from the hidden column; the role sees only the result.
+        engine = StarSchema.makeEngine(roles: ["No Prices"]) { model, _ in configure(&model) }
+        XCTAssertEqual(try num("MAX(Product[Double Price])"), 100)
+        XCTAssertThrowsError(try scalar("MAX(Product[Price])"))
+        // A role filter on a calculated column: prices above 25 are Gizmo, Doohickey and Thing.
+        engine = StarSchema.makeEngine(roles: ["Pricey"]) { model, _ in configure(&model) }
+        XCTAssertEqual(try num("[Total Amount]"), 150 + 80 + 300)
+        XCTAssertEqual(try num("COUNTROWS(Product)"), 3)
+        // A calculated column can be hidden too.
+        engine = StarSchema.makeEngine(roles: ["No Double"]) { model, _ in configure(&model) }
+        XCTAssertThrowsError(try scalar("MAX(Product[Double Price])"))
+        XCTAssertFalse(try table("EVALUATE Product").columnNames.contains("Product[Double Price]"))
+        XCTAssertEqual(try num("MAX(Product[Price])"), 50)
+        // Recomputing the calculated objects keeps the role in force.
+        XCTAssertTrue(engine.refreshCalculatedObjects().isEmpty)
+        XCTAssertThrowsError(try scalar("MAX(Product[Double Price])"))
+        XCTAssertFalse(try table("EVALUATE Product").columnNames.contains("Product[Double Price]"))
     }
 }
