@@ -233,6 +233,34 @@ final class VisualCalculationTests: XCTestCase {
         XCTAssertThrowsError(try run("COLLAPSE([Sales], DIAGONAL)"))
     }
 
+    func testTwoWordAxesWalkTheWholeGrid() throws {
+        let matrix = DataTable(name: "", columnNames: ["Region", "Year", "Sales"], rows: [
+            ["East", 2023, 90], ["East", 2024, 2500], ["East", 2025, 2000],
+            ["West", 2023, 120], ["West", 2024, 2000], ["West", 2025, 4000],
+        ])
+        func run(_ expression: String) throws -> [Double?] {
+            try engine.visualCalculation(expression, on: matrix, rowAxis: ["Region"], colAxis: ["Year"]).map { $0.isNull ? nil : $0.asDouble }
+        }
+        // Down the rows of 2023, then of 2024, then of 2025: 90, 210 | 2710, 4710 | 6710, 10710.
+        XCTAssertEqual(try run("RUNNINGSUM([Sales], ROWS COLUMNS)"), [90, 2710, 6710, 210, 4710, 10710])
+        // Along the columns of East, then of West: 90, 2590, 4590 | 4710, 6710, 10710.
+        XCTAssertEqual(try run("RUNNINGSUM([Sales], COLUMNS ROWS)"), [90, 2590, 4590, 4710, 6710, 10710])
+        // The previous cell carries over from the end of one column to the start of the next.
+        XCTAssertEqual(try run("PREVIOUS([Sales], 1, ROWS COLUMNS)"), [nil, 120, 2000, 90, 2500, 2000])
+        XCTAssertEqual(try run("PREVIOUS([Sales], 1, COLUMNS ROWS)"), [nil, 90, 2500, 2000, 120, 2000])
+        XCTAssertEqual(try run("FIRST([Sales], ROWS COLUMNS)"), [Double?](repeating: 90, count: 6))
+        XCTAssertEqual(try run("LAST([Sales], COLUMNS ROWS)"), [Double?](repeating: 4000, count: 6))
+        // Resetting on the highest parent of the walk restarts in each column (or each row).
+        XCTAssertEqual(try run("RUNNINGSUM([Sales], ROWS COLUMNS, HIGHESTPARENT)"), [90, 2500, 2000, 210, 4500, 6000])
+        XCTAssertEqual(try run("RUNNINGSUM([Sales], COLUMNS ROWS, HIGHESTPARENT)"), [90, 2590, 4590, 120, 2120, 6120])
+        // The templates pass these axes.
+        let template = try XCTUnwrap(VisualCalcTemplates.template(id: "runningSum"))
+        XCTAssertEqual(template.expression(field: "Sales", axis: "rows columns"), "RUNNINGSUM([Sales], ROWS COLUMNS)")
+        XCTAssertEqual(try run(template.expression(field: "Sales", axis: "ROWS COLUMNS")), [90, 2710, 6710, 210, 4710, 10710])
+        // The same word twice is not an axis.
+        XCTAssertThrowsError(try run("RUNNINGSUM([Sales], ROWS ROWS)"))
+    }
+
     // MARK: Templates
 
     func testTemplatesProduceWorkingExpressions() throws {
