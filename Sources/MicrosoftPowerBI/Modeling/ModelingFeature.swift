@@ -16,6 +16,7 @@ enum ModelingFeature {
         ModelingTarget.externalTable = { FieldPaneContext.table(for: $0) }
         ModelingTarget.externalField = { FieldPaneContext.field(for: $0) }
         AppCommands.register { commands }
+        AppCommands.register { ModelingToolCommands.commands }
     }
 
     static var commands: [AppCommand] {

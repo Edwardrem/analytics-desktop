@@ -13,7 +13,7 @@ final class RibbonLayoutTests: XCTestCase {
     static let pending: Set<String> = [
         "account.sensitivity", "insert.sparkline",
         "model.autodetectRelationships", "model.viewAs", "model.qnaSetup", "model.synonyms", "model.translations",
-        "model.calculationGroups", "model.functions", "model.markDateTable", "model.sortByColumn",
+        "model.calculationGroups", "model.functions", "model.markDateTable",
         "model.newGroup", "model.newHierarchy",
     ]
 
