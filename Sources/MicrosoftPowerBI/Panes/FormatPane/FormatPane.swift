@@ -18,6 +18,9 @@ struct FormatPane: View {
     @State private var collapsed: Set<String> = []
     /// Cards collapsed while a search is showing (results start expanded).
     @State private var collapsedInSearch: Set<String> = []
+    /// On-object formatting asks for a card through this; the pane opens it and scrolls to it.
+    @ObservedObject private var focus = FormatFocus.shared
+    @State private var scrollTarget: String?
 
     var body: some View {
         let specs = store.selectedVisuals
@@ -25,6 +28,17 @@ struct FormatPane: View {
             if specs.isEmpty { scopePane } else { visualPane(specs) }
         }
         .onChange(of: query) { _, _ in collapsedInSearch.removeAll() }
+        .onChange(of: focus.request) { _, _ in takeFocusRequest() }
+        .onAppear(perform: takeFocusRequest)
+    }
+
+    private func takeFocusRequest() {
+        guard let request = focus.request, request.store == ObjectIdentifier(store) else { return }
+        focus.request = nil
+        visualTab = request.tab
+        query = ""
+        collapsed.remove(request.card)
+        scrollTarget = request.card
     }
 
     // MARK: - Visuals are selected
@@ -52,12 +66,23 @@ struct FormatPane: View {
                 EmptyState(systemImage: "slider.horizontal.3", title: "No formatting options",
                            message: emptyMessage(selectionCount: specs.count, hasCards: !all.isEmpty))
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(list) { card in
-                            PaneSection(title: card.label, expanded: expansion(card.id)) {
-                                rows(card, specs: specs, ids: ids)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(list) { card in
+                                PaneSection(title: card.label, expanded: expansion(card.id)) {
+                                    rows(card, specs: specs, ids: ids)
+                                }
+                                .id(card.id)
                             }
+                        }
+                    }
+                    .onChange(of: scrollTarget) { _, target in
+                        guard let target else { return }
+                        // After this update, so the requested tab's cards are laid out.
+                        DispatchQueue.main.async {
+                            withAnimation(Design.Motion.quick) { proxy.scrollTo(target, anchor: .top) }
+                            scrollTarget = nil
                         }
                     }
                 }
@@ -72,8 +97,13 @@ struct FormatPane: View {
         switch card.role {
         case .format:
             ForEach(card.properties) { property in
-                FormatPropertyRow(property: property, specs: specs, theme: store.theme) { p, value in
-                    write(ids, p, value)
+                HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
+                    FormatPropertyRow(property: property, specs: specs, theme: store.theme) { p, value in
+                        write(ids, p, value)
+                    }
+                    if specs.count == 1, let spec = specs.first, let target = FormatCatalog.fxTarget(of: property, type: spec.type) {
+                        FormatFxButton(visualID: spec.id, target: target)
+                    }
                 }
             }
             resetButton(card, enabled: specs.contains { FormatCatalog.isOverridden(card, in: $0) }) { resetCard(ids, card) }
@@ -83,6 +113,10 @@ struct FormatPane: View {
                     writePosition(spec.id, key, value)
                 }
             }
+        case .presets:
+            FormatPresetRows(specs: specs, theme: store.theme) { name in applyPreset(ids, name) }
+        case .conditional:
+            if let spec = specs.first { FormatConditionalRows(properties: card.properties, spec: spec) }
         case .altText:
             if let spec = specs.first {
                 FormatAltTextRows(altText: spec.altText) { writeAltText(spec.id, $0) }
@@ -176,6 +210,12 @@ struct FormatPane: View {
         store.updateVisuals(ids, name: "Reset \(card.label)") { spec in
             for key in card.resetKeys { spec.setFmt(card.card, key, nil) }
         }
+    }
+
+    /// Merges a style preset into every target visual (preset keys win; other keys are kept).
+    private func applyPreset(_ ids: [UUID], _ name: String) {
+        let theme = store.theme
+        store.updateVisuals(ids, name: "Apply Style Preset") { $0 = FormatPresets.applying(name, to: $0, theme: theme) }
     }
 
     /// Position, size and rotation live on the frame of the layout being edited.

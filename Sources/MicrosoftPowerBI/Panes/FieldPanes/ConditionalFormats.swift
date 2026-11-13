@@ -30,15 +30,21 @@ struct ConditionalFormatsSection: View {
     private func add(_ target: ConditionalFormat.Target) {
         store.updateVisual(spec.id, name: "Add Conditional Format") { v in
             guard !v.conditionalFormats.contains(where: { $0.target == target }) else { return }
-            var rule = ConditionalFormat(target: target)
-            rule.mode = mode(for: target)
-            rule.appliesToKey = v.allFields.first?.key
-            rule.basedOn = v.allFields.first { $0.isAggregate } ?? v.allFields.first
-            v.conditionalFormats.append(rule)
+            v.conditionalFormats.append(Self.newRule(target, for: v))
         }
     }
 
-    private func mode(for target: ConditionalFormat.Target) -> ConditionalFormat.Mode {
+    /// A rule for `target` with the defaults the pane starts from: the target's usual mode,
+    /// applied to the visual's first field and driven by its first aggregate.
+    static func newRule(_ target: ConditionalFormat.Target, for v: VisualSpec) -> ConditionalFormat {
+        var rule = ConditionalFormat(target: target)
+        rule.mode = mode(for: target)
+        rule.appliesToKey = v.allFields.first?.key
+        rule.basedOn = v.allFields.first { $0.isAggregate } ?? v.allFields.first
+        return rule
+    }
+
+    private static func mode(for target: ConditionalFormat.Target) -> ConditionalFormat.Mode {
         switch target {
         case .background, .fontColor, .dataBars, .dataPointColor, .icons: return .gradient
         case .webURL, .image, .title: return .fieldValue
@@ -48,11 +54,16 @@ struct ConditionalFormatsSection: View {
 
     // MARK: One rule
 
-    private struct RuleRow: View {
+    /// One rule with its editor. The Format pane's fx buttons show the same row, opened.
+    struct RuleRow: View {
         let spec: VisualSpec
         let rule: ConditionalFormat
         @EnvironmentObject var store: DocumentStore
-        @State private var expanded = false
+        @State private var expanded: Bool
+
+        init(spec: VisualSpec, rule: ConditionalFormat, expanded: Bool = false) {
+            self.spec = spec; self.rule = rule; self._expanded = State(initialValue: expanded)
+        }
 
         var body: some View {
             VStack(alignment: .leading, spacing: Design.Space.xs) {

@@ -379,8 +379,8 @@ final class FormatCatalogTests: XCTestCase {
         // Page elements have no bold / alignment title rows, so a mixed selection drops them.
         let mixed = FormatCatalog.cards(for: [.clusteredColumn, .textBox], tab: .general)
         XCTAssertEqual(mixed.first { $0.card == "title" }?.properties.map(\.key), ["show", "text", "size", "color"])
-        // One visual keeps everything.
-        XCTAssertEqual(FormatCatalog.cards(for: [.table], tab: .visual), FormatCatalog.visualCards(for: .table))
+        // One visual keeps every format card.
+        XCTAssertEqual(FormatCatalog.cards(for: [.table], tab: .visual).filter { $0.role == .format }, FormatCatalog.visualCards(for: .table))
     }
 
     func testMixedValuesUseEachVisualsOwnDefault() {

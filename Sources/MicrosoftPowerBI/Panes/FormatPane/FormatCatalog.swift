@@ -12,6 +12,10 @@ struct FormatCardModel: Identifiable, Hashable {
         case position
         /// The visual's alt text.
         case altText
+        /// The style presets the visual type offers.
+        case presets
+        /// Conditional formatting (fx): one row per target the visual type supports.
+        case conditional
     }
 
     /// The format-bag card, e.g. "columnHeaders" ("position" / "altText" for the other roles).
@@ -122,20 +126,71 @@ enum FormatCatalog {
         tab == .visual ? visualCards(for: type) : generalCards(for: type)
     }
 
-    /// Cards for a selection. One visual gets all of its cards. Several get the cards and
-    /// properties every one of them has (same id and control), without Properties and Alt text,
-    /// which belong to a single visual.
+    /// Style presets, for types that offer any (cards, slicers, tables, matrices, buttons…).
+    static func presetsCard(for type: VisualType) -> FormatCardModel? {
+        guard !ComponentStylePresets.presets(for: type).isEmpty else { return nil }
+        return FormatCardModel(card: "stylePresets", label: "Style presets", properties: [
+            FormatCardBuilder("stylePresets", "Style presets").string("preset", "Style preset"),
+        ], role: .presets)
+    }
+
+    /// Conditional formatting entry points: one row per target `type` supports. The dynamic title
+    /// has its fx button on the Title card instead.
+    static func conditionalTargets(for type: VisualType) -> [ConditionalFormat.Target] {
+        BuildLogic.conditionalTargets(for: type).filter { $0 != .title }
+    }
+
+    static func conditionalCard(for type: VisualType) -> FormatCardModel? {
+        let targets = conditionalTargets(for: type)
+        guard !targets.isEmpty else { return nil }
+        let c = FormatCardBuilder("conditionalFormatting", "Conditional formatting")
+        return FormatCardModel(card: "conditionalFormatting", label: "Conditional formatting",
+                               properties: targets.map { c.string($0.rawValue, BuildLogic.title($0)) }, role: .conditional)
+    }
+
+    /// The conditional-formatting target a format row offers through an fx button, if any.
+    static func fxTarget(of property: FormatProperty, type: VisualType) -> ConditionalFormat.Target? {
+        property.id == "title.text" && BuildLogic.conditionalTargets(for: type).contains(.title) ? .title : nil
+    }
+
+    /// Cards for a selection. One visual gets all of its cards: on the Visual tab its style
+    /// presets, format cards and conditional formatting; on the General tab Properties, the
+    /// container chrome and Alt text. Several visuals get the format cards and properties every
+    /// one of them has (same id and control), plus style presets when they are all of one type.
     static func cards(for types: [VisualType], tab: Tab) -> [FormatCardModel] {
         guard let first = types.first else { return [] }
         let base = cards(for: first, tab: tab)
-        guard types.count > 1 else { return base }
+        let sameType = Set(types).count == 1
+        let presets = tab == .visual && sameType ? [presetsCard(for: first)].compactMap { $0 } : []
+        guard types.count > 1 else {
+            return presets + base + (tab == .visual ? [conditionalCard(for: first)].compactMap { $0 } : [])
+        }
         let others = Set(types.dropFirst()).map { type in
             Dictionary(cards(for: type, tab: tab).flatMap(\.properties).map { ($0.id, $0.kind) }, uniquingKeysWith: { a, _ in a })
         }
-        return base.filter { $0.role == .format }.compactMap { card in
+        return presets + base.filter { $0.role == .format }.compactMap { card in
             let shared = card.properties.filter { p in others.allSatisfy { $0[p.id] == p.kind } }
             return shared.isEmpty ? nil : FormatCardModel(card: card.card, label: card.label, properties: shared)
         }
+    }
+
+    /// One element of a visual that on-object formatting lists: a format card, the tab it lives
+    /// on, and its show / hide switch when it has one.
+    struct Element: Identifiable, Hashable {
+        let card: FormatCardModel
+        let tab: Tab
+        let toggle: FormatProperty?
+        var id: String { card.id }
+    }
+
+    /// The elements of a visual of `type`, type-specific ones first.
+    static func elements(for type: VisualType) -> [Element] {
+        func list(_ tab: Tab) -> [Element] {
+            cards(for: type, tab: tab).filter { $0.role == .format }.map { card in
+                Element(card: card, tab: tab, toggle: card.properties.first { $0.key == "show" && $0.kind == .bool })
+            }
+        }
+        return list(.visual) + list(.general)
     }
 
     private static func group(_ properties: [FormatProperty]) -> [FormatCardModel] {
@@ -172,7 +227,7 @@ enum FormatCatalog {
         switch card.role {
         case .format: return card.resetKeys.contains { spec.fmt(card.card, $0) != nil }
         case .altText: return !spec.altText.isEmpty
-        case .position: return false
+        case .position, .presets, .conditional: return false
         }
     }
 
