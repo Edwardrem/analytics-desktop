@@ -1,4 +1,5 @@
 import Foundation
+import FacetCore
 import Network
 
 /// A one-shot HTTP listener on the loopback interface that receives the OAuth redirect
@@ -285,7 +286,7 @@ enum SignInPages {
 
     static func success() -> String {
         page(title: "Signed in — Analytics Desktop", heading: "You're signed in",
-             detail: "Return to Power BI to continue. You can close this tab.", accent: "#1f8a4c", glyph: "&#10003;")
+             detail: "Return to \(AppIdentity.name) to continue. You can close this tab.", accent: "#1f8a4c", glyph: "&#10003;")
     }
 
     static func error(title: String, detail: String) -> String {

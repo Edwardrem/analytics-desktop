@@ -1,4 +1,5 @@
 import Foundation
+import FacetCore
 
 /// A Microsoft national cloud, with its sign-in authority and service endpoints.
 public enum MicrosoftCloud: String, Codable, CaseIterable, Sendable {
@@ -103,10 +104,10 @@ public struct MicrosoftAuthConfiguration: Codable, Equatable, Sendable {
 
     /// Step-by-step instructions for creating the Entra app registration Facet needs.
     public static let registrationInstructions = """
-    Power BI does not ship with a Microsoft application ID. Register your own (free) app once, then paste its \
-    Application (client) ID into Power BI's Microsoft account settings:
+    \(AppIdentity.name) does not ship with a Microsoft application ID. Register your own (free) app once, then paste its \
+    Application (client) ID into \(AppIdentity.name)'s Microsoft account settings:
     1. Open the Microsoft Entra admin center (https://entra.microsoft.com) → Identity → Applications → App registrations → New registration.
-    2. Name it (for example "Power BI Desktop"), and under Supported account types choose "Accounts in any organizational directory and personal Microsoft accounts".
+    2. Name it (for example "\(AppIdentity.name)"), and under Supported account types choose "Accounts in any organizational directory and personal Microsoft accounts".
     3. Under Redirect URI choose the platform "Mobile and desktop applications" (public client/native) and enter http://localhost — then Register.
     4. In Authentication → Advanced settings, turn on "Allow public client flows" (needed for device-code sign-in).
     5. In API permissions → Add a permission, add these delegated permissions:
@@ -114,7 +115,7 @@ public struct MicrosoftAuthConfiguration: Codable, Equatable, Sendable {
        • Power BI Service: Workspace.Read.All, Report.Read.All, Dataset.ReadWrite.All, Dashboard.Read.All, Dataflow.Read.All, Capacity.Read.All (add Workspace.ReadWrite.All / Content.Create to publish)
        • Optional — Microsoft Fabric (Power BI Service → Fabric scopes): Workspace.Read.All, Item.ReadWrite.All, OneLake.Read.All; Azure Storage: user_impersonation (OneLake files); Microsoft Graph InformationProtectionPolicy.Read (sensitivity labels)
        Some organisations require an administrator to grant consent.
-    6. Copy the Application (client) ID from the Overview page into Power BI.
+    6. Copy the Application (client) ID from the Overview page into \(AppIdentity.name).
     """
 }
 
@@ -233,13 +234,13 @@ public enum MicrosoftAuthError: LocalizedError, Equatable {
         case .noActiveAccount:
             return "No Microsoft account is signed in. Add an account first."
         case .accountNotFound:
-            return "That Microsoft account is no longer signed in to Power BI."
+            return "That Microsoft account is no longer signed in to \(AppIdentity.name)."
         case .interactionRequired(let account, let detail):
             return "\(account) needs to sign in again. \(detail)"
         case .consentRequired(let resource, let detail):
-            return "Power BI has not been granted access to \(resource) for this account. Sign in again to grant it, or ask your administrator to consent to the app's permissions. \(detail)"
+            return "\(AppIdentity.name) has not been granted access to \(resource) for this account. Sign in again to grant it, or ask your administrator to consent to the app's permissions. \(detail)"
         case .personalAccountUnsupported(let resource):
-            return "\(resource) is only available to work or school accounts. Personal Microsoft accounts (outlook.com, hotmail.com, live.com) can use OneDrive files in Power BI, but not \(resource). Add a work or school account to continue."
+            return "\(resource) is only available to work or school accounts. Personal Microsoft accounts (outlook.com, hotmail.com, live.com) can use OneDrive files in \(AppIdentity.name), but not \(resource). Add a work or school account to continue."
         case .service(let code, let description, let correlationID):
             var s = "Microsoft sign-in failed: \(description.isEmpty ? code : description)"
             if !description.isEmpty { s += " (\(code))" }
@@ -250,7 +251,7 @@ public enum MicrosoftAuthError: LocalizedError, Equatable {
         case .nonceMismatch:
             return "The identity token did not match this sign-in attempt and was rejected. Please try again."
         case .invalidIDToken(let why):
-            return "Microsoft returned an identity token Power BI could not read (\(why))."
+            return "Microsoft returned an identity token \(AppIdentity.name) could not read (\(why))."
         case .invalidResponse(let why):
             return "Microsoft returned an unexpected sign-in response (\(why))."
         case .timedOut:
@@ -262,9 +263,9 @@ public enum MicrosoftAuthError: LocalizedError, Equatable {
         case .deviceCodeExpired:
             return "The sign-in code expired before it was used. Start again to get a new code."
         case .listenerFailed(let why):
-            return "Power BI could not start the local sign-in listener (\(why)). Try device-code sign-in instead."
+            return "\(AppIdentity.name) could not start the local sign-in listener (\(why)). Try device-code sign-in instead."
         case .browserFailed:
-            return "Power BI could not open your web browser. Try device-code sign-in instead."
+            return "\(AppIdentity.name) could not open your web browser. Try device-code sign-in instead."
         case .signInAlreadyInProgress:
             return "A sign-in is already in progress. Finish or cancel it first."
         case .network(let why):
