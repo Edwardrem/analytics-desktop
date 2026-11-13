@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Microsoft Power BI</string>
-    <key>CFBundleDisplayName</key><string>Microsoft Power BI</string>
+    <key>CFBundleName</key><string>Power BI Desktop</string>
+    <key>CFBundleDisplayName</key><string>Power BI Desktop</string>
     <key>CFBundleIdentifier</key><string>com.facet.app</string>
     <key>CFBundleExecutable</key><string>MicrosoftPowerBI</string>
     <key>CFBundleIconFile</key><string>MicrosoftPowerBI</string>

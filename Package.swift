@@ -1,7 +1,7 @@
 // swift-tools-version:5.10
 import PackageDescription
 
-// Microsoft Power BI — a native, Apple-silicon business intelligence studio for macOS.
+// Power BI Desktop — a native, Apple-silicon business intelligence studio for macOS.
 // No third-party dependencies: system frameworks only.
 let swift5: [SwiftSetting] = [.unsafeFlags(["-Xfrontend", "-strict-concurrency=minimal"])]
 
