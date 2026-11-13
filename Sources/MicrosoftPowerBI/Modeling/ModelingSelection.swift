@@ -67,6 +67,16 @@ final class ModelingState: ObservableObject {
     @Published var offset: CGSize = .zero
     /// Bumped to ask the diagram to zoom to fit.
     @Published var fitRequest = 0
+    /// View-only sort and filters per table in Table view, with a revision bumped on every
+    /// change so the grid recomputes its row order. Never written to the document.
+    @Published private var gridStates: [String: GridViewState] = [:]
+    @Published private(set) var gridRevision = 0
+
+    func gridState(for table: String) -> GridViewState { gridStates[table] ?? GridViewState() }
+    func setGridState(_ state: GridViewState, for table: String) {
+        gridStates[table] = state
+        gridRevision += 1
+    }
 
     var primary: ModelObjectRef? { selection.last }
     func isSelected(_ ref: ModelObjectRef) -> Bool { selection.contains(ref) }

@@ -9,6 +9,11 @@ import FacetDesign
 @MainActor
 enum ModelingFeature {
     static func register() {
+        Features.workspaceBuilders[.table] = { store in AnyView(TableWorkspaceView(store: store)) }
+        // The Data pane sets FieldPaneContext before running a model.* command; commands and the
+        // Table view's tools then act on what it focused. (See ModelingTarget's contract.)
+        ModelingTarget.externalTable = { _ in FieldPaneContext.table }
+        ModelingTarget.externalField = { _ in FieldPaneContext.field }
         AppCommands.register { commands }
     }
 
