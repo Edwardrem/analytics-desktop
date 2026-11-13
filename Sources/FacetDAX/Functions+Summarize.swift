@@ -122,7 +122,7 @@ extension DAXEngine {
             for v in vs { e2[v.name.daxKey] = .some(factBinding(v.expr, e2, depth)) }
             return factBinding(body, e2, depth)
         case .call(let name, let args):
-            if queryFunctions[name] != nil || functionDefs[name] != nil { return nil }
+            if userFunction(name) != nil { return nil }
             if DAXEngine.bindAggregates.contains(name), args.count == 1 || name.hasPrefix("PERCENTILE") {
                 if case .column(let t?, let c, nil) = args[0].kind, let cid = db.columnID(table: t, column: c) { return [cid.table] }
                 return nil

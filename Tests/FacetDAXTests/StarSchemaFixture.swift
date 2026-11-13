@@ -144,10 +144,38 @@ enum StarSchema {
                                   store.name: store, sales.name: sales])
     }
 
+    /// Security roles for the row-level and object-level security tests.
+    static func addRoles(_ model: inout SemanticModel) {
+        func role(_ name: String, _ filters: [String: String], hiddenTables: [String] = [], hiddenColumns: [String] = []) {
+            var r = SecurityRole(name: name)
+            r.tableFilters = filters
+            r.hiddenTables = hiddenTables
+            r.hiddenColumns = hiddenColumns
+            model.roles.append(r)
+        }
+        role("US", ["Customer": "Customer[Country] = \"US\""])
+        role("Ben", ["Customer": "Customer[Customer] = \"Ben\""])
+        role("Dee", ["Customer": "Customer[Customer] = \"Dee\""])
+        role("Red", ["Product": "Product[Color] = \"Red\""])
+        role("Self", ["Customer": "Customer[Customer] = USERNAME()"])
+        role("SelfUPN", ["Customer": "LOWER(Customer[Customer]) & \"@contoso.com\" = USERPRINCIPALNAME()"])
+        role("Big Sales", ["Sales": "Sales[Amount] > 50"])
+        role("UK Sales", ["Sales": "RELATED(Customer[Country]) = \"UK\""])
+        role("US Toys", ["Customer": "Customer[Country] = \"US\"", "Product": "Product[Category] = \"Toys\""])
+        role("Nothing", ["Sales": "FALSE()"])
+        role("No Prices", [:], hiddenColumns: ["Product[Price]"])
+        role("No Stores", [:], hiddenTables: ["Store"])
+        role("Broken", ["Customer": "Customer[NoSuchColumn] = 1"])
+    }
+
     /// A fresh engine with the star schema loaded; fails the test when loading reports errors.
-    static func makeEngine() -> DAXEngine {
+    /// `configure` may extend the model (roles, calculated objects) before it is loaded.
+    static func makeEngine(roles: [String] = [], userName: String = "", userPrincipalName: String = "",
+                           configure: (inout SemanticModel, inout DataStore) -> Void = { _, _ in }) -> DAXEngine {
+        var m = model(), d = data()
+        configure(&m, &d)
         let engine = DAXEngine()
-        let errors = engine.load(model: model(), data: data())
+        let errors = engine.load(model: m, data: d, roles: roles, userName: userName, userPrincipalName: userPrincipalName)
         if !errors.isEmpty { XCTFail("fixture failed to load: \(errors)") }
         return engine
     }

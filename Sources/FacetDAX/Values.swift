@@ -175,25 +175,45 @@ struct CalendarDef {
 }
 
 /// State for evaluating visual calculations over a visual's result grid.
+///
+/// Every level of the visual (the grid itself, a parent level reached with COLLAPSE, the grand
+/// total) is a grid with the same column layout; axis columns absent from a level are blank.
 final class VisualCalcContext {
     /// The grid at the current level.
     var grid: TableValue
     /// Column indices of row-axis and column-axis grouping fields present at this level.
     var rowAxis: [Int]
     var colAxis: [Int]
-    /// All row-axis / column-axis field names (full depth), for COLLAPSE / EXPAND and ISATLEVEL.
+    /// All row-axis / column-axis field names (full depth), for ISATLEVEL.
     var allRowFields: [String]
     var allColFields: [String]
-    /// Index of the current row in `grid`.
+    /// Index of the current row in `grid`; -1 when the level has no single current row.
     var row = 0
     /// Rows aggregations operate over (nil = the current row only).
     var aggRows: [Int]?
-    /// Produces the grid at another level: (number of row fields, number of column fields).
-    var level: ((Int, Int) throws -> VisualCalcContext)?
+    /// Row-axis and column-axis columns of the visual's own grid (the deepest level).
+    var fullRowAxis: [Int]
+    var fullColAxis: [Int]
+    /// Produces the grid of the level that keeps the given axis columns.
+    var levelGrid: (([Int]) throws -> TableValue)?
 
     init(grid: TableValue, rowAxis: [Int], colAxis: [Int], allRowFields: [String], allColFields: [String]) {
         self.grid = grid; self.rowAxis = rowAxis; self.colAxis = colAxis
         self.allRowFields = allRowFields; self.allColFields = allColFields
+        fullRowAxis = rowAxis; fullColAxis = colAxis
+    }
+
+    /// The same visual at another level, with its own current row.
+    func at(grid: TableValue, rowAxis: [Int], colAxis: [Int], row: Int, aggRows: [Int]?) -> VisualCalcContext {
+        let c = VisualCalcContext(grid: grid, rowAxis: rowAxis, colAxis: colAxis, allRowFields: allRowFields, allColFields: allColFields)
+        c.fullRowAxis = fullRowAxis; c.fullColAxis = fullColAxis; c.levelGrid = levelGrid
+        c.row = row; c.aggRows = aggRows
+        return c
+    }
+
+    /// The same level with another current row.
+    func moved(to row: Int) -> VisualCalcContext {
+        at(grid: grid, rowAxis: rowAxis, colAxis: colAxis, row: row, aggRows: nil)
     }
 }
 
