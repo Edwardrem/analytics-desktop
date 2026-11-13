@@ -25,7 +25,7 @@ struct FlowEnv {
     /// Compact data-label text honouring `dataLabels.displayUnits` / `dataLabels.decimals`.
     func valueLabel(_ v: Double, format: String) -> String {
         AxisFormatter.label(v, units: DisplayUnits(f.string("dataLabels", "displayUnits", "auto")),
-                            decimals: f.value("dataLabels", "decimals")?.doubleValue.map { Int($0) }, format: format)
+                            decimals: f.decimals("dataLabels"), format: format)
     }
     /// Full-precision value for tooltips.
     func full(_ v: Double, format: String) -> String { ValueFormatter.format(.double(v), format) }

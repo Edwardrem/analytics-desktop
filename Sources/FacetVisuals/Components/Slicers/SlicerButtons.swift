@@ -20,8 +20,8 @@ struct CmpSlButtonConfig {
 
     init(_ env: CmpEnv) {
         let f = env.f
-        columns = Int(f.double("buttons", "columns", 0))
-        rows = Int(f.double("buttons", "rows", 0))
+        columns = f.int("buttons", "columns", 0, in: 0...100)
+        rows = f.int("buttons", "rows", 0, in: 0...100)
         overflow = f.string("buttons", "overflow", "scroll")
         spacing = f.double("buttons", "spacing", 8)
         radius = f.double("buttons", "radius", 8)

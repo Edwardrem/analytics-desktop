@@ -9,6 +9,7 @@ enum FeatureRegistration {
         SettingsFeature.register()
         FieldPanesFeature.register()
         ReportPanesFeature.register()
+        FormatPaneFeature.register()
         ModelingFeature.register()
         DAXQueryFeature.register()
         TMDLViewFeature.register()

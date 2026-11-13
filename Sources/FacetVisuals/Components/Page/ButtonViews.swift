@@ -284,7 +284,7 @@ struct CmpNavigatorView: View {
             let stack = VStack(spacing: gap) { ForEach(items) { button($0, selected).frame(height: h) } }
             if fit < 24 { ScrollView(.vertical) { stack } } else { stack.frame(maxHeight: .infinity, alignment: .top) }
         case "grid":
-            let cols = max(1, Int(f.double("navigator", "columns", 2)))
+            let cols = f.int("navigator", "columns", 2, in: 1...100)
             let rows = Int(ceil(Double(items.count) / Double(cols)))
             let w = (size.width - gap * CGFloat(cols - 1)) / CGFloat(cols)
             let fit = (size.height - gap * CGFloat(rows - 1)) / CGFloat(rows)

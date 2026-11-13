@@ -164,7 +164,7 @@ extension CartesianPanel {
         }
         if let share { return AxisFormatter.label(share, format: abs(share) < 0.1 ? "0.0%" : "0%") }
         return AxisFormatter.label(value, units: DisplayUnits(f.string("dataLabels", "displayUnits", "auto")),
-                                   decimals: f.value("dataLabels", "decimals")?.doubleValue.map { Int($0) },
+                                   decimals: f.decimals("dataLabels"),
                                    format: model.series[safe: s]?.format ?? "")
     }
 

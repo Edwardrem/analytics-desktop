@@ -397,6 +397,9 @@ enum RibbonLayout {
             RibbonGroup(title: "Style", items: [
                 large("view.pane.format", "Format pane", "paintbrush"),
                 large("edit.formatPainter", "Format painter", "paintbrush.pointed"),
+                small("format.copyFormatting", "Copy formatting", "paintbrush"),
+                small("format.pasteFormatting", "Paste formatting", "paintbrush.fill"),
+                small("format.resetFormatting", "Reset to default", "arrow.counterclockwise"),
             ]),
             RibbonGroup(title: "Edit", items: [
                 small("edit.duplicate", "Duplicate", "plus.square.on.square"),
