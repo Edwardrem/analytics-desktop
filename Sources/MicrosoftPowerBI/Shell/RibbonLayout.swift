@@ -247,7 +247,7 @@ enum RibbonLayout {
                 large("model.viewAs", "View as", "person.crop.rectangle"),
             ]),
             RibbonGroup(title: "Q&A", items: [
-                small("model.qnaSetup", "Q&A setup", "questionmark.bubble"),
+                small("model.prepForAI", "Prep data for AI", "sparkles"),
                 small("model.synonyms", "Synonyms", "character.book.closed"),
                 small("model.translations", "Translations", "globe"),
             ]),
@@ -431,6 +431,7 @@ enum RibbonLayout {
             RibbonGroup(title: "Table", items: [registered("model.table.")]),
             RibbonGroup(title: "Calendars", items: [
                 large("model.markDateTable", "Mark as date table", "calendar"),
+                large("model.calendars", "Calendars", "calendar.badge.clock"),
             ]),
             RibbonGroup(title: "Relationships", items: [
                 large("model.relationships", "Manage relationships", "arrow.left.arrow.right"),
