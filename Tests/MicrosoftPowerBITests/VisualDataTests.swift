@@ -49,9 +49,25 @@ final class VisualDataTests: XCTestCase {
             Measure(name: "Total Amount", expression: "SUM(Sales[Amount])", formatString: "#,0"),
             Measure(name: "Avg Price", expression: "DIVIDE(SUM(Sales[Amount]), SUM(Sales[Qty]))", formatString: "0.00"),
         ]
+        // A measure whose format follows the region in context.
+        var dynamic = Measure(name: "Amount Auto", expression: "SUM(Sales[Amount])", formatString: "0")
+        dynamic.formatExpression = "IF(SELECTEDVALUE(Sales[Region]) = \"East\", \"€#,0\", \"$#,0\")"
+        sales.measures.append(dynamic)
+        // A calculation group: Units (as is) and Share (of all products, formatted as a percentage).
+        var scale = CalculationGroup(name: "Scale")
+        scale.columnName = "Scale"
+        var share = CalculationItem(name: "Share", expression: "DIVIDE(SELECTEDMEASURE(), CALCULATE(SELECTEDMEASURE(), REMOVEFILTERS(Product)))")
+        share.formatExpression = "\"0.0%\""
+        share.ordinal = 1
+        scale.items = [CalculationItem(name: "Units", expression: "SELECTEDMEASURE()"), share]
         var model = SemanticModel()
+        model.calculationGroups = [scale]
         model.tables = [productTable, sales]
         model.relationships = [Relationship(fromTable: "Sales", fromColumn: "Product", toTable: "Product", toColumn: "Product")]
+        // Field parameters, installed the way the Parameters dialog does.
+        ParameterLogic.install(fieldParameter: "Metric", fields: [.measure("Sales", "Total Amount"), .measure("Sales", "Avg Price"),
+                                                                 .column("Sales", "Qty", .sum)], into: &model)
+        ParameterLogic.install(fieldParameter: "Axis", fields: [category, region, .column("Product", "Color")], into: &model)
         let products = DataTable(name: "Product", columnNames: ["Product", "Category", "Color"], rows: [
             ["Widget", "Tools", "Red"], ["Gadget", "Tools", "Blue"], ["Gizmo", "Toys", "Red"], ["Doohickey", "Toys", "Blue"],
         ], types: [.text, .text, .text])
@@ -175,6 +191,163 @@ final class VisualDataTests: XCTestCase {
         limited.rowLimit = 3
         XCTAssertEqual(run(visual(.table, [.values: [product, amount]]), limited).table.rowCount, 3)
         XCTAssertEqual(run(visual(.table, [.values: [product, amount]])).table.rowCount, 4)
+    }
+
+    // MARK: Aggregations
+
+    func testEveryAggregationGeneratesValidDAX() throws {
+        // Quantities are 1, 2, 3, 1, 2, 1, 5, 4: nineteen in eight rows, five distinct values.
+        let expected: [(Aggregation, String, Double)] = [
+            (.sum, "SUM('Sales'[Qty])", 19), (.average, "AVERAGE('Sales'[Qty])", 19.0 / 8.0),
+            (.min, "MIN('Sales'[Qty])", 1), (.max, "MAX('Sales'[Qty])", 5),
+            (.count, "COUNTA('Sales'[Qty])", 8), (.distinctCount, "DISTINCTCOUNT('Sales'[Qty])", 5),
+            (.median, "MEDIAN('Sales'[Qty])", 2),
+            (.first, "FIRSTNONBLANK('Sales'[Qty], 1)", 1), (.last, "LASTNONBLANK('Sales'[Qty], 1)", 5),
+        ]
+        let model = SemanticModel()
+        for (aggregation, dax, value) in expected {
+            let field = FieldRef.column("Sales", "Qty", aggregation)
+            XCTAssertEqual(ModelDAX.aggregate(field, model: model), dax)
+            XCTAssertEqual(try service.scalar(dax, filters: []).asDouble ?? .nan, value, accuracy: 1e-12, "\(aggregation)")
+            // And through a visual.
+            let data = run(visual(.card, [.values: [field]]))
+            XCTAssertEqual(data.table[0, 0].asDouble ?? .nan, value, accuracy: 1e-12, "\(aggregation)")
+        }
+        // Sample variance and standard deviation: Σ(x − 2.375)² = 15.875 over 7.
+        XCTAssertEqual(try service.scalar(ModelDAX.aggregate(.column("Sales", "Qty", .variance), model: model), filters: []).asDouble ?? .nan,
+                       15.875 / 7.0, accuracy: 1e-12)
+        XCTAssertEqual(try service.scalar(ModelDAX.aggregate(.column("Sales", "Qty", .stdDev), model: model), filters: []).asDouble ?? .nan,
+                       (15.875 / 7.0).squareRoot(), accuracy: 1e-12)
+    }
+
+    func testFirstAndLastOfATextColumn() {
+        // First and last in sort order within each category.
+        let data = run(visual(.table, [.values: [category, .column("Product", "Product", .first), .column("Product", "Product", .last)]]))
+        var first: [String: String] = [:], last: [String: String] = [:]
+        for r in 0..<data.table.rowCount {
+            first[data.table[r, 0].asString] = data.table[r, 1].asString
+            last[data.table[r, 0].asString] = data.table[r, 2].asString
+        }
+        XCTAssertEqual(first, ["Tools": "Gadget", "Toys": "Doohickey"])
+        XCTAssertEqual(last, ["Tools": "Widget", "Toys": "Gizmo"])
+        // As the by-field of a Top N filter too: the category whose last product name sorts highest is Tools (Widget).
+        let byCategory = visual(.clusteredColumn, [.category: [category], .values: [amount]])
+        let top = topN(category, 1, by: .column("Product", "Product", .last))
+        XCTAssertEqual(rows(run(byCategory, request(filters: [top])).table, value: 1), ["Tools": 170])
+    }
+
+    // MARK: Format strings
+
+    func testCalculationItemFormatStringReachesTheVisual() {
+        let byCategory = visual(.clusteredColumn, [.category: [category], .values: [amount, .column("Sales", "Qty", .sum)]])
+        XCTAssertEqual(run(byCategory).formats, ["", "#,0", ""])
+        // The Share item is selected by a slicer on the calculation group.
+        var state = SlicerState()
+        state.selected = ["Share"]
+        var sliced = VisualRequest()
+        sliced.slicers = [.init(fields: [.column("Scale", "Scale")], state: state, type: .slicer)]
+        let data = run(byCategory, sliced)
+        // The measure takes the item's format and value (170 / 390, 220 / 390); the implicit measure is untouched.
+        XCTAssertEqual(data.formats, ["", "0.0%", ""])
+        XCTAssertEqual(number(rows(data.table, value: 1), "Tools"), 170.0 / 390.0, accuracy: 1e-12)
+        XCTAssertEqual(number(rows(data.table, value: 2), "Tools"), 10)
+        XCTAssertEqual(data.formatted(row: 0, col: 1).hasSuffix("%"), true)
+        // An item without a format expression keeps the measure's format; so does a filter.
+        var units = FilterSpec(field: .column("Scale", "Scale"))
+        units.values = ["Units"]
+        XCTAssertEqual(run(byCategory, request(filters: [units])).formats, ["", "#,0", ""])
+        var shareFilter = units
+        shareFilter.values = ["Share"]
+        XCTAssertEqual(run(byCategory, request(filters: [shareFilter])).formats, ["", "0.0%", ""])
+    }
+
+    func testDynamicFormatStringFollowsTheVisualsFilters() {
+        let card = visual(.card, [.values: [.measure("Sales", "Amount Auto")]])
+        XCTAssertEqual(run(card).formats, ["$#,0"])
+        var east = FilterSpec(field: region)
+        east.values = ["East"]
+        XCTAssertEqual(run(card, request(filters: [east])).formats, ["€#,0"])
+        let selection = [DataPointSelection(fields: [region], values: ["East"])]
+        XCTAssertEqual(run(card, request(crossFilters: [selection])).formats, ["€#,0"])
+        var west = east
+        west.values = ["West"]
+        XCTAssertEqual(run(card, request(filters: [west])).formats, ["$#,0"])
+    }
+
+    // MARK: Field parameters
+
+    private let metric = FieldRef.column("Metric", "Metric")
+    private let axis = FieldRef.column("Axis", "Axis")
+    private func parameterSlicer(_ field: FieldRef, _ selected: Value...) -> VisualRequest {
+        var state = SlicerState()
+        state.selected = selected
+        var r = VisualRequest()
+        r.slicers = [.init(fields: [field], state: state, type: .slicer)]
+        return r
+    }
+
+    func testUnfilteredFieldParameterShowsAllItsFieldsInOrder() {
+        let data = run(visual(.clusteredColumn, [.category: [category], .values: [metric]]))
+        XCTAssertEqual(data.fields.map { $0?.caption }, ["Category", "Total Amount", "Avg Price", "Sum of Qty"])
+        XCTAssertEqual(data.indices(.values), [1, 2, 3])
+        XCTAssertEqual(rows(data.table, value: 1), ["Tools": 170, "Toys": 220])
+        XCTAssertEqual(number(rows(data.table, value: 2), "Tools"), 17, accuracy: 1e-12)
+        XCTAssertEqual(rows(data.table, value: 3), ["Tools": 10, "Toys": 9])
+        XCTAssertEqual(data.formats, ["", "#,0", "0.00", ""])
+        XCTAssertEqual(data.totals[3].asDouble, 19)
+    }
+
+    func testSlicerOnAFieldParameterSwapsTheMeasures() {
+        let byCategory = visual(.clusteredColumn, [.category: [category], .values: [metric]])
+        let one = run(byCategory, parameterSlicer(metric, "Avg Price"))
+        XCTAssertEqual(one.fields.map { $0?.caption }, ["Category", "Avg Price"])
+        XCTAssertEqual(number(rows(one.table, value: 1), "Toys"), 220.0 / 9.0, accuracy: 1e-12)
+        // Two selected, listed in parameter order whatever the order they were picked in.
+        let two = run(byCategory, parameterSlicer(metric, "Sum of Qty", "Total Amount"))
+        XCTAssertEqual(two.fields.map { $0?.caption }, ["Category", "Total Amount", "Sum of Qty"])
+        XCTAssertEqual(rows(two.table, value: 2), ["Tools": 10, "Toys": 9])
+        // A filter on the parameter works like the slicer.
+        var filter = FilterSpec(field: metric)
+        filter.values = ["Total Amount"]
+        XCTAssertEqual(run(byCategory, request(filters: [filter])).fields.map { $0?.caption }, ["Category", "Total Amount"])
+    }
+
+    func testFieldParameterOnTheAxisSwapsColumns() {
+        let chart = visual(.clusteredColumn, [.category: [axis], .values: [amount]])
+        let byRegion = run(chart, parameterSlicer(axis, "Region"))
+        XCTAssertEqual(byRegion.fields.map { $0?.name }, ["Region", "Total Amount"])
+        XCTAssertEqual(rows(byRegion.table, value: 1), ["East": 160, "West": 230])
+        let byColor = run(chart, parameterSlicer(axis, "Color"))
+        XCTAssertEqual(rows(byColor.table, value: 1), ["Red": 150, "Blue": 240])
+        // Unfiltered, the three columns form the axis hierarchy: the first level shows until drilled.
+        let all = run(chart)
+        XCTAssertEqual(all.fields.map { $0?.name }, ["Category", "Total Amount"])
+        var expanded = chart
+        expanded.drillLevel = 1; expanded.expandedAllLevels = true
+        XCTAssertEqual(run(expanded).fields.map { $0?.name }, ["Category", "Region", "Total Amount"])
+        // In a table every selected column is shown.
+        let table = run(visual(.table, [.values: [axis, amount]]), parameterSlicer(axis, "Category", "Color"))
+        XCTAssertEqual(table.fields.map { $0?.name }, ["Category", "Color", "Total Amount"])
+        XCTAssertEqual(rows(table.table, keys: 2, value: 2), ["Tools/Red": 30, "Tools/Blue": 140, "Toys/Red": 120, "Toys/Blue": 100])
+    }
+
+    func testBothParametersAndOtherFiltersTogether() {
+        var east = FilterSpec(field: region)
+        east.values = ["East"]
+        var r = parameterSlicer(axis, "Color")
+        var metricState = SlicerState()
+        metricState.selected = ["Sum of Qty"]
+        r.slicers.append(.init(fields: [metric], state: metricState, type: .slicer))
+        r.filters = [east]
+        let data = run(visual(.clusteredBar, [.category: [axis], .values: [metric]]), r)
+        XCTAssertEqual(data.fields.map { $0?.caption }, ["Color", "Sum of Qty"])
+        // East: Widget 1 + Gizmo 1 (Red), Gadget 2 + Doohickey 4 (Blue).
+        XCTAssertEqual(rows(data.table, value: 1), ["Red": 2, "Blue": 6])
+    }
+
+    func testFieldParameterSlicerListsTheChoices() {
+        let data = run(visual(.slicer, [.field: [metric]]))
+        XCTAssertEqual(Set(data.table.columns[0].values), ["Total Amount", "Avg Price", "Sum of Qty"])
     }
 
     // MARK: Filters, slicers and cross-filtering
@@ -404,6 +577,25 @@ final class VisualDataTests: XCTestCase {
                        ["Tools/Widget": 170, "Tools/Gadget": 170, "Toys/Gizmo": 220, "Toys/Doohickey": 220])
         // A calculation can use an earlier one.
         XCTAssertEqual(number(rows(data.table, keys: 2, value: 7), "Tools/Gadget"), 280.0 / 390.0, accuracy: 1e-12)
+    }
+
+    func testFailingVisualCalculationIsTheVisualsError() {
+        var chart = visual(.clusteredColumn, [.category: [category], .values: [amount]])
+        chart.visualCalculations = [
+            VisualCalculation(name: "Running", expression: "RUNNINGSUM([Total Amount])"),
+            VisualCalculation(name: "Broken", expression: "RUNNINGSUM([No Such Column])"),
+        ]
+        let data = service.visualData(spec: chart, request: VisualRequest())
+        let message = data.error ?? ""
+        XCTAssertTrue(message.contains("“Broken”"), message)
+        XCTAssertTrue(message.contains("RUNNINGSUM"), message)
+        XCTAssertFalse(data.daxQuery.isEmpty)
+        // A syntax error is reported the same way.
+        chart.visualCalculations = [VisualCalculation(name: "Typo", expression: "[Total Amount] +")]
+        XCTAssertTrue(service.visualData(spec: chart, request: VisualRequest()).error?.contains("“Typo”") ?? false)
+        // Without the broken calculation the visual is fine.
+        chart.visualCalculations = [VisualCalculation(name: "Running", expression: "RUNNINGSUM([Total Amount])")]
+        XCTAssertNil(run(chart).error)
     }
 
     func testAlignedRelaysValuesOnTheShapeRows() {

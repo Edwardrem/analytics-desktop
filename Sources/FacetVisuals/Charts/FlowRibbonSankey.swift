@@ -9,13 +9,16 @@ import FacetDesign
 struct RibbonChart: View {
     let env: FlowEnv
 
-    private struct Band {
+    struct Band {
         var series: Int
         /// Lower and upper edge (in value units) of the band at each category.
         var lo: [Double] = []
         var hi: [Double] = []
+        /// With cross-highlighting: the upper edge of the highlighted part of the band, which
+        /// starts at `lo`. Empty when nothing is highlighted.
+        var lit: [Double] = []
     }
-    private struct Layout {
+    struct Layout {
         var bands: [Band] = []
         var xs: [CGFloat] = []
         var slices: [(x0: CGFloat, x1: CGFloat)] = []
@@ -45,7 +48,9 @@ struct RibbonChart: View {
         .accessibilityLabel("\(env.spec.type.displayName), \(model.categories.count) categories, \(model.series.count) series.")
     }
 
-    private func layout(_ model: SeriesModel, size: CGSize) -> Layout {
+    /// The band edges per category. With cross-highlighting the bands keep the size and rank of
+    /// the unhighlighted values, and each carries the highlighted part inside it.
+    func layout(_ model: SeriesModel, size: CGSize) -> Layout {
         var L = Layout()
         let n = model.categories.count, m = model.series.count
         guard n > 0, m > 0 else { return L }
@@ -56,9 +61,13 @@ struct RibbonChart: View {
             L.xs.append(pad + bandWidth * (CGFloat(i) + 0.5))
             L.slices.append((pad + bandWidth * CGFloat(i), pad + bandWidth * CGFloat(i + 1)))
         }
+        /// The value a band is sized by: the unhighlighted one while a highlight is active.
+        func full(_ s: Int, _ c: Int) -> Double {
+            max(0, (model.hasBaseline ? model.series[s].baseline[c] : nil) ?? model.series[s].values[c] ?? 0)
+        }
         var totals = [Double](repeating: 0, count: n)
         for s in model.series.indices {
-            for c in 0..<n { totals[c] += max(0, model.series[s].values[c] ?? 0) }
+            for c in 0..<n { totals[c] += full(s, c) }
         }
         L.totals = totals
         L.maxTotal = totals.max() ?? 0
@@ -73,14 +82,18 @@ struct RibbonChart: View {
         // Rank order per category: value descending, series order as tie-break.
         for c in 0..<n {
             let order = model.series.indices.sorted { a, b in
-                let va = model.series[a].values[c] ?? 0, vb = model.series[b].values[c] ?? 0
+                let va = full(a, c), vb = full(b, c)
                 return va == vb ? a < b : va > vb
             }
             var cum = 0.0
             for s in order {
-                let v = max(0, model.series[s].values[c] ?? 0)
+                let v = full(s, c)
                 L.bands[s].lo[c] = cum
                 L.bands[s].hi[c] = cum + v
+                if model.hasBaseline {
+                    if L.bands[s].lit.isEmpty { L.bands[s].lit = [Double](repeating: 0, count: n) }
+                    L.bands[s].lit[c] = cum + min(v, max(0, model.series[s].values[c] ?? 0))
+                }
                 cum += v
             }
         }
@@ -110,8 +123,20 @@ struct RibbonChart: View {
             var shape = top
             shape.addPath(bottom)
             shape.closeSubpath()
-            ctx.fill(shape, with: .color(color.opacity(dim ? 0.28 : 0.82)))
-            ctx.stroke(top, with: .color(color), lineWidth: 1)
+            let lit = band.lit.count == L.xs.count
+            ctx.fill(shape, with: .color(color.opacity(dim || lit ? 0.28 : 0.82)))
+            ctx.stroke(top, with: .color(color.opacity(lit ? 0.5 : 1)), lineWidth: 1)
+            if lit {
+                // The highlighted part of the band, solid, from its lower edge up.
+                var part = Path()
+                for (c, x) in L.xs.enumerated() {
+                    let p = CGPoint(x: x, y: y(band.lit[c]))
+                    c == 0 ? part.move(to: p) : part.addLine(to: p)
+                }
+                part.addPath(bottom)
+                part.closeSubpath()
+                ctx.fill(part, with: .color(color.opacity(dim ? 0.28 : 0.82)))
+            }
         }
     }
 
@@ -130,13 +155,16 @@ struct RibbonChart: View {
                 let height = 1.0
                 let rect = CGRect(x: slice.x0, y: (1 - top) * height, width: slice.x1 - slice.x0,
                                   height: (top - bottom) * height)
-                let value = model.series[s.index].values[c] ?? 0
+                let value = (model.hasBaseline ? model.series[s.index].baseline[c] : nil) ?? model.series[s.index].values[c] ?? 0
                 var rows: [TooltipContent.Row] = [
                     .init(color: env.colors.seriesColor(offset, name: s.name), label: L.caption,
                           value: env.full(value, format: L.format), isEmphasized: true),
                     .init(label: "Rank", value: "\(offset + 1) of \(L.bands.count)"),
                     .init(label: "Share", value: env.percent((hi - lo) / max(total, 1e-12))),
                 ]
+                if model.hasBaseline {
+                    rows.append(.init(label: "Highlighted", value: env.full(model.series[s.index].values[c] ?? 0, format: L.format)))
+                }
                 rows += env.tooltipRows(row: s.rows[c])
                 let tooltip = TooltipContent(title: s.name, rows: rows)
                 out.append(ChartHit(id: out.count, path: Path(rect), selection: selection, tooltip: tooltip,

@@ -67,7 +67,8 @@ struct TableValue {
     /// Materialised row-major data.
     func rows(_ db: Database) -> [[Value]] {
         guard let b = base else { return data }
-        let stores = db.tables[b.table].columns.map { $0.values }
+        let table = db.tables[b.table]
+        let stores = table.columns.indices.filter { !table.hiddenColumns.contains($0) }.map { table.columns[$0].values }
         return b.rows.map { r in r < 0 ? [Value](repeating: .null, count: stores.count) : stores.map { $0[Int(r)] } }
     }
     func materialized(_ db: Database) -> TableValue { base == nil ? self : TableValue(cols: cols, rows: rows(db)) }
@@ -89,11 +90,12 @@ struct TableValue {
 }
 
 extension TableStore {
-    /// Column metadata (with lineage) for this table, cached until columns change.
+    /// Column metadata (with lineage) for the columns of this table the current role may see,
+    /// cached until columns change.
     var cols: Columns {
-        if let c = colsCache, c.count == columns.count { return c }
-        let c = Columns(columns.enumerated().map { i, col in
-            ColInfo(name: col.name, table: name, lineage: ColumnID(table: index, col: i), type: col.type)
+        if let c = colsCache, c.count == columns.count - hiddenColumns.count { return c }
+        let c = Columns(columns.enumerated().compactMap { i, col in
+            hiddenColumns.contains(i) ? nil : ColInfo(name: col.name, table: name, lineage: ColumnID(table: index, col: i), type: col.type)
         })
         colsCache = c
         return c
