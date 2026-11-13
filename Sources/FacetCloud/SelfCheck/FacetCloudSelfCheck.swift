@@ -382,7 +382,7 @@ extension FacetCloudSelfCheck {
                 .complete(.failure(.userDeclined)), "access_denied maps to userDeclined")
         c.equal(L.evaluate(requestLine: "GET /?error=server_error&error_description=Something+broke%21&state=S1 HTTP/1.1", expectedState: "S1"),
                 .complete(.failure(.service(code: "server_error", description: "Something broke!", correlationID: nil))), "error with description")
-        c.expect(SignInPages.success().contains("You're signed in") && SignInPages.success().contains("Return to Power BI"), "success page copy")
+        c.expect(SignInPages.success().contains("You're signed in") && SignInPages.success().contains("Return to \(AppIdentity.name)"), "success page copy")
         c.expect(!SignInPages.error(title: "<script>", detail: "<img onerror=x>").contains("<script>"), "error page escapes HTML")
     }
 

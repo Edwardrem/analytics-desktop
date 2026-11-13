@@ -10,14 +10,26 @@ import FacetDesign
 /// The registry as the ribbon layout sees it, rebuilt only when the set of commands changes.
 @MainActor
 enum RibbonRegistry {
-    private static var cached: (generation: Int, infos: [RibbonCommandInfo])?
+    private static var cached: (generation: Int, infos: [RibbonCommandInfo], resolved: [RibbonTab], file: [RibbonMenuEntry])?
+    /// How many times the ribbon has been resolved against the registry (once per generation).
+    private(set) static var resolutions = 0
 
-    static var infos: [RibbonCommandInfo] {
+    private static var current: (generation: Int, infos: [RibbonCommandInfo], resolved: [RibbonTab], file: [RibbonMenuEntry]) {
         let all = AppCommands.all
-        if let cached, cached.generation == AppCommands.generation { return cached.infos }
+        if let cached, cached.generation == AppCommands.generation { return cached }
         let infos = all.map { RibbonCommandInfo(id: $0.id, title: $0.title, symbol: $0.symbol, menu: $0.menu, separatorBefore: $0.separatorBefore) }
-        cached = (AppCommands.generation, infos)
-        return infos
+        let fresh = (AppCommands.generation, infos, RibbonLayout.resolve(registry: infos), RibbonLayout.fileMenu(registry: infos))
+        resolutions += 1
+        cached = fresh
+        return fresh
+    }
+
+    static var infos: [RibbonCommandInfo] { current.infos }
+    /// Every tab with its registry-driven groups resolved. Drawing only filters this by window state.
+    static var resolved: [RibbonTab] { current.resolved }
+    static var fileMenu: [RibbonMenuEntry] { current.file }
+    static func visibleTabs(_ store: DocumentStore) -> [RibbonTab] {
+        RibbonLayout.visibleTabs(.current(store), resolved: resolved)
     }
 }
 
@@ -51,7 +63,7 @@ struct RibbonBar: View {
     @ObservedObject var modeling: ModelingState
 
     var body: some View {
-        let tabs = RibbonLayout.visibleTabs(.current(store), registry: RibbonRegistry.infos)
+        let tabs = RibbonRegistry.visibleTabs(store)
         let active = RibbonLayout.activeTab(selected: shell.ribbonTab, visible: tabs)
         VStack(spacing: 0) {
             RibbonTabStrip(tabs: tabs, active: active?.id, shell: shell)
@@ -71,8 +83,9 @@ struct RibbonPeek: View {
     @ObservedObject var modeling: ModelingState
 
     var body: some View {
-        let tabs = RibbonLayout.visibleTabs(.current(store), registry: RibbonRegistry.infos)
-        if shell.ribbonCollapsed, shell.ribbonPeeking, let active = RibbonLayout.activeTab(selected: shell.ribbonTab, visible: tabs) {
+        // Nothing is resolved unless the peek is actually up.
+        if shell.ribbonCollapsed, shell.ribbonPeeking,
+           let active = RibbonLayout.activeTab(selected: shell.ribbonTab, visible: RibbonRegistry.visibleTabs(store)) {
             ZStack(alignment: .top) {
                 // Clicking anywhere else puts the ribbon away again.
                 Color.clear.contentShape(Rectangle()).onTapGesture { shell.ribbonPeeking = false }
@@ -100,7 +113,7 @@ private struct RibbonTabStrip: View {
     var body: some View {
         HStack(spacing: Design.Space.xxs) {
             Button {
-                RibbonMenu.popUp(RibbonLayout.fileMenu(registry: RibbonRegistry.infos), store: store, anchor: fileAnchor.view) { shell.run($0) }
+                RibbonMenu.popUp(RibbonRegistry.fileMenu, store: store, anchor: fileAnchor.view) { shell.run($0) }
             } label: {
                 tabLabel("File", selected: false, contextual: false)
             }
@@ -237,8 +250,10 @@ enum RibbonHelp {
     /// Tooltip for a ribbon command: its full title and shortcut, or why it is disabled.
     static func text(for ref: RibbonCommand, command: AppCommand?) -> String {
         guard let command else { return "\(ref.label) — not available yet" }
-        guard let shortcut = command.shortcut else { return command.title }
-        return "\(command.title) (\(ShortcutText.describe(shortcut)))"
+        var text = command.title
+        if let shortcut = command.shortcut { text += " (\(ShortcutText.describe(shortcut)))" }
+        if !command.help.isEmpty { text += " — \(command.help)" }
+        return text
     }
 }
 

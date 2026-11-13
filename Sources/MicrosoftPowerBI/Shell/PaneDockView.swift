@@ -8,11 +8,9 @@ import FacetDesign
 struct PaneDockView: View {
     @EnvironmentObject var store: DocumentStore
     @ObservedObject var shell: ShellState
-    /// Window width to the right of the view rail.
-    let available: CGFloat
 
     var body: some View {
-        let columns = shell.dock.columns(for: store.view, available: Double(available))
+        let columns = shell.dock.columns(for: store.view, available: shell.available)
         HStack(spacing: 0) {
             ForEach(columns, id: \.slot) { column in
                 Hairline(vertical: true)
@@ -81,14 +79,14 @@ private struct PaneColumn: View {
                 SectionLabel(slot.title)
                 ForEach([InspectorPane.build, .format]) { p in
                     IconButton(p.symbol, help: p == .build ? "Build visual" : "Format visual", isOn: pane == p) {
-                        shell.dock.reveal(p.rawValue)
+                        shell.show(p)
                     }
                 }
             case .extras:
                 let open = shell.dock.extras(for: store.view).compactMap(InspectorPane.init(rawValue:))
                 if open.count > 1 {
                     ForEach(open) { p in
-                        IconButton(p.symbol, help: "\(p.title) pane", isOn: pane == p) { shell.dock.reveal(p.rawValue) }
+                        IconButton(p.symbol, help: "\(p.title) pane", isOn: pane == p) { shell.show(p) }
                     }
                     Spacer(minLength: 0)
                 } else {
@@ -148,24 +146,47 @@ private struct PaneResizeHandle: View {
     let width: CGFloat
     @ObservedObject var shell: ShellState
     @State private var startWidth: CGFloat?
+    @State private var cursor = ResizeCursor()
 
     var body: some View {
         Color.clear
             .frame(width: Design.Space.s)
             .contentShape(Rectangle())
             .offset(x: -Design.Space.xs)
-            .onHover { inside in
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
-            }
+            .onHover { cursor.set($0) }
+            // The handle can go away mid-hover (the pane collapses or closes): give the cursor back.
+            .onDisappear { cursor.set(false) }
             .gesture(
                 DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
-                        let start = startWidth ?? width
-                        startWidth = start
-                        shell.dock.setWidth(Double(start - value.translation.width), of: slot)
+                        if startWidth == nil {
+                            startWidth = width
+                            shell.beginResize(slot)      // the pane being dragged is the last to give way
+                        }
+                        shell.resize(slot, to: Double((startWidth ?? width) - value.translation.width))
                     }
-                    .onEnded { _ in startWidth = nil }
+                    .onEnded { _ in
+                        startWidth = nil
+                        shell.endResize()               // widths are saved once, when the drag ends
+                    }
             )
             .help("Drag to resize the pane")
+    }
+}
+
+/// Keeps `NSCursor` pushes and pops in balance however hover events arrive.
+final class ResizeCursor {
+    private(set) var pushed = false
+    private let push: () -> Void
+    private let pop: () -> Void
+
+    init(push: @escaping () -> Void = { NSCursor.resizeLeftRight.push() }, pop: @escaping () -> Void = { NSCursor.pop() }) {
+        self.push = push
+        self.pop = pop
+    }
+    func set(_ inside: Bool) {
+        guard inside != pushed else { return }
+        pushed = inside
+        if inside { push() } else { pop() }
     }
 }

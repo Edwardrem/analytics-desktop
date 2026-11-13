@@ -25,7 +25,8 @@ enum GetDataFeature {
                 store.present { RecentSourcesSheet() }
             },
             AppCommand(id: "data.transform", title: "Transform Data", menu: .data, symbol: "wand.and.rays") { store in
-                NotificationCenter.default.post(name: .facetOpenQueryEditor, object: nil)
+                // Addressed to this document: its window opens the editor only for its own store.
+                NotificationCenter.default.post(name: .facetOpenQueryEditor, object: store)
                 if store.doc.queries.isEmpty {
                     store.status = StatusMessage(kind: .info, text: "Get data first, then shape it in the Power Query Editor.")
                 }

@@ -75,6 +75,6 @@ struct CommandPalette: View {
     private func runSelected() {
         guard let c = results[safe: index] else { return }
         isPresented = false
-        c.run(store)
+        AppCommands.perform(c, store)
     }
 }
