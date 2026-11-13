@@ -19,44 +19,68 @@ struct WaterfallVisual: View {
         let kind: Kind
         let selection: DataPointSelection?
         let row: Int?
+        /// With cross-highlighting: the part of this step that belongs to the highlighted selection.
+        var highlight: Double?
         var delta: Double { v1 - v0 }
+        /// The end of the highlighted part of the bar, measured from `v0` (nil without highlighting).
+        var highlightEnd: Double? {
+            guard let h = highlight else { return nil }
+            guard delta != 0 else { return v0 }
+            return v0 + delta * max(0, min(1, h / delta))
+        }
     }
 
-    private func bars(_ f: ResolvedFormat) -> [Bar] {
-        let t = data.table
+    /// The unhighlighted values when a cross-highlight is active: the chart keeps its shape and
+    /// each bar shows the highlighted part inside it, as the bar and column charts do.
+    private var baseline: DataTable? {
+        data.baseline.flatMap { $0.rowCount == data.table.rowCount && $0.columnCount == data.table.columnCount ? $0 : nil }
+    }
+
+    func bars(_ f: ResolvedFormat) -> [Bar] {
+        let base = baseline
+        let t = base ?? data.table
         guard let vc = data.indices(.values).first, vc < t.columnCount else { return [] }
+        /// The highlighted value of a row (nil when nothing is highlighted in the visual).
+        func lit(_ r: Int) -> Double? { base == nil ? nil : (data.table[r, vc].asDouble.flatMap { $0.isFinite ? $0 : nil } ?? 0) }
         let catCols = data.indices(.category), brCols = data.indices(.breakdown)
         func label(_ r: Int, _ cols: [Int]) -> String { cols.map { data.formatted(row: r, col: $0) }.joined(separator: " ") }
         var out: [Bar] = []
         if brCols.isEmpty {
-            var acc = 0.0
+            var acc = 0.0, litTotal = 0.0
             for r in 0..<t.rowCount {
                 guard let v = t[r, vc].asDouble, v.isFinite else { continue }
                 out.append(Bar(id: out.count, label: label(r, catCols), v0: acc, v1: acc + v, kind: v >= 0 ? .increase : .decrease,
-                               selection: SeriesModel.selection(data: data, row: r, columns: catCols), row: r))
+                               selection: SeriesModel.selection(data: data, row: r, columns: catCols), row: r, highlight: lit(r)))
                 acc += v
+                litTotal += lit(r) ?? 0
             }
             if f.bool("waterfall", "showTotal", true), !out.isEmpty {
-                out.append(Bar(id: out.count, label: f.string("waterfall", "totalLabel", "Total"), v0: 0, v1: acc, kind: .total, selection: nil, row: nil))
+                out.append(Bar(id: out.count, label: f.string("waterfall", "totalLabel", "Total"), v0: 0, v1: acc, kind: .total, selection: nil, row: nil,
+                               highlight: base == nil ? nil : litTotal))
             }
             return out
         }
         // Breakdown: category totals with the top movers in between.
         var catKeys: [[Value]] = [], catRow: [Int] = [], catIndex: [[Value]: Int] = [:]
         var cells: [[[Value]: (v: Double, row: Int)]] = []
+        var litCells: [[[Value]: Double]] = []
         var brLabels: [[Value]: String] = [:]
         for r in 0..<t.rowCount {
             guard let v = t[r, vc].asDouble, v.isFinite else { continue }
             let ck = catCols.map { t[r, $0] }, bk = brCols.map { t[r, $0] }
             let ci: Int
-            if let i = catIndex[ck] { ci = i } else { ci = catKeys.count; catIndex[ck] = ci; catKeys.append(ck); catRow.append(r); cells.append([:]) }
+            if let i = catIndex[ck] { ci = i } else { ci = catKeys.count; catIndex[ck] = ci; catKeys.append(ck); catRow.append(r); cells.append([:]); litCells.append([:]) }
             cells[ci][bk] = ((cells[ci][bk]?.v ?? 0) + v, r)
+            litCells[ci][bk] = (litCells[ci][bk] ?? 0) + (lit(r) ?? 0)
             brLabels[bk] = label(r, brCols)
         }
         let maxMovers = f.int("waterfall", "maxBreakdowns", 5, in: 1...100)
         for ci in catKeys.indices {
             let total = cells[ci].values.reduce(0) { $0 + $1.v }
+            let litTotal = litCells[ci].values.reduce(0, +)
             if ci > 0 {
+                let litChange = litTotal - litCells[ci - 1].values.reduce(0, +)
+                var litShown = 0.0
                 let prevTotal = cells[ci - 1].values.reduce(0) { $0 + $1.v }
                 var deltas: [(key: [Value], d: Double, row: Int)] = []
                 for key in Set(cells[ci].keys).union(cells[ci - 1].keys) {
@@ -66,17 +90,22 @@ struct WaterfallVisual: View {
                 deltas.sort { abs($0.d) > abs($1.d) || (abs($0.d) == abs($1.d) && (brLabels[$0.key] ?? "") < (brLabels[$1.key] ?? "")) }
                 var acc = prevTotal
                 for m in deltas.prefix(maxMovers) {
+                    let litDelta = (litCells[ci][m.key] ?? 0) - (litCells[ci - 1][m.key] ?? 0)
                     out.append(Bar(id: out.count, label: brLabels[m.key] ?? "", v0: acc, v1: acc + m.d, kind: m.d >= 0 ? .increase : .decrease,
-                                   selection: SeriesModel.selection(data: data, row: m.row, columns: brCols), row: m.row))
+                                   selection: SeriesModel.selection(data: data, row: m.row, columns: brCols), row: m.row,
+                                   highlight: base == nil ? nil : litDelta))
                     acc += m.d
+                    litShown += litDelta
                 }
                 let other = total - acc
                 if deltas.count > maxMovers, abs(other) > 1e-9 {
-                    out.append(Bar(id: out.count, label: "Other", v0: acc, v1: total, kind: other >= 0 ? .increase : .decrease, selection: nil, row: nil))
+                    out.append(Bar(id: out.count, label: "Other", v0: acc, v1: total, kind: other >= 0 ? .increase : .decrease, selection: nil, row: nil,
+                                   highlight: base == nil ? nil : litChange - litShown))
                 }
             }
             out.append(Bar(id: out.count, label: label(catRow[ci], catCols), v0: 0, v1: total, kind: .total,
-                           selection: SeriesModel.selection(data: data, row: catRow[ci], columns: catCols), row: nil))
+                           selection: SeriesModel.selection(data: data, row: catRow[ci], columns: catCols), row: nil,
+                           highlight: base == nil ? nil : litTotal))
         }
         return out
     }
@@ -132,9 +161,19 @@ struct WaterfallVisual: View {
                               yStart: .value("y0", min(b.v0, b.v1)), yEnd: .value("y1", max(b.v0, b.v1)))
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
                     .foregroundStyle(color(b.kind, f))
-                    .opacity(opacity(b))
+                    .opacity(opacity(b) * (b.highlight == nil ? 1 : 0.35))
                     .accessibilityLabel(b.label)
-                    .accessibilityValue(b.kind == .total ? fmt(b.v1) : (b.delta >= 0 ? "up " : "down ") + fmt(abs(b.delta)))
+                    .accessibilityValue((b.kind == .total ? fmt(b.v1) : (b.delta >= 0 ? "up " : "down ") + fmt(abs(b.delta)))
+                                        + (b.highlight.map { ", highlighted \(fmt($0))" } ?? ""))
+                // The highlighted part, drawn solid inside the dimmed bar.
+                if let end = b.highlightEnd, end != b.v0 {
+                    RectangleMark(xStart: .value("x0", x - inner / 2), xEnd: .value("x1", x + inner / 2),
+                                  yStart: .value("y0", min(b.v0, end)), yEnd: .value("y1", max(b.v0, end)))
+                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                        .foregroundStyle(color(b.kind, f))
+                        .opacity(opacity(b))
+                        .accessibilityHidden(true)
+                }
                 if b.id < bars.count - 1, f.bool("waterfall", "connectors", true) {
                     RuleMark(xStart: .value("a", x + inner / 2), xEnd: .value("b", x + 1 - inner / 2), y: .value("v", b.v1))
                         .foregroundStyle(style.secondary.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: style.gridWidth * 1.5))
@@ -192,6 +231,7 @@ struct WaterfallVisual: View {
             rows.append(.init(color: color(b.kind, f), label: b.delta >= 0 ? "Increase" : "Decrease", value: (b.delta > 0 ? "+" : "") + fmt(b.delta), isEmphasized: true))
             rows.append(.init(label: "Running total", value: fmt(b.v1)))
         }
+        if let h = b.highlight { rows.append(.init(label: "Highlighted", value: fmt(h))) }
         for t in SeriesModel.tooltipFields(data: data, row: b.row) { rows.append(.init(label: t.label, value: t.value)) }
         return TooltipContent(title: b.label, rows: rows)
     }
