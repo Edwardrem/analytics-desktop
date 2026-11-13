@@ -128,6 +128,7 @@ struct PowerBIMenus: Commands {
         CommandGroup(before: .toolbar) { items(.view); Divider() }
         CommandMenu("Optimize") { items(.optimize) }
         CommandMenu("Account") { items(.account) }
+        CommandMenu("External Tools") { items(.tools) }
         CommandGroup(after: .help) { items(.help) }
     }
 
