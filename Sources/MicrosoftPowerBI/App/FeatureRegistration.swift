@@ -12,6 +12,8 @@ enum FeatureRegistration {
         ModelingFeature.register()
         DAXQueryFeature.register()
         PowerQueryFeature.register()
+        GetDataFeature.register()
+        AccountFeature.register()
         AIFeature.register()
         AnalyzeFeature.register()
         #if !FACET_SHELL_ONLY
