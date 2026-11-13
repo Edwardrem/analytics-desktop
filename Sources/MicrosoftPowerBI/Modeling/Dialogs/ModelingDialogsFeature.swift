@@ -86,5 +86,40 @@ enum ModelingDialogsFeature {
         return (table, column, nil)
     }
 
-    static var groupB: [AppCommand] { [] }
+    // MARK: Calculation groups, functions, storage, metadata, AI
+
+    static var groupB: [AppCommand] {
+        [
+            AppCommand(id: "model.calculationGroups", title: "Calculation Groups…", menu: .modeling, symbol: "square.stack.3d.up",
+                       separatorBefore: true, isEnabled: hasTables) { store in
+                store.present { CalculationGroupsSheet(model: store.model) }
+            },
+            AppCommand(id: "model.functions", title: "Functions…", menu: .modeling, symbol: "curlybraces") { store in
+                store.present { FunctionsSheet(model: store.model) }
+            },
+            AppCommand(id: "model.incrementalRefresh", title: "Incremental Refresh…", menu: .modeling, symbol: "arrow.triangle.2.circlepath",
+                       separatorBefore: true, isEnabled: hasTables) { store in
+                guard let table = DialogTarget.table(store).flatMap(store.model.table) else { return }
+                store.present { IncrementalRefreshSheet(table: table) }
+            },
+            AppCommand(id: "model.aggregations", title: "Manage Aggregations…", menu: .modeling, symbol: "sum",
+                       isEnabled: { $0.model.tables.count >= 2 }) { store in
+                let table = DialogTarget.table(store)
+                store.present { AggregationsSheet(model: store.model, table: table) }
+            },
+            AppCommand(id: "model.perspectives", title: "Perspectives…", menu: .modeling, symbol: "eye",
+                       separatorBefore: true, isEnabled: hasTables) { store in
+                store.present { PerspectivesSheet(model: store.model) }
+            },
+            AppCommand(id: "model.translations", title: "Translations…", menu: .modeling, symbol: "globe", isEnabled: hasTables) { store in
+                store.present { TranslationsSheet(model: store.model) }
+            },
+            AppCommand(id: "model.synonyms", title: "Synonyms…", menu: .modeling, symbol: "character.book.closed", isEnabled: hasTables) { store in
+                store.present { SynonymsSheet(model: store.model) }
+            },
+            AppCommand(id: "model.prepForAI", title: "Prep Data for AI…", menu: .modeling, symbol: "sparkles", isEnabled: hasTables) { store in
+                store.present { AIPrepSheet(model: store.model) }
+            },
+        ]
+    }
 }

@@ -140,7 +140,7 @@ extension DAXEngine {
             if let v = c.vars?.lookup(k) { if case .table = v { return true }; return false }
             return queryTables[k] != nil || db.tableIndex[k] != nil
         case .call(let name, let args):
-            if let f = queryFunctions[name] ?? functionDefs[name] { return isTableNode(f.body, Ctx(fc: c.fc)) }
+            if let f = queryFunctions[name.daxKey] ?? functionDefs[name.daxKey] { return isTableNode(f.body, Ctx(fc: c.fc)) }
             if name == "IF" || name == "IF.EAGER" { return args.count > 1 && isTableNode(args[1], c) }
             return DAXEngine.tableFunctionNames.contains(name)
         case .vars(let vs, let body):

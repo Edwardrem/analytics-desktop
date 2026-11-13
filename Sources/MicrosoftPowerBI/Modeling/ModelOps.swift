@@ -154,6 +154,7 @@ enum ModelOps {
             }
             for p in d.model.perspectives.indices { d.model.perspectives[p].members = d.model.perspectives[p].members.map { renameIdentifier($0, table: old, to: new) } }
             d.model.aiExcludedFields = d.model.aiExcludedFields.map { renameIdentifier($0, table: old, to: new) }
+            remapCaptionKeys(&d.model) { renameIdentifier($0, table: old, to: new) }
             for a in d.model.aggregations.indices {
                 if ModelDAX.same(d.model.aggregations[a].aggTable, old) { d.model.aggregations[a].aggTable = new }
                 if ModelDAX.same(d.model.aggregations[a].detailTable, old) { d.model.aggregations[a].detailTable = new }
@@ -181,6 +182,14 @@ enum ModelOps {
             }
         }
         return true
+    }
+
+    /// Translation captions and measure synonyms are keyed by identifier; keep them attached through a rename.
+    private static func remapCaptionKeys(_ m: inout SemanticModel, _ map: (String) -> String) {
+        for t in m.translations.indices {
+            m.translations[t].captions = Dictionary(m.translations[t].captions.map { (map($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
+        }
+        m.qnaSynonyms = Dictionary(m.qnaSynonyms.map { (map($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
     }
 
     /// "Table", "Table[Name]" identifiers used by roles, perspectives and the AI schema.
@@ -228,6 +237,7 @@ enum ModelOps {
             for r in d.model.roles.indices { d.model.roles[r].hiddenColumns = d.model.roles[r].hiddenColumns.map { ModelDAX.same($0, oldID) ? newID : $0 } }
             for p in d.model.perspectives.indices { d.model.perspectives[p].members = d.model.perspectives[p].members.map { ModelDAX.same($0, oldID) ? newID : $0 } }
             d.model.aiExcludedFields = d.model.aiExcludedFields.map { ModelDAX.same($0, oldID) ? newID : $0 }
+            remapCaptionKeys(&d.model) { ModelDAX.same($0, oldID) ? newID : $0 }
             for a in d.model.aggregations.indices {
                 if ModelDAX.same(d.model.aggregations[a].aggTable, table), ModelDAX.same(d.model.aggregations[a].aggColumn, old) { d.model.aggregations[a].aggColumn = new }
                 if ModelDAX.same(d.model.aggregations[a].detailTable, table), ModelDAX.same(d.model.aggregations[a].detailColumn, old) { d.model.aggregations[a].detailColumn = new }
@@ -274,6 +284,7 @@ enum ModelOps {
             let oldID = identifier(table: table, name: old), newID = identifier(table: table, name: new)
             for p in d.model.perspectives.indices { d.model.perspectives[p].members = d.model.perspectives[p].members.map { ModelDAX.same($0, oldID) ? newID : $0 } }
             d.model.aiExcludedFields = d.model.aiExcludedFields.map { ModelDAX.same($0, oldID) ? newID : $0 }
+            remapCaptionKeys(&d.model) { ModelDAX.same($0, oldID) ? newID : $0 }
             mapFieldRefs(&d) { f in if f.kind == .measure, ModelDAX.same(f.name, old) { f.name = new } }
         }
         let ui = store.modeling

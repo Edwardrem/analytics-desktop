@@ -190,7 +190,7 @@ extension DAXEngine {
                 case .pure(let p): return .scalar(try p(try args.map { try scalar($0, ctx) }))
                 }
             }
-            if let f = queryFunctions[name] ?? functionDefs[name] { return try callUDF(f, args, ctx, n) }
+            if let f = queryFunctions[name.daxKey] ?? functionDefs[name.daxKey] { return try callUDF(f, args, ctx, n) }
             if name == "__TUPLE" { throw DAXError("A tuple can only be used with IN or inside a table constructor.") }
             let builtin = DAXEngine.builtins[name]
             let pure = builtin == nil ? DAXEngine.pureFns[name] : nil
