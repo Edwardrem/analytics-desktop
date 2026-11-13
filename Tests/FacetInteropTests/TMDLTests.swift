@@ -84,6 +84,23 @@ final class TMDLTests: XCTestCase {
         XCTAssertEqual(json(shuffled.1), json(queries))
     }
 
+    /// A date column binned by calendar months keeps its unit through TMDL.
+    func testDateBinUnitRoundTrips() throws {
+        var m = SemanticModel()
+        var t = ModelTable(name: "Sales", columns: [ModelColumn(name: "OrderDate", dataType: .date)])
+        var bins = ModelColumn(name: "OrderDate (bins)", dataType: .date)
+        var grouping = ColumnGrouping(kind: .binSize, sourceColumn: "OrderDate")
+        grouping.binValue = 3
+        grouping.binUnit = .month
+        bins.grouping = grouping
+        t.columns.append(bins)
+        m.tables = [t]
+        let back = try TMDL.parseDetailed(files: TMDL.serialize(model: m, queries: [])).model
+        XCTAssertEqual(back.table("Sales")?.column("OrderDate (bins)")?.grouping?.binUnit, .month)
+        XCTAssertEqual(back.table("Sales")?.column("OrderDate (bins)")?.grouping?.binValue, 3)
+        XCTAssertEqual(json(back), json(m))
+    }
+
     func testAwkwardExpressionsSurvive() throws {
         var m = SemanticModel()
         var t = ModelTable(name: "T")

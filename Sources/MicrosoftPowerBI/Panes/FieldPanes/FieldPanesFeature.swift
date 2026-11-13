@@ -15,6 +15,8 @@ enum FieldPaneContext {
     static func run(_ id: String, table: String?, field: FieldRef? = nil, _ store: DocumentStore) {
         self.table = table
         self.field = field
+        // The target is for this one command; a later ribbon or menu command must not inherit it.
+        defer { self.table = nil; self.field = nil }
         AppCommands.run(id, store)
     }
 }

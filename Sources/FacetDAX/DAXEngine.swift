@@ -59,6 +59,14 @@ public final class DAXEngine {
             }
             db.addTable(name: t.name, columns: cols, model: t)
         }
+        // A calculation group is a table of one column listing its items, in ordinal order.
+        for g in model.calculationGroups where db.tableIndex[g.name.daxKey] == nil {
+            let items = g.items.sorted { $0.ordinal < $1.ordinal }
+            db.addTable(name: g.name, columns: [
+                ColumnStore(name: g.columnName, type: .text, values: items.map { .string($0.name) }),
+                ColumnStore(name: "Ordinal", type: .integer, values: items.indices.map { .int(Int64($0)) }),
+            ], model: nil)
+        }
         // Data with no model definition (loaded staging tables).
         for (name, t) in source.tables where db.tableIndex[name.daxKey] == nil {
             let cols = t.columns.map { ColumnStore(name: $0.name, type: $0.type, values: $0.values) }
@@ -142,7 +150,10 @@ public final class DAXEngine {
         for f in model.functions {
             do {
                 let parsed = try Parser.parseFunctionBody(f.expression)
-                let params = parsed.params ?? f.parameters.map { ParsedParam(name: $0.name, type: $0.type, mode: $0.mode, defaultExpr: nil) }
+                let params = parsed.params ?? f.parameters.map { p in
+                    ParsedParam(name: p.name, type: p.type, mode: p.mode,
+                                defaultExpr: p.defaultExpression.flatMap { $0.isEmpty ? nil : try? Parser.parseExpression($0) })
+                }
                 functionDefs[f.name.daxKey] = FunctionDef(name: f.name, params: params, body: parsed.body)
             } catch {
                 issues.append(DAXObjectError(kind: .function, object: f.name, message: (error as? DAXError)?.message ?? error.localizedDescription))
@@ -251,7 +262,7 @@ public final class DAXEngine {
             for cal in t.calendars {
                 guard let dateName = cal.columnsByUnit["date"] ?? t.dateColumn,
                       let dateCid = db.columnID(table: t.name, column: dateName) else { continue }
-                calendars[cal.name.daxKey] = CalendarDef(name: cal.name, table: ti, dateColumn: dateCid, yearEndMonth: cal.fiscalYearStartMonth)
+                calendars[cal.name.daxKey] = CalendarDef(name: cal.name, table: ti, dateColumn: dateCid, yearEndMonth: cal.fiscalYearEndMonth)
             }
         }
 
@@ -279,18 +290,15 @@ public final class DAXEngine {
                 else { out.append(v) }
             }
         case .binSize, .binCount:
-            let nums = src.compactMap { $0.isNumber ? $0.asDouble : nil }
+            let nums = src.compactMap { v -> Double? in
+                if case .date = v { return v.asDouble }
+                return v.isNumber ? v.asDouble : nil
+            }
             guard let lo = nums.min(), let hi = nums.max() else {
                 out = src.map { _ in Value.null }
                 break
             }
-            let width = g.kind == .binSize ? max(g.binValue, 0.0001) : (hi == lo ? 1 : (hi - lo) / max(1, g.binValue))
-            for v in src {
-                guard let d = v.asDouble else { out.append(.null); continue }
-                let index = Int((d - lo) / width)
-                let start = lo + Double(max(index, 0)) * width
-                out.append(.double(start))
-            }
+            for v in src { out.append(g.bin(v, minimum: lo, maximum: hi)) }
         }
         db.tables[ti].addColumn(ColumnStore(computed: c.name, type: c.dataType == .any ? .text : c.dataType, values: out, model: c))
     }
