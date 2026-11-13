@@ -579,6 +579,25 @@ final class VisualDataTests: XCTestCase {
         XCTAssertEqual(number(rows(data.table, keys: 2, value: 7), "Tools/Gadget"), 280.0 / 390.0, accuracy: 1e-12)
     }
 
+    func testFailingVisualCalculationIsTheVisualsError() {
+        var chart = visual(.clusteredColumn, [.category: [category], .values: [amount]])
+        chart.visualCalculations = [
+            VisualCalculation(name: "Running", expression: "RUNNINGSUM([Total Amount])"),
+            VisualCalculation(name: "Broken", expression: "RUNNINGSUM([No Such Column])"),
+        ]
+        let data = service.visualData(spec: chart, request: VisualRequest())
+        let message = data.error ?? ""
+        XCTAssertTrue(message.contains("“Broken”"), message)
+        XCTAssertTrue(message.contains("RUNNINGSUM"), message)
+        XCTAssertFalse(data.daxQuery.isEmpty)
+        // A syntax error is reported the same way.
+        chart.visualCalculations = [VisualCalculation(name: "Typo", expression: "[Total Amount] +")]
+        XCTAssertTrue(service.visualData(spec: chart, request: VisualRequest()).error?.contains("“Typo”") ?? false)
+        // Without the broken calculation the visual is fine.
+        chart.visualCalculations = [VisualCalculation(name: "Running", expression: "RUNNINGSUM([Total Amount])")]
+        XCTAssertNil(run(chart).error)
+    }
+
     func testAlignedRelaysValuesOnTheShapeRows() {
         let shape = DataTable(name: "", columnNames: ["K", "V"], rows: [["a", 1], ["b", 2], ["c", 3]])
         let source = DataTable(name: "", columnNames: ["K", "V"], rows: [["c", 30], ["a", 10]])

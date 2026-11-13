@@ -139,7 +139,14 @@ final class LiveCalculation: CalculationService {
                     (try? engine.query(summarize(depth: depth, extra: extra, limited: false)))?.first
                 }
                 for calc in spec.visualCalculations {
-                    guard let computed = try? engine.visualCalculation(calc.expression, on: result, rowAxis: axisNames, levels: levels) else { continue }
+                    let computed: [Value]
+                    do {
+                        computed = try engine.visualCalculation(calc.expression, on: result, rowAxis: axisNames, levels: levels)
+                    } catch {
+                        // A calculation that cannot be evaluated is the visual's error, like a failing query.
+                        let reason = (error as? DAXError)?.message ?? error.localizedDescription
+                        throw DAXError("The visual calculation “\(calc.name)” could not be evaluated: \(reason)")
+                    }
                     result.columns.append(DataColumn(name: calc.name, type: .any, values: computed))
                     fields.append(nil)
                     formats.append(calc.formatString)
