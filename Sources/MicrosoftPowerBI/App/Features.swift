@@ -15,6 +15,8 @@ enum Features {
     static var paneBuilders: [InspectorPane: (DocumentStore) -> AnyView] = [:]
     /// Trailing toolbar content (account avatar, share…).
     static var toolbarAccessory: (DocumentStore) -> AnyView = { _ in AnyView(EmptyView()) }
+    /// Extra controls in the header of a visual on the canvas (on-object formatting).
+    static var visualHeaderAccessory: ((VisualSpec, DocumentStore) -> AnyView)?
     private static var registered = false
 
     static func registerAll() {

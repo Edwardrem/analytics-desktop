@@ -12,9 +12,6 @@ final class RibbonLayoutTests: XCTestCase {
     /// remove it here; the test only fails if an id goes missing that is not on this list.
     static let pending: Set<String> = [
         "account.sensitivity", "insert.sparkline",
-        "model.autodetectRelationships", "model.viewAs", "model.qnaSetup", "model.synonyms", "model.translations",
-        "model.calculationGroups", "model.functions", "model.markDateTable",
-        "model.newGroup", "model.newHierarchy",
     ]
 
     override func setUp() {

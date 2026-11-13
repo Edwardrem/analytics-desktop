@@ -20,9 +20,10 @@ public struct SmallMultiplesGrid<Cell: View>: View {
             let f = style.format
             let pad = CGFloat(f.double("smallMultiples", "padding", 14))
             let autoCols = SmallMultiplesLayout.columns(count: n, size: geo.size)
-            let cols = max(1, min(n, Int(f.double("smallMultiples", "columns", 0)) > 0 ? Int(f.double("smallMultiples", "columns", 0)) : autoCols))
+            let wantedCols = f.int("smallMultiples", "columns", 0, in: 0...100)
+            let cols = max(1, min(n, wantedCols > 0 ? wantedCols : autoCols))
             let needed = Int(ceil(Double(n) / Double(cols)))
-            let wanted = Int(f.double("smallMultiples", "rows", 0))
+            let wanted = f.int("smallMultiples", "rows", 0, in: 0...100)
             let rows = wanted > 0 ? min(wanted, needed) : needed
             let cellH = max(60, (geo.size.height - pad * CGFloat(rows - 1)) / CGFloat(rows))
             let grid = Grid(horizontalSpacing: pad, verticalSpacing: pad) {

@@ -468,7 +468,7 @@ struct TMDLWriter {
         var leftover: [String: String] = [:]
         for key in c.captions.keys.sorted() {
             let caption = c.captions[key] ?? ""
-            guard let (t, member) = TMDLVocabulary.splitMember(key), !caption.contains("\n") else { leftover[key] = caption; continue }
+            guard let (t, member) = TMDLVocabulary.splitMember(key), !caption.hasLineBreak else { leftover[key] = caption; continue }
             if let member { memberCaptions[t, default: []].append((member, caption)) } else { tableCaptions[t] = caption }
         }
         if !leftover.isEmpty { e.facet(l + 1, "captions", encoding: leftover) }

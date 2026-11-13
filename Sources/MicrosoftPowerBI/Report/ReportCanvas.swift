@@ -254,7 +254,7 @@ struct VisualContainer: View {
 
     private func select(additive: Bool) {
         if let source = store.formatPainterSource, source != spec.id, let from = store.visual(source) {
-            store.updateVisual(spec.id, name: "Paint Format", invalidates: .layout) { $0.format = from.format }
+            store.updateVisual(spec.id, name: "Paint Format", invalidates: .layout) { $0.format = FormatPainter.painted($0, from: from) }
             store.formatPainterSource = nil
             return
         }
@@ -411,6 +411,7 @@ struct VisualHeader: View {
                 }
                 IconButton("arrow.up.left.and.arrow.down.right", help: "Focus mode") { store.focusVisualID = spec.id }
             }
+            if let accessory = Features.visualHeaderAccessory?(spec, store) { accessory }
             Menu {
                 VisualContextMenu(spec: spec)
             } label: {

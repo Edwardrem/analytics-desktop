@@ -298,13 +298,9 @@ enum ModelDiagram {
         var arrowDirection: CGVector
     }
 
+    /// "1" or "*" for each end, the same marks the relationship editor shows.
     static func endLabels(_ cardinality: Cardinality) -> (from: String, to: String) {
-        switch cardinality {
-        case .manyToOne: return ("*", "1")
-        case .oneToMany: return ("1", "*")
-        case .oneToOne: return ("1", "1")
-        case .manyToMany: return ("*", "*")
-        }
+        RelationshipEditLogic.endMarks(cardinality)
     }
 
     /// Which way filters flow. With a single direction the one side filters the many side; for

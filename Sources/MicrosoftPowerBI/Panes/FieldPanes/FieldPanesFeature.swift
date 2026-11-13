@@ -11,14 +11,15 @@ import FacetCore
 /// its target when it runs, not later.
 @MainActor
 enum FieldPaneContext {
-    private(set) static var table: String?
-    private(set) static var field: FieldRef?
+    static var table: String?
+    static var field: FieldRef?
     private(set) static weak var store: DocumentStore?
 
     /// Set the target, run a command owned by another feature, then clear the target.
     static func run(_ id: String, table: String?, field: FieldRef? = nil, _ store: DocumentStore) {
         self.table = table
         self.field = field
+        // The target is for this one command in this document; a later ribbon or menu command must not inherit it.
         self.store = store
         defer { self.table = nil; self.field = nil; self.store = nil }
         AppCommands.run(id, store)

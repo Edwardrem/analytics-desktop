@@ -193,7 +193,7 @@ struct PieVisual: View {
         let pct = AxisFormatter.label(s.value / max(total, 1e-12), format: s.value / max(total, 1e-12) < 0.1 ? "0.0%" : "0%")
         let f = style.format
         let value = AxisFormatter.label(s.value, units: DisplayUnits(f.string("dataLabels", "displayUnits", "auto")),
-                                        decimals: f.value("dataLabels", "decimals")?.doubleValue.map { Int($0) }, format: s.format)
+                                        decimals: f.decimals("dataLabels"), format: s.format)
         switch mode {
         case "category": return s.label
         case "value": return value

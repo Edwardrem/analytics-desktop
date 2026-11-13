@@ -204,11 +204,15 @@ final class ModelViewStoreTests: XCTestCase {
         XCTAssertNotNil(RelationshipOps.update(store, second), "a second active path is refused")
         XCTAssertEqual(store.model.relationships.last?.isActive, false)
 
+        // Sales[ProductID] repeats (two rows for product 1), so it can't be a "one" side.
         var oneToOne = first
         oneToOne.cardinality = .oneToOne
-        oneToOne.crossFilter = .single
-        XCTAssertNil(RelationshipOps.update(store, oneToOne))
-        XCTAssertEqual(store.model.relationships.first?.crossFilter, .both, "one-to-one always filters both ways")
+        XCTAssertEqual(RelationshipOps.update(store, oneToOne)?.contains("duplicate values"), true)
+        XCTAssertEqual(store.model.relationships.first?.cardinality, .manyToOne)
+        // Product[ProductID] is unique: the other way round is a valid one-to-many.
+        XCTAssertNil(RelationshipOps.update(store, RelationshipLogic.swapped(first)))
+        XCTAssertEqual(store.model.relationships.first?.cardinality, .oneToMany)
+        XCTAssertEqual(store.model.relationships.first?.fromTable, "Product")
 
         store.modeling.select(.relationship(first.id))
         RelationshipOps.delete(store, first.id)

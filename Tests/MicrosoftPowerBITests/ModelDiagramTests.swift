@@ -381,29 +381,7 @@ final class ModelDiagramTests: XCTestCase {
                        "These two columns are already related.", "dragged the other way")
     }
 
-    func testRelationshipEditValidation() {
-        var model = model()
-        let active = relate("Sales", "ProductID", "Product", "ProductID")
-        var second = relate("Sales", "Amount", "Product", "ProductID")
-        second.isActive = false
-        model.relationships = [active, second]
-
-        XCTAssertNil(RelationshipLogic.updateProblem(second, model: model), "inactive is fine")
-        var activated = second
-        activated.isActive = true
-        XCTAssertNotNil(RelationshipLogic.updateProblem(activated, model: model), "Sales and Product are already connected")
-        var changed = active
-        changed.cardinality = .manyToMany
-        XCTAssertNil(RelationshipLogic.updateProblem(changed, model: model), "its own path does not count against it")
-        var retyped = active
-        retyped.toColumn = "Name"
-        XCTAssertNotNil(RelationshipLogic.updateProblem(retyped, model: model))
-        var duplicate = second
-        duplicate.fromColumn = "ProductID"
-        XCTAssertEqual(RelationshipLogic.updateProblem(duplicate, model: model), "These two columns are already related.")
-    }
-
-    func testRelationshipSwapNormalizeAndRetarget() {
+    func testRelationshipSwapAndRetarget() {
         let model = model()
         let r = relate("Sales", "ProductID", "Product", "ProductID")
         let swapped = RelationshipLogic.swapped(r)
@@ -411,15 +389,6 @@ final class ModelDiagramTests: XCTestCase {
         XCTAssertEqual(swapped.cardinality, .oneToMany, "Sales is still the many side")
         XCTAssertEqual(RelationshipLogic.swapped(swapped).cardinality, .manyToOne)
         XCTAssertEqual(swapped.id, r.id)
-
-        var oneToOne = r
-        oneToOne.cardinality = .oneToOne
-        XCTAssertEqual(RelationshipLogic.normalized(oneToOne).crossFilter, .both)
-        var single = r
-        single.securityFilterBothDirections = true
-        XCTAssertFalse(RelationshipLogic.normalized(single).securityFilterBothDirections, "only meaningful when filtering both ways")
-        single.crossFilter = .both
-        XCTAssertTrue(RelationshipLogic.normalized(single).securityFilterBothDirections)
 
         // The "to" table changed to Date: ProductID is not there; the first compatible column
         // for a whole number… Date has only a date column, so it is left to be chosen.

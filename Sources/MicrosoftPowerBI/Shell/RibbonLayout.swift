@@ -247,7 +247,7 @@ enum RibbonLayout {
                 large("model.viewAs", "View as", "person.crop.rectangle"),
             ]),
             RibbonGroup(title: "Q&A", items: [
-                small("model.qnaSetup", "Q&A setup", "questionmark.bubble"),
+                small("model.prepForAI", "Prep data for AI", "sparkles"),
                 small("model.synonyms", "Synonyms", "character.book.closed"),
                 small("model.translations", "Translations", "globe"),
             ]),
@@ -397,6 +397,9 @@ enum RibbonLayout {
             RibbonGroup(title: "Style", items: [
                 large("view.pane.format", "Format pane", "paintbrush"),
                 large("edit.formatPainter", "Format painter", "paintbrush.pointed"),
+                small("format.copyFormatting", "Copy formatting", "paintbrush"),
+                small("format.pasteFormatting", "Paste formatting", "paintbrush.fill"),
+                small("format.resetFormatting", "Reset to default", "arrow.counterclockwise"),
             ]),
             RibbonGroup(title: "Edit", items: [
                 small("edit.duplicate", "Duplicate", "plus.square.on.square"),
@@ -431,6 +434,7 @@ enum RibbonLayout {
             RibbonGroup(title: "Table", items: [registered("model.table.")]),
             RibbonGroup(title: "Calendars", items: [
                 large("model.markDateTable", "Mark as date table", "calendar"),
+                large("model.calendars", "Calendars", "calendar.badge.clock"),
             ]),
             RibbonGroup(title: "Relationships", items: [
                 large("model.relationships", "Manage relationships", "arrow.left.arrow.right"),

@@ -498,6 +498,8 @@ struct BulletView: View {
 
 /// Scatter chart: one point per row at (X, Y), sized by the Size well, colored by legend value.
 struct ScatterChart: View {
+    /// Bounds of `markers.size` (the radius of a point without a Size value).
+    static let markerSizes: ClosedRange<Double> = 1...40
     let spec: VisualSpec
     let data: VisualData
     let context: VisualContext
@@ -516,6 +518,7 @@ struct ScatterChart: View {
     var body: some View {
         let style = ChartStyle(spec: spec, theme: context.theme)
         let points = model()
+        let base = CGFloat(FormatNumber.clamped(style.format.double("markers", "size", 3.5), to: ScatterChart.markerSizes) ?? 3.5)
         StatPlot(spec: spec, context: context, style: style,
                  xDomain: axisExtent(points.map(\.x)),
                  xTicks: axisTicks(points.map(\.x), style: style),
@@ -527,7 +530,7 @@ struct ScatterChart: View {
                  signature: points.count,
                  hits: { map in
                      points.enumerated().map { i, p in
-                         ChartHit(id: i, path: Path(circle(around: map.point(p.x, p.y), radius: radius(p, map: map))),
+                         ChartHit(id: i, path: Path(circle(around: map.point(p.x, p.y), radius: radius(p, map: map, base: base))),
                                   selection: p.selection,
                                   tooltip: TooltipContent(title: p.label, rows: [
                                       .init(color: p.color, label: caption(well: .x), value: fmt(p.x, well: .x)),
@@ -537,12 +540,13 @@ struct ScatterChart: View {
                      }
                  },
                  draw: { ctx, map in
+                     let fill = 1 - (FormatNumber.clamped(style.format.double("markers", "transparency", 20), to: 0...100) ?? 20) / 100
                      for p in points.prefix(4_000) {
                          let c = map.point(p.x, p.y)
-                         let r = radius(p, map: map)
+                         let r = radius(p, map: map, base: base)
                          let dim = p.selection.map { env.matcher.isActive && !env.matcher.isSelected($0) } ?? false
                          ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                                  with: .color(p.color.opacity(dim ? 0.25 : 0.8)))
+                                  with: .color(p.color.opacity(dim ? 0.25 : fill)))
                      }
                  },
                  marks: { })
@@ -556,8 +560,7 @@ struct ScatterChart: View {
         CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
     }
 
-    private func radius(_ p: Point, map: StatMap) -> CGFloat {
-        let base: CGFloat = 3.5
+    private func radius(_ p: Point, map: StatMap, base: CGFloat) -> CGFloat {
         guard let s = p.size, s > 0, map.plot.width > 0 else { return base }
         return base + CGFloat((s / maxSize).squareRoot()) * 7
     }
