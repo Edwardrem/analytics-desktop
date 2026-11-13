@@ -102,6 +102,8 @@ final class DocumentStore: ObservableObject {
     @Published var selection: Set<UUID> = []
     @Published var zoom: Double = 1
     @Published var fitToWindow = true
+    /// With `fitToWindow`: scale the page to the canvas width (scrolling vertically) instead of fitting all of it.
+    @Published var fitToWidth = false
     @Published var showGridlines = false
     @Published var snapToGrid = true
     @Published var lockObjects = false

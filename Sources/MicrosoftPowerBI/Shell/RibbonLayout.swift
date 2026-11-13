@@ -268,6 +268,7 @@ enum RibbonLayout {
             RibbonGroup(title: "Scale to fit", items: [
                 menu("Page view", "arrow.up.left.and.arrow.down.right", [
                     entry("view.fit", "Fit to Page", "arrow.up.left.and.arrow.down.right"),
+                    entry("view.fitWidth", "Fit to Width", "arrow.left.and.right"),
                     entry("view.actualSize", "Actual Size", "1.magnifyingglass"),
                     .divider,
                     entry("view.zoomIn", "Zoom In", "plus.magnifyingglass"),
@@ -276,6 +277,7 @@ enum RibbonLayout {
             ]),
             RibbonGroup(title: "Mobile", items: [
                 large("view.mobile", "Mobile layout", "iphone"),
+                small("view.mobileAutoCreate", "Auto-create", "wand.and.stars"),
             ]),
             RibbonGroup(title: "Page options", items: [
                 small("view.gridlines", "Gridlines", "grid"),

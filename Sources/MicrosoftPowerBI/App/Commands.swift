@@ -160,7 +160,7 @@ enum CoreCommands {
                                 isEnabled: { ShellState.of($0).isAvailable(p) },
                                 isOn: { ShellState.of($0).isShowing(p) }) { ShellState.of($0).toggle(p) })
         }
-        c.append(AppCommand(id: "view.fit", title: "Fit to Page", menu: .view, shortcut: .init("0"), separatorBefore: true, isOn: { $0.fitToWindow }) { $0.fitToWindow = true })
+        c.append(AppCommand(id: "view.fit", title: "Fit to Page", menu: .view, shortcut: .init("0"), separatorBefore: true, isOn: { $0.fitToWindow && !$0.fitToWidth }) { $0.fitToWidth = false; $0.fitToWindow = true })
         c.append(AppCommand(id: "view.actualSize", title: "Actual Size", menu: .view, shortcut: .init("0", modifiers: [.command, .option])) { $0.fitToWindow = false; $0.zoom = 1 })
         c.append(AppCommand(id: "view.zoomIn", title: "Zoom In", menu: .view, shortcut: .init("+")) { $0.fitToWindow = false; $0.zoom = min(4, $0.zoom * 1.2) })
         c.append(AppCommand(id: "view.zoomOut", title: "Zoom Out", menu: .view, shortcut: .init("-")) { $0.fitToWindow = false; $0.zoom = max(0.1, $0.zoom / 1.2) })

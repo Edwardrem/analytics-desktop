@@ -23,7 +23,9 @@ enum FieldDrag {
 extension DocumentStore {
     /// The frame a visual occupies in the layout being edited (desktop or phone).
     func frame(of v: VisualSpec) -> Frame { mobileLayout ? (v.mobileFrame ?? v.frame) : v.frame }
-    var canvasSize: PageSize { mobileLayout ? .phone : currentPage.size }
+    var canvasSize: PageSize {
+        mobileLayout ? PageSize(width: MobileLayout.width, height: MobileLayout.canvasHeight(currentPage)) : currentPage.size
+    }
 
     func context(for spec: VisualSpec, interactive: Bool = true) -> VisualContext {
         var c = VisualContext()
@@ -59,20 +61,25 @@ struct ReportCanvas: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        GeometryReader { geo in
-            let size = store.canvasSize
-            let scale = store.fitToWindow
-                ? max(0.1, min((geo.size.width - 64) / size.width, (geo.size.height - 64) / size.height))
-                : store.zoom
-            ScrollView([.horizontal, .vertical]) {
-                page(scale: scale)
-                    .frame(width: size.width * scale, height: size.height * scale)
-                    .padding(32)
-                    .frame(minWidth: geo.size.width, minHeight: geo.size.height)
+        HStack(spacing: 0) {
+            if store.mobileLayout {
+                MobileVisualsPanel()
+                Hairline(vertical: true)
             }
-            .background(wallpaper)
-            .onChange(of: scale) { _, s in if store.fitToWindow { store.zoom = s } }
-            .onAppear { if store.fitToWindow { store.zoom = scale } }
+            GeometryReader { geo in
+                let size = store.canvasSize
+                let scale = PageView.scale(mode: PageView.mode(fitToWindow: store.fitToWindow, fitToWidth: store.fitToWidth),
+                                           page: size, viewport: geo.size, zoom: store.zoom)
+                ScrollView([.horizontal, .vertical]) {
+                    page(scale: scale)
+                        .frame(width: size.width * scale, height: size.height * scale)
+                        .padding(PageView.padding)
+                        .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: store.fitToWidth && store.fitToWindow ? .top : .center)
+                }
+                .background(wallpaper)
+                .onChange(of: scale) { _, s in if store.fitToWindow { store.zoom = s } }
+                .onAppear { if store.fitToWindow { store.zoom = scale } }
+            }
         }
     }
 
@@ -103,8 +110,16 @@ struct ReportCanvas: View {
                     store.clearPointSelections()
                     store.editInteractionsFor = nil
                 }
-            if store.showGridlines { GridOverlay(spacing: 24).allowsHitTesting(false) }
-            if visuals.isEmpty, !store.mobileLayout { StartSurface().frame(width: size.width, height: size.height) }
+            if store.showGridlines || store.mobileLayout {
+                GridOverlay(spacing: store.mobileLayout ? MobileLayout.grid * 2 : 24).allowsHitTesting(false)
+            }
+            if visuals.isEmpty {
+                if store.mobileLayout {
+                    EmptyState(systemImage: "iphone", title: "Build the phone layout",
+                               message: "Drag visuals here from Page visuals, or use Auto-create.")
+                        .frame(width: size.width, height: size.height).allowsHitTesting(false)
+                } else { StartSurface().frame(width: size.width, height: size.height) }
+            }
             ForEach(visuals) { spec in
                 VisualContainer(spec: spec, scale: scale, guides: $guides)
             }
@@ -128,8 +143,13 @@ struct ReportCanvas: View {
         .scaleEffect(scale, anchor: .topLeading)
         .frame(width: size.width * scale, height: size.height * scale, alignment: .topLeading)
         .dropDestination(for: String.self) { items, location in
-            guard let field = items.compactMap(FieldDrag.decode).first else { return false }
             let p = CGPoint(x: location.x / scale, y: location.y / scale)
+            if store.mobileLayout {
+                guard let id = items.compactMap(MobileLayout.draggedVisual).first else { return false }
+                store.placeOnMobileLayout(id, at: p)
+                return true
+            }
+            guard let field = items.compactMap(FieldDrag.decode).first else { return false }
             if let hit = visuals.reversed().first(where: { store.frame(of: $0).cgRect.contains(p) && !$0.type.wells.isEmpty }) {
                 store.addField(field, to: hit.id)
                 store.selection = [hit.id]
@@ -209,7 +229,7 @@ struct VisualContainer: View {
         let frame = store.frame(of: spec)
         let data = store.visualData[spec.id] ?? VisualData()
         ZStack(alignment: .topLeading) {
-            VisualView(spec: spec, data: data, context: store.context(for: spec))
+            VisualView(spec: store.mobileLayout ? MobileLayout.effectiveSpec(spec) : spec, data: data, context: store.context(for: spec))
                 .frame(width: frame.width, height: frame.height)
                 .rotationEffect(.degrees(frame.rotation))
                 .opacity(store.editInteractionsFor != nil && store.editInteractionsFor != spec.id ? 0.92 : 1)
@@ -460,6 +480,11 @@ struct VisualContextMenu: View {
     let spec: VisualSpec
 
     var body: some View {
+        if store.mobileLayout {
+            Button("Remove from Mobile Layout") { ensureSelected(); store.removeFromMobileLayout(Array(store.selection)) }
+            Button("Reset Mobile Formatting") { store.resetMobileFormat(spec.id) }.disabled(spec.mobileFormat == nil)
+            Divider()
+        }
         Button("Copy") { ensureSelected(); store.copySelection() }
         Button("Cut") { ensureSelected(); store.cutSelection() }
         Button("Duplicate") { ensureSelected(); store.duplicateSelection() }
