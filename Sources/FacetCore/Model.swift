@@ -86,7 +86,61 @@ public struct ColumnGrouping: Codable, Hashable, Sendable {
     public var otherGroupName: String?
     /// For `.binSize`: the width of each bin. For `.binCount`: the number of bins.
     public var binValue: Double = 10
+    /// For `.binSize` on a date column: the unit `binValue` counts. Nil bins plain numbers (and dates by days).
+    public var binUnit: BinUnit?
     public init(kind: Kind, sourceColumn: String) { self.kind = kind; self.sourceColumn = sourceColumn }
+
+    /// Units a date column can be binned by.
+    public enum BinUnit: String, Codable, CaseIterable, Sendable {
+        case second, minute, hour, day, month, year
+        /// Length in days for the fixed-length units; nil for calendar units.
+        public var days: Double? {
+            switch self {
+            case .second: return 1.0 / 86400
+            case .minute: return 1.0 / 1440
+            case .hour: return 1.0 / 24
+            case .day: return 1
+            case .month, .year: return nil
+            }
+        }
+    }
+
+    /// The bin a value falls in: the lower bound of its bin, a date for date values. Blank and
+    /// non-numeric values have no bin.
+    /// - `.binSize`: bins are multiples of the size (size 10 puts 37 in bin 30); dates count whole
+    ///   units from the calendar (2 months puts 14 Mar in the bin starting 1 Mar when Mar is the bin's first month).
+    /// - `.binCount`: the range `minimum...maximum` is split into that many equal bins; the maximum
+    ///   belongs to the last bin.
+    public func bin(_ v: Value, minimum: Double, maximum: Double) -> Value {
+        var isDate = false
+        if case .date = v { isDate = true }
+        guard isDate || v.isNumber, let d = v.asDouble, d.isFinite else { return .null }
+        func wrap(_ x: Double) -> Value { isDate ? .date(Value.date(fromSerial: x)) : .double((x * 1e9).rounded() / 1e9) }
+        switch kind {
+        case .list:
+            return .null
+        case .binCount:
+            let count = Swift.max(1, Int(binValue))
+            let width = (maximum - minimum) / Double(count)
+            guard width > 0 else { return wrap(minimum) }
+            let index = Swift.min(count - 1, Swift.max(0, Int(((d - minimum) / width + 1e-9).rounded(.down))))
+            return wrap(minimum + Double(index) * width)
+        case .binSize:
+            let size = Swift.max(binValue, 1e-9)
+            if isDate, let unit = binUnit, unit.days == nil, case .date(let date) = v {
+                let cal = Calendar.utc
+                let c = cal.dateComponents([.year, .month], from: date)
+                let months = (c.year ?? 1900) * 12 + (c.month ?? 1) - 1
+                let step = Swift.max(1, Int(size)) * (unit == .year ? 12 : 1)
+                let start = Int((Double(months) / Double(step)).rounded(.down)) * step
+                var out = DateComponents()
+                out.year = Int((Double(start) / 12).rounded(.down)); out.month = start - (out.year ?? 0) * 12 + 1; out.day = 1
+                return cal.date(from: out).map(Value.date) ?? .null
+            }
+            let width = size * ((isDate ? binUnit?.days : nil) ?? 1)
+            return wrap(((d / width) + 1e-9).rounded(.down) * width)
+        }
+    }
 }
 
 public struct Measure: Codable, Identifiable, Hashable, Sendable {
@@ -122,6 +176,10 @@ public struct CalendarDefinition: Codable, Identifiable, Hashable, Sendable {
     public var columnsByUnit: [String: String]
     public var fiscalYearStartMonth: Int = 1
     public init(name: String, columnsByUnit: [String: String]) { self.name = name; self.columnsByUnit = columnsByUnit }
+    /// The time units a calendar can map, largest first.
+    public static let units = ["year", "quarter", "month", "week", "date"]
+    /// The last month of the fiscal year: the month before it starts (a January start ends in December).
+    public var fiscalYearEndMonth: Int { (Swift.min(12, Swift.max(1, fiscalYearStartMonth)) + 10) % 12 + 1 }
 }
 
 public struct ModelTable: Codable, Identifiable, Hashable, Sendable {
