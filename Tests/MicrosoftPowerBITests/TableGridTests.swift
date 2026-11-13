@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import FacetCore
 @testable import MicrosoftPowerBI
 
@@ -140,5 +141,188 @@ final class TableGridTests: XCTestCase {
         let candidates = TableGrid.sortByCandidates(for: product, in: table)
         XCTAssertEqual(candidates.count, 5)
         XCTAssertFalse(candidates.contains { ModelDAX.same($0.name, "Product") })
+    }
+
+    // MARK: Review fixes
+
+    /// A refresh can return the same shape with new values: the token follows the data revision.
+    func testDataTokenChangesWithRevisionForTheSameShape() {
+        let (table, data) = fixture()
+        var refreshed = data
+        refreshed.columns[1].values[0] = 99.0
+        XCTAssertEqual(TableGrid.dataToken(refreshed), TableGrid.dataToken(data), "same shape, same revision: the token alone can't tell")
+        XCTAssertNotEqual(TableGrid.dataToken(refreshed, revision: 1), TableGrid.dataToken(data, revision: 0))
+        XCTAssertEqual(TableGrid.dataToken(data, revision: 3), TableGrid.dataToken(data, revision: 3))
+        XCTAssertNotEqual(TableGrid.plan(for: table, data: data, filters: [:], revision: 1).dataToken,
+                          TableGrid.plan(for: table, data: data, filters: [:], revision: 2).dataToken)
+    }
+
+    /// The grid reloads when its index token changes; an off-thread index arriving must change it.
+    func testIndexTokenChangesWhenAnAsyncIndexArrives() {
+        XCTAssertNotEqual(TableGrid.indexToken(gridRevision: 4, arrivals: 0), TableGrid.indexToken(gridRevision: 4, arrivals: 1))
+        XCTAssertNotEqual(TableGrid.indexToken(gridRevision: 4, arrivals: 1), TableGrid.indexToken(gridRevision: 5, arrivals: 1))
+        XCTAssertEqual(TableGrid.indexToken(gridRevision: 4, arrivals: 1), TableGrid.indexToken(gridRevision: 4, arrivals: 1))
+    }
+
+    func testRowIndexCacheComputesOncePerKey() {
+        let (_, data) = fixture()
+        var state = GridViewState()
+        state.sortColumn = "Amount"
+        let cache = RowIndexCache()
+        let key = RowsKey(table: "Sales", dataToken: 7, gridRevision: 1)
+        XCTAssertFalse(cache.lookup(key).hit)
+        for _ in 0..<5 {
+            XCTAssertEqual(cache.rows(for: key) { TableGrid.rows(for: data, state: state) }, [2, 1, 0])
+        }
+        XCTAssertEqual(cache.computations, 1, "five renders, one sort")
+        XCTAssertTrue(cache.lookup(key).hit)
+
+        // A new view state, new data or another table is a new key.
+        state.ascending = false
+        let next = RowsKey(table: "Sales", dataToken: 7, gridRevision: 2)
+        XCTAssertFalse(cache.lookup(next).hit)
+        XCTAssertEqual(cache.rows(for: next) { TableGrid.rows(for: data, state: state) }, [0, 1, 2])
+        XCTAssertEqual(cache.computations, 2)
+        XCTAssertFalse(cache.lookup(RowsKey(table: "Sales", dataToken: 8, gridRevision: 2)).hit)
+        XCTAssertFalse(cache.lookup(RowsKey(table: "Other", dataToken: 7, gridRevision: 2)).hit)
+
+        // What the off-thread path does: store under the key it was computed for. A nil order
+        // (table as stored) is still a hit.
+        let big = RowsKey(table: "Big", dataToken: 1, gridRevision: 9)
+        cache.store(nil, for: big)
+        XCTAssertTrue(cache.lookup(big).hit)
+        XCTAssertNil(cache.lookup(big).rows)
+        XCTAssertFalse(cache.lookup(next).hit, "one entry: the previous key is gone")
+    }
+
+    func testTsvKeepsTrailingBlankRows() {
+        let table = ModelTable(name: "T", columns: [ModelColumn(name: "A", dataType: .text)])
+        let data = DataTable(name: "T", columnNames: ["A"], rows: [["a"], [Value.null], [Value.null]], types: [.text])
+        let plan = TableGrid.plan(for: table, data: data, filters: [:])
+        XCTAssertEqual(TableGrid.tsv(data: data, columns: plan.columns, rowIndex: nil, headers: true), "A\na\n\n",
+                       "header, a, and two blank rows: three line breaks, nothing trimmed")
+        XCTAssertEqual(TableGrid.tsv(data: data, columns: plan.columns, rowIndex: nil, headers: false), "a\n\n")
+        XCTAssertEqual(TableGrid.tsv(data: data, columns: plan.columns, rowIndex: [], headers: true), "A", "headers only")
+        XCTAssertEqual(TableGrid.tsv(data: data, columns: plan.columns, rowIndex: [0, 7], headers: false), "a\n",
+                       "a row outside the data is blank, not a crash")
+    }
+
+    func testTsvFlattensTabsAndLineBreaksInsideValues() {
+        let table = ModelTable(name: "T", columns: [ModelColumn(name: "A", dataType: .text), ModelColumn(name: "B", dataType: .text)])
+        let data = DataTable(name: "T", columnNames: ["A", "B"], rows: [["x\ty", "l1\nl2"]], types: [.text, .text])
+        let plan = TableGrid.plan(for: table, data: data, filters: [:])
+        XCTAssertEqual(TableGrid.tsv(data: data, columns: plan.columns, rowIndex: nil, headers: false), "x y\tl1 l2")
+    }
+
+    /// The grid's own copies go through the same builder as the workspace's.
+    @MainActor
+    func testGridCopyUsesTheSharedBuilder() {
+        let (table, data) = fixture()
+        var state = GridViewState()
+        state.sortColumn = "Amount"
+        state.ascending = true
+        let rows = TableGrid.rows(for: data, state: state)
+        let plan = TableGrid.plan(for: table, data: data, filters: [:])
+        let grid = DataGrid(table: data, dataToken: plan.dataToken, columns: plan.columns, rowIndex: rows, indexToken: 0,
+                            onSelectColumn: { _ in }, headerMenu: { _ in [] },
+                            filterEditor: { _, _ in AnyView(EmptyView()) })
+        let coordinator = DataGrid.Coordinator(grid)
+        let view = GridTableView()
+        coordinator.tableView = view
+        coordinator.apply(grid, force: true)
+        // Visible rows 0...1 are data rows 2 and 1 (amounts 0.5 and 1.0); columns 0...2.
+        let text = coordinator.tsv(GridCellRange(rows: 0...1, columns: 0...2), headers: true)
+        XCTAssertEqual(text, "Product\tAmount\tQty\nApple\t$0.50\t1\nBanana\t$1.00\t2")
+        XCTAssertEqual(text, TableGrid.tsv(data: data, columns: Array(plan.columns[0...2]), rowIndex: [2, 1], headers: true))
+        // A range past the end is clipped, not a crash.
+        XCTAssertEqual(coordinator.tsv(GridCellRange(rows: 2...9, columns: 0...0), headers: false), "Apple")
+    }
+
+    func testCopyReportsTheRowsActuallyCopied() {
+        let (_, data) = fixture()
+        var state = GridViewState()
+        state.filters["Product"] = GridColumnFilter(selected: Set([Value.string("Apple")]))
+        let rows = TableGrid.rows(for: data, state: state)
+        XCTAssertEqual(TableGrid.copiedRowCount(data: data, rowIndex: rows), 2, "two Apples of three rows")
+        XCTAssertEqual(TableGrid.copiedRowCount(data: data, rowIndex: nil), 3)
+        XCTAssertEqual(TableGrid.copiedRowCount(data: nil, rowIndex: nil), 0)
+        XCTAssertEqual(TableGrid.copyMessage(rows: 2, of: "Sales"), "Copied 2 rows of Sales.")
+        XCTAssertEqual(TableGrid.copyMessage(rows: 1, of: "Sales"), "Copied 1 row of Sales.")
+    }
+
+    func testViewStateCaptionSaysWhatIsApplied() {
+        var state = GridViewState()
+        XCTAssertEqual(TableGrid.viewStateCaption(state), "")
+        state.sortColumn = "Qty"
+        XCTAssertEqual(TableGrid.viewStateCaption(state), "sorted")
+        state.filters["Qty"] = GridColumnFilter(selected: Set([Value.int(1)]))
+        XCTAssertEqual(TableGrid.viewStateCaption(state), "sorted & filtered")
+        state.sortColumn = nil
+        XCTAssertEqual(TableGrid.viewStateCaption(state), "filtered")
+        state.filters["Qty"] = GridColumnFilter()
+        XCTAssertEqual(TableGrid.viewStateCaption(state), "", "an inactive filter is no filter")
+    }
+
+    func testSortByCandidatesExcludeColumnsWhoseChainReachesTheColumn() throws {
+        // Month sorts by MonthNo; MonthNo sorts by Order. Order may not sort by Month or MonthNo.
+        var month = ModelColumn(name: "Month", dataType: .text)
+        month.sortByColumn = "MonthNo"
+        var monthNo = ModelColumn(name: "MonthNo", dataType: .integer)
+        monthNo.sortByColumn = "order"
+        let order = ModelColumn(name: "Order", dataType: .integer)
+        let year = ModelColumn(name: "Year", dataType: .integer)
+        let table = ModelTable(name: "Date", columns: [month, monthNo, order, year])
+
+        XCTAssertTrue(TableGrid.sortChain(from: "Month", reaches: "Order", in: table), "Month → MonthNo → Order")
+        XCTAssertTrue(TableGrid.sortChain(from: "Order", reaches: "Order", in: table))
+        XCTAssertFalse(TableGrid.sortChain(from: "Order", reaches: "Month", in: table))
+        XCTAssertEqual(TableGrid.sortByCandidates(for: order, in: table).map(\.name), ["Year"])
+        XCTAssertEqual(TableGrid.sortByCandidates(for: monthNo, in: table).map(\.name), ["Order", "Year"])
+        XCTAssertEqual(TableGrid.sortByCandidates(for: month, in: table).map(\.name), ["MonthNo", "Order", "Year"])
+        XCTAssertEqual(TableGrid.sortByCandidates(for: year, in: table).map(\.name), ["Month", "MonthNo", "Order"])
+
+        // A cycle already stored in a document ends the walk instead of looping.
+        var a = ModelColumn(name: "A", dataType: .text); a.sortByColumn = "B"
+        var b = ModelColumn(name: "B", dataType: .text); b.sortByColumn = "A"
+        let cyclic = ModelTable(name: "T", columns: [a, b, ModelColumn(name: "C", dataType: .text)])
+        XCTAssertFalse(TableGrid.sortChain(from: "A", reaches: "C", in: cyclic))
+    }
+
+    func testSortByProblemRefusesCyclesAndAmbiguousOrder() {
+        var month = ModelColumn(name: "Month", dataType: .text)
+        month.sortByColumn = "MonthNo"
+        let table = ModelTable(name: "Date", columns: [month, ModelColumn(name: "MonthNo", dataType: .integer),
+                                                       ModelColumn(name: "Day", dataType: .integer)])
+        XCTAssertNil(TableGrid.sortByProblem(column: "Month", by: "MonthNo", in: table, data: nil))
+        XCTAssertNotNil(TableGrid.sortByProblem(column: "MonthNo", by: "Month", in: table, data: nil), "Month already sorts by MonthNo")
+        XCTAssertNotNil(TableGrid.sortByProblem(column: "Month", by: "month", in: table, data: nil), "itself")
+        XCTAssertNotNil(TableGrid.sortByProblem(column: "Month", by: "Missing", in: table, data: nil))
+        XCTAssertNotNil(TableGrid.sortByProblem(column: "Missing", by: "Month", in: table, data: nil))
+
+        // Jan ↔ 1 and Feb ↔ 2 on every row: fine. Day differs within Jan: not a sort order.
+        let data = DataTable(name: "Date", columnNames: ["Month", "MonthNo", "Day"],
+                             rows: [["Jan", 1, 1], ["Jan", 1, 2], ["Feb", 2, 1]], types: [.text, .integer, .integer])
+        XCTAssertNil(TableGrid.sortByProblem(column: "Month", by: "MonthNo", in: table, data: data))
+        XCTAssertNotNil(TableGrid.sortByProblem(column: "Month", by: "Day", in: table, data: data))
+        // The other way round each Day value has one Month only on these rows? Day 1 → Jan and Feb: refused.
+        XCTAssertNotNil(TableGrid.sortByProblem(column: "Day", by: "Month", in: table, data: data))
+    }
+
+    func testToolsFallBackToTheShownTableWhenTheSelectionIsGone() {
+        var model = SemanticModel()
+        var sales = ModelTable(name: "Sales", columns: [ModelColumn(name: "Amount", dataType: .decimal)])
+        sales.measures = [Measure(name: "Total", expression: "SUM(Sales[Amount])")]
+        model.tables = [sales, ModelTable(name: "Product", columns: [ModelColumn(name: "Name", dataType: .text)])]
+
+        XCTAssertEqual(TableGrid.toolsTarget(primary: .column(table: "sales", name: "amount"), shown: "Sales", model: model),
+                       .column(table: "Sales", name: "Amount"), "resolved, with the model's spelling")
+        XCTAssertEqual(TableGrid.toolsTarget(primary: .measure(table: "Sales", name: "Total"), shown: "Product", model: model),
+                       .measure(table: "Sales", name: "Total"))
+        // Undone or renamed away: the tools stay, on the shown table.
+        XCTAssertEqual(TableGrid.toolsTarget(primary: .column(table: "Sales", name: "Gone"), shown: "Sales", model: model), .table("Sales"))
+        XCTAssertEqual(TableGrid.toolsTarget(primary: .measure(table: "Old", name: "Total"), shown: "Product", model: model), .table("Product"))
+        XCTAssertEqual(TableGrid.toolsTarget(primary: .table("Old"), shown: "Product", model: model), .table("Product"))
+        XCTAssertEqual(TableGrid.toolsTarget(primary: .relationship(UUID()), shown: "Sales", model: model), .table("Sales"))
+        XCTAssertEqual(TableGrid.toolsTarget(primary: nil, shown: "Sales", model: model), .table("Sales"))
     }
 }

@@ -163,10 +163,11 @@ struct DataGrid: NSViewRepresentable {
         private func estimatedWidth(_ gc: GridColumn) -> CGFloat {
             let font = NSFont.systemFont(ofSize: 12)
             var widest = (gc.name as NSString).size(withAttributes: [.font: NSFont.systemFont(ofSize: 11, weight: .medium)]).width + 44
-            if let t = parent.table, let di = gc.dataIndex {
+            if let t = parent.table, let di = gc.dataIndex, t.columns.indices.contains(di) {
                 let values = t.columns[di].values
-                for r in 0..<min(40, values.count) {
-                    let s = ValueFormatter.format(values[parent.rowIndex?[safe: r] ?? r], gc.format) as NSString
+                for r in 0..<min(40, rowCount) {
+                    guard let v = values[safe: parent.rowIndex?[safe: r] ?? r] else { continue }
+                    let s = ValueFormatter.format(v, gc.format) as NSString
                     widest = max(widest, s.size(withAttributes: [.font: font]).width + 24)
                 }
             }
@@ -184,7 +185,7 @@ struct DataGrid: NSViewRepresentable {
             return r < values.count ? values[r] : .null
         }
         func text(row: Int, column: Int) -> String {
-            ValueFormatter.format(value(row: row, column: column), columns[column].format)
+            ValueFormatter.format(value(row: row, column: column), columns[safe: column]?.format ?? "")
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -255,20 +256,16 @@ struct DataGrid: NSViewRepresentable {
 
         // MARK: Copy
 
+        /// The grid columns and data rows a visible cell range covers.
+        private func slice(_ range: GridCellRange) -> (columns: [GridColumn], rows: [Int]) {
+            let cols = range.columns.compactMap { columns[safe: $0] }
+            let rows = range.rows.filter { $0 >= 0 && $0 < rowCount }.map { parent.rowIndex?[safe: $0] ?? $0 }
+            return (cols, rows)
+        }
         /// Tab-separated text for a cell range, with a header row when it spans more than one cell.
         func tsv(_ range: GridCellRange, headers: Bool) -> String {
-            var out = ""
-            let cols = Array(range.columns).filter { $0 < columns.count }
-            if headers { out += cols.map { columns[$0].name }.joined(separator: "\t") + "\n" }
-            for r in range.rows where r < rowCount {
-                out += cols.map { Self.clean(text(row: r, column: $0)) }.joined(separator: "\t")
-                out += "\n"
-            }
-            if out.hasSuffix("\n") { out.removeLast() }
-            return out
-        }
-        private static func clean(_ s: String) -> String {
-            s.contains(where: { $0 == "\t" || $0 == "\n" }) ? s.replacingOccurrences(of: "\t", with: " ").replacingOccurrences(of: "\n", with: " ") : s
+            let (cols, rows) = slice(range)
+            return TableGrid.tsv(data: parent.table, columns: cols, rowIndex: rows, headers: headers)
         }
         static func write(_ s: String) {
             let pb = NSPasteboard.general
@@ -295,22 +292,9 @@ struct DataGrid: NSViewRepresentable {
         /// Whole-table copies are built off the main thread from a snapshot.
         private func copyLarge(_ range: GridCellRange) {
             guard let table = parent.table else { return }
-            let cols = columns, index = parent.rowIndex
+            let (cols, rows) = slice(range)
             DispatchQueue.global(qos: .userInitiated).async {
-                var out = range.columns.map { cols[$0].name }.joined(separator: "\t")
-                out.reserveCapacity(range.cellCount * 8)
-                for r in range.rows {
-                    let dr = index?[r] ?? r
-                    out += "\n"
-                    var first = true
-                    for c in range.columns {
-                        if !first { out += "\t" }
-                        first = false
-                        if let di = cols[c].dataIndex, di < table.columns.count, dr < table.columns[di].values.count {
-                            out += Self.clean(ValueFormatter.format(table.columns[di].values[dr], cols[c].format))
-                        }
-                    }
-                }
+                let out = TableGrid.tsv(data: table, columns: cols, rowIndex: rows, headers: true)
                 DispatchQueue.main.async { Self.write(out) }
             }
         }

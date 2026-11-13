@@ -30,70 +30,39 @@ struct ColumnToolsRow: View {
         .controlSize(.small)
     }
 
-    private func set(_ undoName: String, coalesce: String? = nil, _ change: @escaping (inout ModelColumn) -> Void) {
-        ModelOps.updateColumns(store, [(table, name)], name: undoName, coalesce: coalesce, change)
+    private func menu(_ title: String, symbol: String = "", help: String, _ entries: [ModelMenuEntry]) -> some View {
+        Menu {
+            ModelMenuItems(entries: entries)
+        } label: {
+            if symbol.isEmpty { Text(title) } else { Label(title, systemImage: symbol) }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help(help)
     }
 
     private var dataTypeMenu: some View {
-        Menu {
-            ForEach(DataType.allCases, id: \.self) { t in
-                Button(t.displayName) { ModelOps.changeDataType(store, table: table, column: name, to: t) }
-            }
-        } label: {
-            Label(column.dataType.displayName, systemImage: ModelGlyph.symbol(for: column.dataType))
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Data type")
+        menu(column.dataType.displayName, symbol: ModelGlyph.symbol(for: column.dataType), help: "Data type",
+             ColumnMenus.dataType(store, table: table, column: column))
     }
 
     private var summarizeByMenu: some View {
-        Menu {
-            Button(Aggregation.none.displayName) { set("Summarize By") { $0.summarizeBy = .none } }
-            Divider()
-            ForEach(Aggregation.valid(for: column.dataType), id: \.self) { a in
-                Button(a.label(for: column.dataType)) { set("Summarize By") { $0.summarizeBy = a } }
-            }
-        } label: {
-            Text(column.summarizeBy == .none ? "Summarize by" : column.summarizeBy.label(for: column.dataType))
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Default summarization")
+        menu(column.summarizeBy == .none ? "Summarize by" : column.summarizeBy.label(for: column.dataType),
+             help: "Default summarization", ColumnMenus.summarizeBy(store, table: table, column: column))
     }
 
     private var categoryMenu: some View {
-        Menu {
-            ForEach(DataCategory.allCases, id: \.self) { c in
-                Button(ModelGlyph.label(for: c)) { set("Change Data Category") { $0.dataCategory = c } }
-            }
-        } label: {
-            Text(ModelGlyph.label(for: column.dataCategory))
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Data category")
+        menu(ModelGlyph.label(for: column.dataCategory), help: "Data category",
+             ColumnMenus.dataCategory(store, table: table, column: column))
     }
 
     private var sortByMenu: some View {
-        Menu {
-            Button("Default") { set("Sort by Column") { $0.sortByColumn = nil } }
-            Divider()
-            if let t = store.model.table(table) {
-                ForEach(TableGrid.sortByCandidates(for: column, in: t)) { other in
-                    Button(other.name) { set("Sort by Column") { $0.sortByColumn = other.name } }
-                }
-            }
-        } label: {
-            Text(column.sortByColumn ?? "Sort by column")
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Sort this column by another column's order")
+        menu(column.sortByColumn ?? "Sort by column", help: "Sort this column by another column's order",
+             store.model.table(table).map { ColumnMenus.sortBy(store, table: $0, column: column) } ?? [])
     }
 
     private func applyFormat(_ format: String) {
-        set("Format Column", coalesce: "format-\(table)-\(name)") { $0.formatString = format }
+        ModelOps.updateColumns(store, [(table, name)], name: "Format Column", coalesce: "format-\(table)-\(name)") { $0.formatString = format }
     }
 }
 
@@ -124,9 +93,7 @@ struct MeasureToolsRow: View {
 
     private var homeTableMenu: some View {
         Menu {
-            ForEach(store.model.tables.filter { !ModelDAX.same($0.name, table) }) { t in
-                Button(t.name) { ModelOps.moveMeasure(store, name: measure.name, from: table, to: t.name) }
-            }
+            ModelMenuItems(entries: ColumnMenus.homeTable(store, table: table, measure: measure))
         } label: {
             Label(store.model.table(table)?.name ?? table, systemImage: "tablecells")
         }
@@ -213,34 +180,11 @@ enum TableColumnMenu {
     }
 
     private static func propertyMenus(store: DocumentStore, table: ModelTable, column: ModelColumn) -> [ModelMenuEntry] {
-        let name = column.name
-        var summarize: [ModelMenuEntry] = [.item(title: Aggregation.none.displayName, checked: column.summarizeBy == .none) {
-            ModelOps.updateColumns(store, [(table.name, name)], name: "Summarize By") { $0.summarizeBy = .none }
-        }]
-        summarize += Aggregation.valid(for: column.dataType).map { a in
-            .item(title: a.label(for: column.dataType), checked: column.summarizeBy == a) {
-                ModelOps.updateColumns(store, [(table.name, name)], name: "Summarize By") { $0.summarizeBy = a }
-            }
-        }
-        return [
-            .submenu(title: "Data type", symbol: "textformat.123", entries: DataType.allCases.map { t in
-                .item(title: t.displayName, checked: column.dataType == t) {
-                    ModelOps.changeDataType(store, table: table.name, column: name, to: t)
-                }
-            }),
-            .submenu(title: "Summarize by", entries: summarize),
-            .submenu(title: "Data category", entries: DataCategory.allCases.map { c in
-                .item(title: ModelGlyph.label(for: c), checked: column.dataCategory == c) {
-                    ModelOps.updateColumns(store, [(table.name, name)], name: "Change Data Category") { $0.dataCategory = c }
-                }
-            }),
-            .submenu(title: "Sort by column", entries: [.item(title: "Default", checked: column.sortByColumn == nil) {
-                ModelOps.updateColumns(store, [(table.name, name)], name: "Sort by Column") { $0.sortByColumn = nil }
-            }] + TableGrid.sortByCandidates(for: column, in: table).map { other in
-                .item(title: other.name, checked: ModelDAX.same(column.sortByColumn ?? "", other.name)) {
-                    ModelOps.updateColumns(store, [(table.name, name)], name: "Sort by Column") { $0.sortByColumn = other.name }
-                }
-            }),
+        [
+            .submenu(title: "Data type", symbol: "textformat.123", entries: ColumnMenus.dataType(store, table: table.name, column: column)),
+            .submenu(title: "Summarize by", entries: ColumnMenus.summarizeBy(store, table: table.name, column: column)),
+            .submenu(title: "Data category", entries: ColumnMenus.dataCategory(store, table: table.name, column: column)),
+            .submenu(title: "Sort by column", entries: ColumnMenus.sortBy(store, table: table, column: column)),
             .separator,
         ]
     }
