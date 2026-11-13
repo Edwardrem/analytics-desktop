@@ -107,6 +107,8 @@ final class TableStore {
     /// True for tables only defined inside a query (DEFINE TABLE).
     var isTransient = false
     var colsCache: Columns?
+    /// Columns object-level security hides from the current role: absent from table expressions.
+    var hiddenColumns: Set<Int> = []
 
     init(name: String, index: Int, columns: [ColumnStore]) {
         self.name = name; self.index = index; self.columns = columns

@@ -142,6 +142,10 @@ final class TimeIntelligenceTests: TimeSchemaTestCase {
         // Dates outside the date table are dropped.
         XCTAssertEqual(try dates("DATEADD('Date'[Date], -1, YEAR)", filters: [y2023]), [])
         XCTAssertThrowsError(try scalar("COUNTROWS(DATEADD('Date'[Date], -1, FORTNIGHT))"))
+        // WEEK is not an interval of the date-column functions.
+        XCTAssertThrowsError(try scalar("COUNTROWS(DATEADD('Date'[Date], -1, WEEK))", filters: [on("2024-03-15")]))
+        XCTAssertThrowsError(try scalar("COUNTROWS(DATESINPERIOD('Date'[Date], DATE(2024, 3, 15), -1, WEEK))"))
+        XCTAssertThrowsError(try scalar("COUNTROWS(PARALLELPERIOD('Date'[Date], -1, WEEK))", filters: [on("2024-03-15")]))
         XCTAssertThrowsError(try scalar("COUNTROWS(DATEADD(Sales[Region], -1, MONTH))"))
     }
 
@@ -260,6 +264,18 @@ final class TimeIntelligenceTests: TimeSchemaTestCase {
         XCTAssertEqual(try num("OPENINGBALANCEYEAR([Amt], 'Date'[Date])", filters: [y2024]), 60)
         // 30 April 2024 has no sales.
         XCTAssertTrue(try scalar("CLOSINGBALANCEMONTH([Amt], 'Date'[Date])", filters: [y2024, month(4)]).isNull)
+    }
+
+    func testWeekIntervalNeedsACalendar() throws {
+        engine = TimeSchema.makeEngine { model, _ in
+            model.tables[0].calendars = [CalendarDefinition(name: "Gregorian", columnsByUnit: ["date": "Date", "year": "Year", "month": "Month"])]
+        }
+        // Calendar-based time intelligence may shift by weeks: 15 March 2024 back one week is 8 March.
+        XCTAssertEqual(try dates("DATEADD(Gregorian, -1, WEEK)", filters: [on("2024-03-15")]), ["2024-03-08"])
+        // Two weeks back from 15 March is 1 March; 14 days ending 15 March starts 2 March.
+        XCTAssertEqual(try dates("DATEADD(Gregorian, -2, WEEK)", filters: [on("2024-03-15")]), ["2024-03-01"])
+        // The date column still rejects it in the same model.
+        XCTAssertThrowsError(try scalar("COUNTROWS(DATEADD('Date'[Date], -1, WEEK))", filters: [on("2024-03-15")]))
     }
 
     // MARK: Date-table semantics

@@ -228,6 +228,68 @@ final class WindowFunctionTests: TimeSchemaTestCase {
         XCTAssertThrowsError(try scalar("RANK(DENSE, ALL('Date'[Year]), ORDERBY('Date'[Year]))"))
     }
 
+    // MARK: Blanks and MATCHBY
+
+    func testBlanksArgumentPlacesBlankOrderValues() throws {
+        // Products by name in the star schema, where the orphan sale gives a blank product.
+        engine = StarSchema.makeEngine()
+        func product(_ window: String) throws -> [Value] {
+            try column("EVALUATE VAR T = SUMMARIZECOLUMNS(Product[Product], \"Q\", [Total Qty]) RETURN \(window)", name: "Product[Product]")
+        }
+        // By default a blank sorts lowest: first ascending, last descending.
+        XCTAssertEqual(try product("INDEX(1, T, ORDERBY(Product[Product]))"), [.null])
+        XCTAssertEqual(try product("INDEX(-1, T, ORDERBY(Product[Product]))"), ["Widget"])
+        XCTAssertEqual(try product("INDEX(1, T, ORDERBY(Product[Product], DESC))"), ["Widget"])
+        XCTAssertEqual(try product("INDEX(1, T, ORDERBY(Product[Product]), KEEP)"), [.null])
+        // LAST and FIRST fix the blank's place whatever the direction.
+        XCTAssertEqual(try product("INDEX(1, T, ORDERBY(Product[Product]), LAST)"), ["Doohickey"])
+        XCTAssertEqual(try product("INDEX(-1, T, ORDERBY(Product[Product]), LAST)"), [.null])
+        XCTAssertEqual(try product("INDEX(1, T, ORDERBY(Product[Product], DESC), FIRST)"), [.null])
+        XCTAssertEqual(try product("INDEX(2, T, ORDERBY(Product[Product], DESC), FIRST)"), ["Widget"])
+        XCTAssertEqual(try product("INDEX(-1, T, ORDERBY(Product[Product], DESC), LAST)"), [.null])
+        // Row numbers and ranks follow the same order: Doohickey, Gadget, Gizmo, Thing, Widget, blank.
+        let dax = """
+        EVALUATE VAR T = SUMMARIZECOLUMNS(Product[Product], "Q", [Total Qty])
+        RETURN ADDCOLUMNS(T,
+            "Row", ROWNUMBER(T, ORDERBY(Product[Product]), LAST),
+            "RowDefault", ROWNUMBER(T, ORDERBY(Product[Product])),
+            "Rank", RANK(DENSE, T, ORDERBY(Product[Product]), LAST))
+        ORDER BY [Row]
+        """
+        XCTAssertEqual(try column(dax, name: "Product[Product]"), ["Doohickey", "Gadget", "Gizmo", "Thing", "Widget", .null])
+        XCTAssertEqual(try numbers(dax, name: "RowDefault"), [2, 3, 4, 5, 6, 1])
+        XCTAssertEqual(try numbers(dax, name: "Rank"), [1, 2, 3, 4, 5, 6])
+    }
+
+    func testMatchByNamesTheColumnsThatIdentifyTheCurrentRow() throws {
+        // MATCHBY is not a partition: the years are numbered across the whole relation.
+        let dax = """
+        EVALUATE ADDCOLUMNS(VALUES('Date'[Year]),
+            "Row", ROWNUMBER(ALL('Date'[Year]), ORDERBY('Date'[Year], DESC), MATCHBY('Date'[Year])))
+        ORDER BY 'Date'[Year]
+        """
+        XCTAssertEqual(try numbers(dax, name: "Row"), [3, 2, 1])
+        // With partitions as well: the rank of each region's year, matched on region and year.
+        let partitioned = """
+        EVALUATE
+        VAR T = SUMMARIZECOLUMNS(Sales[Region], 'Date'[Year], "A", [Amt])
+        RETURN ADDCOLUMNS(T, "Row",
+            ROWNUMBER(T, ORDERBY([A], DESC), PARTITIONBY(Sales[Region]), MATCHBY(Sales[Region], 'Date'[Year])))
+        ORDER BY Sales[Region], 'Date'[Year]
+        """
+        XCTAssertEqual(try numbers(partitioned, name: "Row"), [3, 1, 2, 3, 2, 1])
+        // Matching on the region alone finds three rows per region: no single current row.
+        let ambiguous = """
+        EVALUATE
+        VAR T = SUMMARIZECOLUMNS(Sales[Region], 'Date'[Year], "A", [Amt])
+        RETURN ADDCOLUMNS(T, "Row", ROWNUMBER(T, ORDERBY([A], DESC), MATCHBY(Sales[Region])))
+        """
+        XCTAssertThrowsError(try table(ambiguous))
+        // A MATCHBY column needs a value in the context and must belong to the relation.
+        XCTAssertThrowsError(try scalar("ROWNUMBER(ALL('Date'[Year]), ORDERBY('Date'[Year]), MATCHBY('Date'[Year]))"))
+        XCTAssertThrowsError(try table("EVALUATE ADDCOLUMNS(VALUES('Date'[Year]), \"R\", ROWNUMBER(ALL('Date'[Year]), ORDERBY('Date'[Year]), MATCHBY(Sales[Region])))"))
+    }
+
     func testHelpersOutsideWindowFunctionsAreRejected() throws {
         XCTAssertThrowsError(try scalar("ORDERBY('Date'[Year])"))
         XCTAssertThrowsError(try scalar("COUNTROWS(PARTITIONBY('Date'[Year]))"))

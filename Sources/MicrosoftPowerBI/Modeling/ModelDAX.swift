@@ -48,7 +48,13 @@ enum ModelDAX {
             agg = col?.summarizeBy ?? .none
             if agg == .none { agg = (col?.dataType.isNumeric ?? false) ? .sum : .count }
         }
-        return "\(agg.daxFunction ?? "SUM")(\(column(f.table, f.name)))"
+        let reference = column(f.table, f.name)
+        switch agg {
+        // First and Last take the column and an expression that marks a row as not blank.
+        case .first: return "FIRSTNONBLANK(\(reference), 1)"
+        case .last: return "LASTNONBLANK(\(reference), 1)"
+        default: return "\(agg.daxFunction ?? "SUM")(\(reference))"
+        }
     }
 
     /// Splits formula-bar text `Name = expression` at the first `=`.
