@@ -53,6 +53,23 @@ struct FormatPropertyRow: View {
                     fallback: shared?.stringValue ?? FormatCatalog.defaultColor(of: property, theme: theme))
                 if isMixed { mixedTag }
             }
+        case .field:
+            let captions = FormatCatalog.fieldCaptions(in: specs)
+            let chosen = shared?.stringValue ?? ""
+            Picker(property.label, selection: Binding(
+                get: { isMixed ? Self.mixedOption : chosen },
+                set: { choice in
+                    guard choice != Self.mixedOption else { return }
+                    write(property, choice.isEmpty ? nil : .string(choice))
+                })) {
+                if isMixed { Text("Mixed").tag(Self.mixedOption) }
+                Text("None").tag("")
+                // A field that has since left the visual stays visible so it can be cleared.
+                if !chosen.isEmpty, !captions.contains(chosen) { Text("\(chosen) (not in this visual)").tag(chosen) }
+                ForEach(captions, id: \.self) { Text($0).tag($0) }
+            }
+            .labelsHidden()
+            .help(property.label)
         case .options(let options):
             // An option list with no fixed default lets the renderer decide: "Automatic" removes the override.
             let automatic = property.defaultValue == .null

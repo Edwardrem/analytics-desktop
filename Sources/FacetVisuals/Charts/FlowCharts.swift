@@ -56,6 +56,11 @@ enum FlowCharts {
                 + SharedFormatCards.dataLabels(show: true) + SharedFormatCards.accessibility()
         case .ribbon:
             return SharedFormatCards.legend()
+        case .wordCloud:
+            let c = FormatCard("wordCloud", "Words")
+            return [c.number("maxWords", "Maximum words (0 = all)", 0, 0...Double(WordCloudChart.maxWords)),
+                    c.number("minFontSize", "Smallest font size", 10, WordCloudChart.fontSizes),
+                    c.number("maxFontSize", "Largest font size", 44, WordCloudChart.fontSizes)]
         case .sankey:
             // Node names are drawn at the data-label size; there is nothing to switch off.
             return SharedFormatCards.dataLabels(show: true, values: false, toggle: false)

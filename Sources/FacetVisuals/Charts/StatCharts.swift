@@ -55,7 +55,11 @@ enum StatCharts {
                     c.color("trackColor", "Track colour", .gridline)]
                 + SharedFormatCards.dataLabels(show: true, values: false, toggle: false)
         case .scatter:
-            return SharedFormatCards.statAxes() + SharedFormatCards.plotArea()
+            let c = FormatCard("markers", "Markers")
+            return SharedFormatCards.statAxes()
+                + [c.number("size", "Marker size", 3.5, ScatterChart.markerSizes),
+                   c.number("transparency", "Transparency %", 20, 0...100)]
+                + SharedFormatCards.plotArea()
         default:
             return []
         }

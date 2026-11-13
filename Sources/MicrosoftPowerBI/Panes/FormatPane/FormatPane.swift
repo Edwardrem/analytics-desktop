@@ -44,7 +44,7 @@ struct FormatPane: View {
     // MARK: - Visuals are selected
 
     private func visualPane(_ specs: [VisualSpec]) -> some View {
-        let all = FormatCatalog.cards(for: specs.map(\.type), tab: visualTab)
+        let all = FormatCatalog.cards(for: specs, tab: visualTab)
         let list = FormatCatalog.filter(all, query: query)
         let ids = specs.map(\.id)
         return VStack(spacing: 0) {
@@ -111,6 +111,15 @@ struct FormatPane: View {
             if let spec = specs.first {
                 FormatPositionRows(properties: card.properties, frame: store.frame(of: spec)) { key, value in
                     writePosition(spec.id, key, value)
+                }
+            }
+        case .tooltip:
+            if let spec = specs.first {
+                FormatTooltipRows(spec: spec) { page in
+                    store.updateVisuals([spec.id], name: "Tooltip Page") { $0.tooltipPageID = page }
+                }
+                resetButton(card, enabled: spec.tooltipPageID != nil) {
+                    store.updateVisuals([spec.id], name: "Reset Tooltip") { $0.tooltipPageID = nil }
                 }
             }
         case .presets:

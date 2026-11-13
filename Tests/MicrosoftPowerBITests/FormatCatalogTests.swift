@@ -12,7 +12,6 @@ final class FormatCatalogTests: XCTestCase {
     /// Types that yield no Visual-tab cards, with the reason each has none.
     /// - Key influencers, decomposition tree, narrative and Q&A are app-supplied through
     ///   `VisualContext.extensionView` and honour no format keys.
-    /// - Word cloud draws container chrome only.
     /// - Script visuals render the app's script output (`spec.imageData`); paginated report, Power
     ///   Apps and metrics are embedded web views — none has format keys in the component catalog.
     ///   (Power automate does: the "Run flow" button label.)
@@ -21,7 +20,6 @@ final class FormatCatalogTests: XCTestCase {
         .decompositionTree: "app-supplied through VisualContext.extensionView and honours no format keys",
         .narrative: "app-supplied through VisualContext.extensionView and honours no format keys",
         .qna: "app-supplied through VisualContext.extensionView and honours no format keys",
-        .wordCloud: "the renderer draws container chrome only",
         .pythonVisual: "the script renders into spec.imageData; no format keys in the component catalog",
         .rVisual: "the script renders into spec.imageData; no format keys in the component catalog",
         .paginatedReport: "an embedded web view with no format keys in the component catalog",

@@ -8,6 +8,8 @@ public struct FormatProperty: Identifiable, Hashable, Sendable {
     public enum Kind: Hashable, Sendable {
         case bool, number, string, color
         case options([String])
+        /// The caption of one of the visual's own fields (empty = none).
+        case field
     }
 
     /// What a bool with no fixed default (`defaultValue == .null`) follows.
@@ -201,6 +203,10 @@ struct FormatCard {
     func color(_ key: String, _ l: String, _ theme: FormatProperty.ThemeColor) -> FormatProperty {
         FormatProperty(card: card, cardLabel: label, key: key, label: l, kind: .color, themeColor: theme)
     }
+    /// One of the visual's fields, chosen by caption.
+    func field(_ key: String, _ l: String) -> FormatProperty {
+        FormatProperty(card: card, cardLabel: label, key: key, label: l, kind: .field)
+    }
     /// `d == nil` means the renderer decides (the pane offers "Automatic").
     func options(_ key: String, _ l: String, _ o: [String], _ d: String?) -> FormatProperty {
         FormatProperty(card: card, cardLabel: label, key: key, label: l, kind: .options(o),
@@ -224,9 +230,10 @@ enum SharedFormatCards {
                 c.number("size", "Font size", nil, fontSizes)]
     }
 
-    /// Data labels. `position` is honoured by the cartesian charts only; `values` adds the
-    /// display units and decimals of the value text.
-    static func dataLabels(show: Bool, position: Bool = false, values: Bool = true, toggle: Bool = true) -> [FormatProperty] {
+    /// Data labels. `position` and `detail` (a field shown instead of the value) are honoured by
+    /// the cartesian charts only; `values` adds the display units and decimals of the value text.
+    static func dataLabels(show: Bool, position: Bool = false, values: Bool = true, toggle: Bool = true,
+                           detail: Bool = false) -> [FormatProperty] {
         let c = FormatCard("dataLabels", "Data labels")
         var out: [FormatProperty] = []
         if toggle { out.append(c.bool("show", "Show data labels", show)) }
@@ -235,6 +242,7 @@ enum SharedFormatCards {
             out += [c.options("displayUnits", "Display units", displayUnits, "auto"),
                     c.number("decimals", "Decimal places", nil, 0...10)]
         }
+        if detail { out.append(c.field("detailField", "Show field instead")) }
         out.append(c.number("size", "Font size", nil, fontSizes))
         if toggle { out.append(c.color("color", "Text colour", .foreground)) }
         return out

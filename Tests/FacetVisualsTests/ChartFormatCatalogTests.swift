@@ -9,9 +9,8 @@ final class ChartFormatCatalogTests: XCTestCase {
         ChartFormatCatalog.properties(for: type).first { $0.card == card && $0.key == key }
     }
 
-    func testEveryChartTypeExceptWordCloudHasProperties() {
-        // The word cloud renderer reads no format key (FlowRibbonSankey.swift, WordCloudChart).
-        for type in ChartVisuals.supportedTypes where type != .wordCloud {
+    func testEveryChartTypeHasProperties() {
+        for type in ChartVisuals.supportedTypes {
             XCTAssertFalse(ChartFormatCatalog.properties(for: type).isEmpty, "\(type.rawValue) has no format properties")
         }
         XCTAssertTrue(ChartFormatCatalog.properties(for: .table).isEmpty, "tables belong to the component catalog")
@@ -31,6 +30,7 @@ final class ChartFormatCatalogTests: XCTestCase {
                     XCTAssertNotNil(p.range, "\(type.rawValue) \(p.id) declares no range")
                     if let d = p.defaultValue.doubleValue, let r = p.range { XCTAssertTrue(r.contains(d), "\(type.rawValue) \(p.id) default is out of range") }
                 }
+                if p.kind == .field { XCTAssertEqual(p.defaultValue, .null, "\(type.rawValue) \(p.id): no field is chosen by default") }
                 if p.kind == .color { XCTAssertNotNil(p.themeColor, "\(type.rawValue) \(p.id) names no theme colour") }
                 if p.kind == .bool, p.defaultValue == .null { XCTAssertNotNil(p.automatic, "\(type.rawValue) \(p.id) is automatic without a rule") }
             }
@@ -65,6 +65,23 @@ final class ChartFormatCatalogTests: XCTestCase {
         // Radar markers default on (FlowFunnelRadar.swift:237); cartesian line markers off (CartesianLayout.swift:64).
         XCTAssertEqual(property(.radar, "lines", "showMarkers")?.defaultValue, .bool(true))
         XCTAssertEqual(property(.line, "lines", "showMarkers")?.defaultValue, .bool(false))
+    }
+
+    func testWordCloudAndScatterDefaultsKeepTheirOriginalLook() {
+        // Word sizes ran from 10 to 44 pt with no word limit; scatter points had radius 3.5 at 80% opacity.
+        XCTAssertEqual(property(.wordCloud, "wordCloud", "minFontSize")?.defaultValue, .number(10))
+        XCTAssertEqual(property(.wordCloud, "wordCloud", "maxFontSize")?.defaultValue, .number(44))
+        XCTAssertEqual(property(.wordCloud, "wordCloud", "maxWords")?.defaultValue, .number(0))
+        XCTAssertEqual(property(.scatter, "markers", "size")?.defaultValue, .number(3.5))
+        XCTAssertEqual(property(.scatter, "markers", "transparency")?.defaultValue, .number(20))
+    }
+
+    func testDetailFieldIsACartesianDataLabelOption() {
+        // CartesianOverlay.labelText reads dataLabels.detailField; no other chart does.
+        XCTAssertEqual(property(.clusteredColumn, "dataLabels", "detailField")?.kind, .field)
+        XCTAssertEqual(property(.line, "dataLabels", "detailField")?.kind, .field)
+        XCTAssertNil(property(.pie, "dataLabels", "detailField"))
+        XCTAssertNil(property(.histogram, "dataLabels", "detailField"))
     }
 
     func testLegendDefaultFollowsEachScaffold() {

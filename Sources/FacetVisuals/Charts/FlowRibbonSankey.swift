@@ -333,6 +333,9 @@ struct SankeyChart: View {
 /// Word cloud: one word per category, sized by its value, placed greedily around the centre.
 struct WordCloudChart: View {
     let env: FlowEnv
+    /// Bounds of the `wordCloud` format keys.
+    static let maxWords = 500
+    static let fontSizes: ClosedRange<Double> = 6...120
 
     private struct Word {
         let text: String
@@ -389,7 +392,12 @@ struct WordCloudChart: View {
         L.format = format
         L.total = items.reduce(0) { $0 + $1.value }
         let catCols = env.data.indices(.category)
-        let sorted = items.sorted { $0.value > $1.value }
+        // 0 words = no limit; the font range is ordered so a swapped pair still draws.
+        let limit = env.f.int("wordCloud", "maxWords", 0, in: 0...WordCloudChart.maxWords)
+        let ranked = items.sorted { $0.value > $1.value }
+        let sorted = limit > 0 ? Array(ranked.prefix(limit)) : ranked
+        let smallest = CGFloat(FormatNumber.clamped(env.f.double("wordCloud", "minFontSize", 10), to: WordCloudChart.fontSizes) ?? 10)
+        let largest = max(smallest, CGFloat(FormatNumber.clamped(env.f.double("wordCloud", "maxFontSize", 44), to: WordCloudChart.fontSizes) ?? 44))
         let maxValue = sorted.first?.value ?? 0
         let nonZero = maxValue > 0
         let bounds = CGRect(origin: .zero, size: size).insetBy(dx: 8, dy: 6)
@@ -397,7 +405,7 @@ struct WordCloudChart: View {
         let colors = env.colors
         for (i, w) in sorted.enumerated() {
             let t = nonZero ? (w.value / maxValue).squareRoot() : 0.4
-            var fontSize = max(10, min(44, 10 + t * 34))
+            var fontSize = max(smallest, min(largest, smallest + CGFloat(t) * (largest - smallest)))
             var text = w.text
             var rect: CGRect?
             for _ in 0..<3 {

@@ -5,10 +5,10 @@ import FacetVisuals
 /// Copying formatting between visuals: the format painter, Copy / Paste Formatting, and reset.
 enum FormatPainter {
     /// The format properties of `type` that are formatting rather than content. Text (titles,
-    /// labels, captions) belongs to the visual it describes, so it is never painted.
+    /// labels, captions) and field choices belong to the visual they describe, so they are never painted.
     static func paintable(_ type: VisualType) -> [String: FormatProperty] {
         let all = (FormatCatalog.visualCards(for: type) + FormatCatalog.generalCards(for: type))
-            .filter { $0.role == .format }.flatMap(\.properties).filter { $0.kind != .string }
+            .filter { $0.role == .format }.flatMap(\.properties).filter { $0.kind != .string && $0.kind != .field }
         return Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     }
 

@@ -146,6 +146,73 @@ final class FormatExtrasTests: XCTestCase {
         XCTAssertEqual(ConditionalFormatsSection.newRule(.title, for: spec).mode, .fieldValue)
     }
 
+    // MARK: - Per-field cards, tooltip, field choices
+
+    func testPerFieldCardsAreBuiltFromTheVisualsFields() {
+        var table = VisualSpec(type: .table, frame: frame)
+        table.wells[Well.values.rawValue] = [.column("Sales", "Region"), .column("Sales", "Logo"), .measure("Sales", "Amount")]
+        let cards = FormatCatalog.perFieldCards(for: table)
+        // TableFamily.perFieldCards: column widths and image columns (sparklines stay in the Build pane).
+        XCTAssertEqual(cards.map(\.card), ["columnWidths", "imageColumns"])
+        XCTAssertEqual(cards.first?.properties.map(\.key), ["Region", "Logo", "Amount"])
+        XCTAssertEqual(cards.first?.properties.first?.kind, .number)
+        // Only columns can hold image URLs, not aggregates.
+        XCTAssertEqual(cards.last?.properties.map(\.key), ["Region", "Logo"])
+        XCTAssertEqual(cards.last?.properties.first?.defaultValue, .bool(false))
+        // They sit after the format cards and before conditional formatting, for one visual only.
+        let all = FormatCatalog.cards(for: [table], tab: .visual)
+        XCTAssertEqual(Array(all.suffix(3)).map(\.card), ["columnWidths", "imageColumns", "conditionalFormatting"])
+        XCTAssertFalse(FormatCatalog.cards(for: [table, table], tab: .visual).contains { $0.card == "columnWidths" })
+        XCTAssertFalse(FormatCatalog.cards(for: [table], tab: .general).contains { $0.card == "columnWidths" })
+        // A width is at least 28 pt (TblTableSource.measureColumns).
+        if let width = cards.first?.properties.first {
+            XCTAssertEqual(FormatCatalog.stored(.number(5), for: width), .number(28))
+        }
+
+        var matrix = VisualSpec(type: .matrix, frame: frame)
+        matrix.wells[Well.rows.rawValue] = [.column("Sales", "Region")]
+        matrix.wells[Well.columns.rawValue] = [.column("Sales", "Year")]
+        matrix.wells[Well.values.rawValue] = [.measure("Sales", "Amount")]
+        let mx = FormatCatalog.perFieldCards(for: matrix)
+        XCTAssertEqual(mx.map(\.card), ["columnWidths", "totals"])
+        XCTAssertEqual(mx.first?.properties.map(\.key), ["Region", "Amount"])
+        XCTAssertEqual(mx.last?.properties.map(\.key), ["Amount"])
+        // MxSource falls back to "sum".
+        XCTAssertEqual(mx.last?.properties.first?.defaultValue, .string("sum"))
+        // No fields, no cards; other types have none.
+        XCTAssertTrue(FormatCatalog.perFieldCards(for: VisualSpec(type: .table, frame: frame)).isEmpty)
+        XCTAssertTrue(FormatCatalog.perFieldCards(for: VisualSpec(type: .clusteredColumn, frame: frame)).isEmpty)
+    }
+
+    func testTooltipCardIsForDataVisuals() {
+        let chart = FormatCatalog.generalCards(for: .clusteredColumn)
+        XCTAssertEqual(Array(chart.suffix(2)).map(\.role), [.tooltip, .altText])
+        XCTAssertFalse(FormatCatalog.generalCards(for: .textBox).contains { $0.role == .tooltip })
+        guard let card = chart.first(where: { $0.role == .tooltip }) else { return XCTFail("no tooltip card") }
+        var spec = VisualSpec(type: .clusteredColumn, frame: frame)
+        XCTAssertFalse(FormatCatalog.isOverridden(card, in: spec))
+        spec.tooltipPageID = UUID()
+        XCTAssertTrue(FormatCatalog.isOverridden(card, in: spec))
+        XCTAssertEqual(FormatCatalog.filter(chart, query: "tooltip").map(\.card), ["tooltip"])
+    }
+
+    func testFieldChoicesAreTheFieldsEverySelectedVisualHas() {
+        var a = VisualSpec(type: .clusteredColumn, frame: frame), b = VisualSpec(type: .line, frame: frame)
+        a.wells[Well.category.rawValue] = [.column("Sales", "Region")]
+        a.wells[Well.values.rawValue] = [.measure("Sales", "Amount"), .measure("Sales", "Cost")]
+        b.wells[Well.category.rawValue] = [.column("Sales", "Month")]
+        b.wells[Well.values.rawValue] = [.measure("Sales", "Amount")]
+        XCTAssertEqual(FormatCatalog.fieldCaptions(in: [a]), ["Region", "Amount", "Cost"])
+        XCTAssertEqual(FormatCatalog.fieldCaptions(in: [a, b]), ["Amount"])
+        guard let detail = FormatCatalog.visualCards(for: .clusteredColumn).flatMap(\.properties).first(where: { $0.id == "dataLabels.detailField" })
+        else { return XCTFail("no dataLabels.detailField") }
+        XCTAssertEqual(FormatCatalog.stored(.string("Cost"), for: detail), .string("Cost"))
+        XCTAssertNil(FormatCatalog.stored(.string(""), for: detail))
+        // A field choice is content, like text: the painter leaves it alone.
+        a.setFmt("dataLabels", "detailField", .string("Cost"))
+        XCTAssertNil(FormatPainter.painted(b, from: a)["dataLabels"])
+    }
+
     // MARK: - On-object elements
 
     func testOnObjectElementsListCardsWithTheirSwitches() {

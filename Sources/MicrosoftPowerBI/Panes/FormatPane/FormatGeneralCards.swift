@@ -48,6 +48,31 @@ struct FormatPositionRows: View {
     }
 }
 
+/// The rows of the General tab's Tooltip card: the report page shown when readers hover over the visual.
+struct FormatTooltipRows: View {
+    @EnvironmentObject var store: DocumentStore
+    let spec: VisualSpec
+    let choose: (UUID?) -> Void
+
+    var body: some View {
+        let pages = store.report.pages.filter(\.isTooltipPage)
+        if pages.isEmpty {
+            PaneNote("Design a small page to show when readers hover over this visual.")
+            Button("New tooltip page") { AppCommands.run("insert.tooltipPage", store) }.controlSize(.small)
+        } else {
+            PropertyRow("Tooltip page") {
+                Picker("Tooltip page", selection: Binding(get: { spec.tooltipPageID }, set: choose)) {
+                    Text("Default tooltip").tag(UUID?.none)
+                    ForEach(pages) { p in Text(p.name).tag(UUID?.some(p.id)) }
+                }
+                .labelsHidden()
+                .help("The page shown as this visual's tooltip")
+            }
+            .controlSize(.small)
+        }
+    }
+}
+
 /// The rows of the General tab's Alt text card: read by screen readers instead of the visual's name.
 struct FormatAltTextRows: View {
     let altText: String

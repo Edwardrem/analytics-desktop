@@ -12,6 +12,8 @@ struct FormatCardModel: Identifiable, Hashable {
         case position
         /// The visual's alt text.
         case altText
+        /// The report page shown as this visual's tooltip.
+        case tooltip
         /// The style presets the visual type offers.
         case presets
         /// Conditional formatting (fx): one row per target the visual type supports.
@@ -88,6 +90,8 @@ enum FormatCatalog {
                          title.bool("bold", "Bold", true),
                          title.color("color", "Text colour", .foreground)]
         if element { titleRows.removeAll { $0.key == "bold" || $0.key == "alignment" } }
+        // Page elements show no data, so they have no tooltip to replace.
+        let closing = element ? [altTextCard] : [tooltipCard, altTextCard]
         return [positionCard] + group(
             titleRows + [
                 subtitle.bool("show", "Show subtitle", false),
@@ -105,7 +109,7 @@ enum FormatCatalog {
                 border.number("radius", "Corner radius", nil, 0...200),
                 FormatCardBuilder("shadow", "Shadow").bool("show", "Show shadow", false),
                 FormatCardBuilder("padding", "Padding").number("all", "All sides", nil, 0...200),
-            ]) + [altTextCard]
+            ]) + closing
     }
 
     /// Position, size and rotation. Not format keys: the pane writes them to the frame.
@@ -121,6 +125,56 @@ enum FormatCatalog {
     static let altTextCard = FormatCardModel(card: "altText", label: "Alt text", properties: [
         FormatCardBuilder("altText", "Alt text").string("text", "Alt text description", ""),
     ], role: .altText)
+
+    static let tooltipCard = FormatCardModel(card: "tooltip", label: "Tooltip", properties: [
+        FormatCardBuilder("tooltip", "Tooltip").string("page", "Tooltip page"),
+    ], role: .tooltip)
+
+    /// Cards whose keys are the visual's own fields rather than fixed properties (table and
+    /// matrix): a fixed width per column, image columns, and the subtotal aggregate per value.
+    /// Keys are field captions, which is what the table renderers look up. Sparklines are set up
+    /// from the Build pane (they need an axis field as well as a type).
+    static func perFieldCards(for spec: VisualSpec) -> [FormatCardModel] {
+        func captions(_ fields: [FieldRef]) -> [String] {
+            var seen: Set<String> = []
+            return fields.filter { !$0.isHidden }.map(\.caption).filter { !$0.isEmpty && seen.insert($0).inserted }
+        }
+        return ComponentStylePresets.perFieldCards(for: spec.type).compactMap { entry in
+            let c = FormatCardBuilder(entry.card, entry.label)
+            let rows: [FormatProperty]
+            switch entry.card {
+            case "columnWidths":
+                let fields = spec.type == .matrix ? spec.fields(.rows) + spec.fields(.values) : spec.allFields
+                rows = captions(fields).map { c.number($0, $0, nil, 28...2_000) }
+            case "imageColumns":
+                rows = captions(spec.allFields.filter { !$0.isAggregate }).map { c.bool($0, $0, false) }
+            case "totals":
+                guard case .enumeration(let options) = entry.kind else { return nil }
+                rows = captions(spec.fields(.values)).map { c.options($0, $0, options, "sum") }
+            default:
+                return nil
+            }
+            return rows.isEmpty ? nil : FormatCardModel(card: entry.card, label: entry.label, properties: rows)
+        }
+    }
+
+    /// Cards for the selected visuals: the cards of their types, plus, for a single table or
+    /// matrix, the per-field cards built from its fields.
+    static func cards(for specs: [VisualSpec], tab: Tab) -> [FormatCardModel] {
+        var list = cards(for: specs.map(\.type), tab: tab)
+        guard tab == .visual, specs.count == 1, let spec = specs.first else { return list }
+        let at = list.firstIndex { $0.role == .conditional } ?? list.endIndex
+        list.insert(contentsOf: perFieldCards(for: spec), at: at)
+        return list
+    }
+
+    /// Field captions every one of `specs` has, in the first visual's order (for field pickers).
+    static func fieldCaptions(in specs: [VisualSpec]) -> [String] {
+        guard let first = specs.first else { return [] }
+        let others = specs.dropFirst().map { Set($0.allFields.map(\.caption)) }
+        var seen: Set<String> = []
+        return first.allFields.map(\.caption).filter { c in !c.isEmpty && seen.insert(c).inserted && others.allSatisfy { $0.contains(c) } }
+    }
 
     static func cards(for type: VisualType, tab: Tab) -> [FormatCardModel] {
         tab == .visual ? visualCards(for: type) : generalCards(for: type)
@@ -227,6 +281,7 @@ enum FormatCatalog {
         switch card.role {
         case .format: return card.resetKeys.contains { spec.fmt(card.card, $0) != nil }
         case .altText: return !spec.altText.isEmpty
+        case .tooltip: return spec.tooltipPageID != nil
         case .position, .presets, .conditional: return false
         }
     }
@@ -298,7 +353,7 @@ enum FormatCatalog {
         switch (property.kind, value) {
         case (.bool, .bool): return value
         case (.number, .number(let d)): return FormatNumber.clamped(d, to: property.bounds).map(JSONValue.number)
-        case (.string, .string(let s)), (.color, .string(let s)): return s.isEmpty ? nil : value
+        case (.string, .string(let s)), (.color, .string(let s)), (.field, .string(let s)): return s.isEmpty ? nil : value
         case (.options(let options), .string(let s)): return options.contains(s) ? value : nil
         default: return nil
         }

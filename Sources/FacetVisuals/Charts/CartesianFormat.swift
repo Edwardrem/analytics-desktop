@@ -71,7 +71,7 @@ extension CartesianOptions {
                     lines.number("markerSize", "Marker size", 5, 1...60),
                     lines.options("markerShape", "Marker shape", ["auto"] + MarkerShape.cycle.map(\.rawValue), "auto")]
         }
-        out += SharedFormatCards.dataLabels(show: false, position: true)
+        out += SharedFormatCards.dataLabels(show: false, position: true, detail: true)
         if kind.drawsBars {
             let totals = FormatCard("totalLabels", "Total labels")
             out += [totals.bool("show", "Show total labels", false),
