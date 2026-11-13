@@ -294,6 +294,66 @@ final class TMDLTests: XCTestCase {
         XCTAssertNil(TMDLObjectRef(parsing: "widget:x"))
     }
 
+    func testObjectRefDescriptionRoundTrips() {
+        let refs: [TMDLObjectRef] = [.model, .modelProperties, .table("Sales"), .column(table: "Sales", name: "Amount"),
+                                     .measure(table: "Sales", name: "Total Sales"), .hierarchy(table: "Customer", name: "Geography"),
+                                     .calculationGroup("Time"), .relationship(UUID()), .relationships, .role("Sales West"),
+                                     .perspective("Executive"), .culture("fr-FR"), .function("AddTax"), .expression("BasePath")]
+        for ref in refs {
+            XCTAssertEqual(TMDLObjectRef(parsing: ref.description), ref, "\(ref.description) didn't round-trip")
+        }
+        XCTAssertEqual(TMDLObjectRef(parsing: "measure:Sales[Total Sales]")?.description, "measure:Sales[Total Sales]")
+    }
+
+    func testObjectRefAwkwardNamesRoundTrip() {
+        // Written form: quoted only when needed, with '' for a quote inside a quoted name.
+        XCTAssertEqual(TMDLObjectRef.table("Sales [2024]").description, "table:'Sales [2024]'")
+        XCTAssertEqual(TMDLObjectRef.measure(table: "Sales [2024]", name: "Total [All]").description,
+                       "measure:'Sales [2024]'['Total [All]']")
+        XCTAssertEqual(TMDLObjectRef.table("'Quoted").description, "table:'''Quoted'")
+        XCTAssertEqual(TMDLObjectRef.table(" Padded ").description, "table:' Padded '")
+        XCTAssertEqual(TMDLObjectRef.column(table: "It's", name: "Don't").description, "column:It's[Don't]")
+
+        let awkward: [TMDLObjectRef] = [
+            .table("Sales [2024]"), .table(" Padded "), .table("'Quoted"), .table("'Quoted'"), .table("URL: home"),
+            .table("a]b"), .table("It's"), .table("Tab\tEnd\t"),
+            .column(table: "Sales [2024]", name: "Amount"),
+            .column(table: "'Quoted", name: "It's = odd"),
+            .column(table: "It's", name: "Don't"),
+            .measure(table: "Sales [2024]", name: "Total [All]"),
+            .measure(table: "URL: home", name: " A[b]c "),
+            .measure(table: "Sales", name: "'x'"),
+            .measure(table: " T ", name: "]"),
+            .hierarchy(table: "Geo [old]", name: "'H"),
+            .calculationGroup("Time [Calc]"), .role(" West "), .perspective("'P'"), .culture("[x]"),
+            .function("f[1]"), .expression("'Base Path'"),
+        ]
+        for ref in awkward {
+            XCTAssertEqual(TMDLObjectRef(parsing: ref.description), ref, "\(ref.description) didn't round-trip")
+        }
+        // The plain forms keep parsing, with spaces around the argument ignored.
+        XCTAssertEqual(TMDLObjectRef(parsing: "table: Sales "), .table("Sales"))
+        XCTAssertEqual(TMDLObjectRef(parsing: "table:'My Table'"), .table("My Table"))
+        XCTAssertEqual(TMDLObjectRef(parsing: "column: 'My Table'[Col]"), .column(table: "My Table", name: "Col"))
+        XCTAssertNil(TMDLObjectRef(parsing: "table:"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:Sales"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:[Total]"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:Sales[]"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:Sales[Total"))
+    }
+
+    func testSharedExpressionsExcludesTablePartitions() {
+        let (model, queries) = Fixtures.richModel()
+        let shared = TMDL.sharedExpressions(model: model, queries: queries)
+        // Sales and Customer Source are loaded as table partitions; BasePath and fnClean are shared.
+        XCTAssertEqual(shared.map(\.name), ["BasePath", "fnClean"])
+        // Every shared expression scripts.
+        for q in shared {
+            XCTAssertNoThrow(try TMDL.script(for: .expression(q.name), in: model, queries: queries))
+        }
+        XCTAssertThrowsError(try TMDL.script(for: .expression("Nope"), in: model, queries: queries))
+    }
+
     func testTextDiff() {
         let old = (1...20).map { "line \($0)" }.joined(separator: "\n")
         var lines = (1...20).map { "line \($0)" }
