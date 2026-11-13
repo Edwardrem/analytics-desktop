@@ -7,11 +7,12 @@ the Applied Steps editor and the UI transforms. Depends only on FacetCore; links
 
 | Type | Use |
 | --- | --- |
-| `QueryEngine(queries:environment:)` | `evaluate`, `evaluatePreview` (cell errors, structured cells, truncation), `evaluateValue`, `evaluateExpression`, `refreshAll` (dependency order, parallel, progress), `stepFolding`, `nativeQuery(for:upToStep:)`, `directQuery(_:)`, `diagnostics`, `nativeQueriesSent`, `traceMessages`, `dependencyGraph()` |
+| `QueryEngine(queries:environment:)` | `evaluate`, `evaluatePreview` (cell errors, structured cells, truncation), `evaluateValue`, `evaluateExpression`, `refreshAll` (dependency order, parallel, progress), `stepFolding`, `nativeQuery(for:upToStep:)`, `directQuery(_:)`, `diagnostics`, `nativeQueriesSent`, `traceMessages`, `dependencyGraph()`, `profile(_:upToStep:rowLimit:)` |
 | `QueryEnvironment` | base directory for relative paths, credentials, privacy levels + firewall switch, native query approval, script switch and interpreter paths, culture, clock, time zone, `maxSourceBytes` |
 | `MScript` | `steps(of:)`, `appending(_:to:)`, `insertingStep`, `renamingStep`, `deletingStep`, `movingStep`, `replacingStepExpression`, `truncating`, `validate`, `format`, `referencedIdentifiers`, `duplicateQuery`, `referenceQuery`, `parameterScript`, `toFunction` |
 | `Transform` | one case per Power Query Editor command; `stepName` and `expression(previous:)` give the step; `Transform.detectTypes(in:)` is "Detect data type" |
 | `ColumnFromExamples.infer(table:examples:columns:)` | the M expression that reproduces typed examples |
+| `ColumnProfiler.profile(_:)` → `[ColumnProfile]` | column quality (valid / error / empty), distribution (distinct, unique, value histogram) and statistics for a `QueryPreview` or `DataTable` |
 | `MInterpreter` | evaluates M text directly (`evaluate(_:)`), without queries |
 
 ## Library areas (`Library/`)
@@ -32,9 +33,11 @@ Binary, Lines, Csv), `LibJson`, `LibXml`, `LibExcel` (+ `ZipReader`), `LibSQL` (
 | `Excel.Workbook` | .xlsx/.xlsm: sheets, tables, defined names, shared/inline strings, dates (1900 and 1904), booleans, error cells |
 | `Sqlite.Database`, `Value.NativeQuery` | tables and views; read-only; parameters; folding (below) |
 | `Web.Contents` | http/https with `Query`, `Headers`, `RelativePath`, `Timeout`, `Content`, `ManualStatusHandling` and stored credentials |
+| `Web.Page` | tables of an HTML document (text or binary) via the system tidy parser: `Caption`, `Source`, `ClassName`, `Id`, `Data`; header rows, `colspan`/`rowspan` |
+| `OData.Feed` | JSON only (v4, or v2/v3 answering `Accept: application/json`): service document → `Name`/`Data` navigation table; entity sets follow `@odata.nextLink` / `__next` |
 | `Python.Execute`, `R.Execute` | need `allowScripts`; tables travel as CSV; Python needs pandas |
 
-Every other Get Data connector (SQL Server, PostgreSQL, MySQL, Oracle, ODBC, OData, SharePoint, Azure, Fabric, Parquet,
+Every other Get Data connector (SQL Server, PostgreSQL, MySQL, Oracle, ODBC, SharePoint, Azure, Fabric, Parquet,
 PDF, …) and the `AI.*` functions are registered only to fail with a `DataSource.Error` that names the connector.
 
 ## Query folding (SQLite)

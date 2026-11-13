@@ -64,7 +64,7 @@ extension MLibrary {
             return .text(c.percentEncodedQuery ?? "")
         }
         let unavailable: [(String, String)] = [
-            ("Web.Page", "HTML page tables"), ("Web.BrowserContents", "HTML page tables"), ("OData.Feed", "OData feed"),
+            ("Web.BrowserContents", "browser-rendered page"),
             ("SharePoint.Files", "SharePoint folder"), ("SharePoint.Contents", "SharePoint folder"), ("SharePoint.Tables", "SharePoint list"),
             ("AzureStorage.Blobs", "Azure Blob Storage"), ("AzureStorage.DataLake", "Azure Data Lake Storage"),
             ("PowerBI.Dataflows", "Power BI dataflows"), ("PowerPlatform.Dataflows", "Power Platform dataflows"),
