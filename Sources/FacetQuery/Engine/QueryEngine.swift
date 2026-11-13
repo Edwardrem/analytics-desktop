@@ -19,6 +19,7 @@ public final class QueryEngine: @unchecked Sendable {
     private var _diagnostics: [QueryDiagnosticEvent] = []
     private var _nativeQueries: [String] = []
     private var _trace: [String] = []
+    private var _sources: [QueryDataSource] = []
 
     public init(queries: [QueryDefinition], environment: QueryEnvironment) {
         self.queries = queries; self.environment = environment
@@ -33,6 +34,9 @@ public final class QueryEngine: @unchecked Sendable {
     public var nativeQueriesSent: [String] { lock.lock(); defer { lock.unlock() }; return _nativeQueries }
     /// Messages from `Diagnostics.Trace` during the most recent evaluation.
     public var traceMessages: [String] { lock.lock(); defer { lock.unlock() }; return _trace }
+
+    /// Data sources read during the most recent evaluation (file paths, database files, web hosts), without duplicates.
+    public var dataSourcesAccessed: [QueryDataSource] { lock.lock(); defer { lock.unlock() }; return _sources }
 
     // MARK: Dependencies
 
@@ -179,6 +183,8 @@ public final class QueryEngine: @unchecked Sendable {
 
     private func publish(_ session: QuerySession, append: Bool = false) {
         lock.lock(); defer { lock.unlock() }
+        let sources = session.interpreter.accessedSources.map { QueryDataSource(kind: $0.kind, location: $0.location) }
+        _sources = (append ? _sources : []) + sources.filter { s in !(append && _sources.contains(s)) }
         if append {
             _diagnostics.append(contentsOf: session.events)
             _nativeQueries.append(contentsOf: session.interpreter.nativeQueries)
@@ -189,7 +195,7 @@ public final class QueryEngine: @unchecked Sendable {
             _trace = session.interpreter.trace
         }
     }
-    func resetDiagnostics() { lock.lock(); _diagnostics = []; _nativeQueries = []; _trace = []; lock.unlock() }
+    func resetDiagnostics() { lock.lock(); _diagnostics = []; _nativeQueries = []; _trace = []; _sources = []; lock.unlock() }
 
     /// Run blocking evaluation work on a dedicated thread with a 512 MB stack (deep M recursion).
     func onWorker<T>(_ body: @escaping () throws -> T) async throws -> T {

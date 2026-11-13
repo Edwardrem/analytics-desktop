@@ -15,6 +15,13 @@ public struct QueryProgress: Sendable {
     public var total: Int
 }
 
+/// A data source an evaluation read: `kind` is "File", "Folder", "SQLite", "Web" or "OData"; `location` a path or `scheme://host`.
+public struct QueryDataSource: Hashable, Sendable {
+    public var kind: String
+    public var location: String
+    public init(kind: String, location: String) { self.kind = kind; self.location = location }
+}
+
 /// Whether a step is pushed down to the data source.
 public enum FoldingIndicator: String, Sendable {
     /// The step is evaluated by the source (a native query exists).

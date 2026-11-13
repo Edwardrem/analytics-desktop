@@ -32,6 +32,9 @@ public struct NativeQueryRequest: Sendable {
     public var query: String
     public var sourceKind: String
     public var sourceLocation: String
+    public init(query: String, sourceKind: String, sourceLocation: String) {
+        self.query = query; self.sourceKind = sourceKind; self.sourceLocation = sourceLocation
+    }
 }
 
 /// Everything the engine needs from its host: file base, credentials, privacy and security settings, culture, clock.
