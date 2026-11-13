@@ -5,7 +5,7 @@ import FacetCore
 import FacetInterop
 
 /// Session state of the TMDL view for one document: the script tabs, the object-tree selection and
-/// the last error. Script text is scratch state — only applying a script touches the document, and
+/// each tab's last error. Script text is scratch state — only applying a script touches the document, and
 /// that goes through `DocumentStore.mutate` so it is one undo step.
 @MainActor
 final class TMDLViewSession: ObservableObject {
@@ -20,8 +20,9 @@ final class TMDLViewSession: ObservableObject {
     @Published var activeTabID: UUID?
     /// The object selected in the tree; the Script command acts on it.
     @Published var selectedRef: TMDLObjectRef?
-    /// The last scripting, parsing or apply error, shown under the editor and underlined there.
-    @Published private(set) var error: TMDLError?
+    /// The last scripting, parsing or apply error of each tab, by tab id. A tab's error is shown
+    /// under the editor and underlined there only while that tab is active.
+    @Published private(set) var errors: [UUID: TMDLError] = [:]
     /// Highlight for the editor while a tree row is dragged over it.
     @Published var dropTargeted = false
 
@@ -40,6 +41,10 @@ final class TMDLViewSession: ObservableObject {
 
     var activeTab: ScriptTab? { tabs.first { $0.id == activeTabID } ?? tabs.first }
     var activeText: String { activeTab?.text ?? "" }
+    /// The active tab's error.
+    var error: TMDLError? { activeTab.flatMap { errors[$0.id] } }
+    /// True when the active tab has something to validate or apply.
+    var hasScript: Bool { !activeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     @discardableResult
     func addTab(name: String? = nil, text: String = "") -> UUID? {
@@ -64,6 +69,7 @@ final class TMDLViewSession: ObservableObject {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let wasActive = activeTab?.id == id
         tabs.remove(at: index)
+        errors[id] = nil
         if wasActive { activeTabID = tabs[safe: min(index, max(0, tabs.count - 1))]?.id }
     }
 
@@ -71,35 +77,34 @@ final class TMDLViewSession: ObservableObject {
         guard let i = tabs.firstIndex(where: { $0.id == id }), tabs[i].text != text else { return }
         tabs[i].text = text
         // The error line no longer lines up once the text changes.
-        if error != nil { error = nil }
+        if errors[id] != nil { errors[id] = nil }
     }
 
     // MARK: Scripting
 
-    /// Scripts one object into the active tab (or a new one): appends its TMDL, blank-line separated.
-    func script(_ ref: TMDLObjectRef) {
+    /// Scripts one object. Into the active tab by default (appended, blank-line separated); into a
+    /// tab of its own when `inNewTab` is set or there is no tab yet.
+    func script(_ ref: TMDLObjectRef, inNewTab: Bool = false) {
         guard let store = storeRef else { return }
         do {
             let text = try TMDL.script(for: ref, in: store.model, queries: store.doc.queries)
-            error = nil
-            if let id = activeTab?.id, let i = tabs.firstIndex(where: { $0.id == id }) {
+            if !inNewTab, let id = activeTab?.id, let i = tabs.firstIndex(where: { $0.id == id }) {
                 let trimmed = tabs[i].text.trimmingCharacters(in: CharacterSet(charactersIn: "\n"))
                 tabs[i].text = trimmed.isEmpty ? text : trimmed + "\n\n" + text
+                errors[id] = nil
             } else {
-                addTab(name: TMDLViewSession.tabName(for: ref), text: text)
+                addTab(name: ref.tabName, text: text)
             }
-            store.status = StatusMessage(kind: .info, text: "Scripted \(TMDLViewSession.objectName(ref)).")
-        } catch let e as TMDLError {
-            fail(e)
+            store.status = StatusMessage(kind: .info, text: "Scripted \(ref.displayName).")
         } catch {
-            fail(TMDLError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+            fail(TMDLViewSession.tmdlError(error))
         }
     }
 
-    /// Scripts the object selected in the tree, or one another pane set in `TMDLScriptingContext`.
+    /// Scripts the object selected in the tree.
     func scriptSelection() {
-        guard let ref = selectedRef ?? TMDLScriptingContext.take(storeRef) else {
-            storeRef?.status = StatusMessage(kind: .info, text: "Select an object in the tree first.")
+        guard let ref = selectedRef else {
+            storeRef?.status = StatusMessage(kind: .info, text: "Select an object in the model tree first.")
             return
         }
         script(ref)
@@ -110,26 +115,24 @@ final class TMDLViewSession: ObservableObject {
         guard let store = storeRef else { return }
         do {
             let text = try TMDL.script(for: .model, in: store.model, queries: store.doc.queries)
-            error = nil
             if let id = activeTab?.id, let i = tabs.firstIndex(where: { $0.id == id }) {
                 tabs[i].text = text
+                errors[id] = nil
             } else {
                 addTab(name: "Model", text: text)
             }
-        } catch let e as TMDLError {
-            fail(e)
         } catch {
-            fail(TMDLError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+            fail(TMDLViewSession.tmdlError(error))
         }
     }
 
-    /// Loads the sample model script when the view first appears.
+    /// Opens a first tab with the whole model's script when the view first appears.
     func ensureTabs() {
         guard tabs.isEmpty else {
             if activeTabID == nil { activeTabID = tabs.first?.id }
             return
         }
-        guard let store = storeRef, TMDLViewSession.hasObjects(store.model) else { return }
+        guard let store = storeRef, TMDLViewSession.hasContent(model: store.model, queries: store.doc.queries) else { return }
         if let text = try? TMDL.script(for: .model, in: store.model, queries: store.doc.queries) {
             addTab(name: "Model", text: text)
         } else {
@@ -139,27 +142,31 @@ final class TMDLViewSession: ObservableObject {
 
     // MARK: Errors
 
-    private func fail(_ e: TMDLError) {
-        error = e
+    /// Records an error against a tab (the active one by default) and shows it in the status bar.
+    func report(_ e: TMDLError, tab: UUID? = nil) {
+        if let id = tab ?? activeTab?.id, tabs.contains(where: { $0.id == id }) { errors[id] = e }
         storeRef?.status = StatusMessage(kind: .error, text: e.errorDescription ?? e.message)
     }
 
-    /// Shows an error under the editor and in the status bar.
-    func report(_ e: TMDLError) {
-        fail(e)
+    private func fail(_ e: TMDLError) { report(e) }
+
+    func clearError() {
+        if let id = activeTab?.id { errors[id] = nil }
+    }
+
+    nonisolated static func tmdlError(_ error: Error) -> TMDLError {
+        (error as? TMDLError) ?? TMDLError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
     }
 
     /// Selects the error line in the editor and scrolls to it.
     func revealError() {
-        guard let error, let line = error.line,
-              let range = TMDLViewSession.range(ofLine: line, in: activeText) else { return }
-        guard let tv = TMDLViewSession.editorTextView() else { return }
-        tv.setSelectedRange(NSRange(location: range.lowerBound, length: 0))
-        tv.scrollRangeToVisible(NSRange(location: range.lowerBound, length: range.count))
+        guard let error, let line = error.line, let tv = TMDLViewSession.editorTextView(),
+              let range = TMDLViewSession.range(ofLine: line, in: tv.string) else { return }
+        let target = TMDLViewSession.clamped(range, toLength: (tv.string as NSString).length)
+        tv.setSelectedRange(NSRange(location: target.location, length: 0))
+        tv.scrollRangeToVisible(target)
         tv.window?.makeFirstResponder(tv)
     }
-
-    func clearError() { error = nil }
 
     /// The TMDL editor's text view, by its accessibility label.
     static func editorTextView() -> NSTextView? {
@@ -173,71 +180,80 @@ final class TMDLViewSession: ObservableObject {
         return find(content)
     }
 
-    /// Underlines the error line in the editor.
+    /// Underlines the active tab's error line in the editor.
     var issues: [ExpressionIssue] {
         guard let error, let line = error.line, let range = TMDLViewSession.range(ofLine: line, in: activeText) else { return [] }
         return [ExpressionIssue(message: error.errorDescription ?? error.message, range: range)]
     }
 
-    /// The character range of a 1-based line in `text`, so errors can be underlined.
+    /// The UTF-16 range of a 1-based line in `text`, without its line break: empty for an empty line,
+    /// nil when the text has no such line. The range never reaches past the end of the text.
     static func range(ofLine line: Int, in text: String) -> Range<Int>? {
         guard line >= 1 else { return nil }
-        let lines = text.components(separatedBy: "\n")
-        guard line <= lines.count else { return nil }
         var location = 0
-        for (i, l) in lines.enumerated() {
-            if i == line - 1 { return location..<(location + max((l as NSString).length, 1)) }
-            location += (l as NSString).length + 1
+        for (i, l) in text.components(separatedBy: "\n").enumerated() {
+            let length = (l as NSString).length
+            if i == line - 1 { return location..<(location + length) }
+            location += length + 1
         }
         return nil
     }
 
+    /// A range cut down to a text of `length` UTF-16 units, safe to hand to a text view.
+    static func clamped(_ range: Range<Int>, toLength length: Int) -> NSRange {
+        let lower = min(max(range.lowerBound, 0), max(length, 0))
+        let upper = min(max(range.upperBound, lower), max(length, 0))
+        return NSRange(location: lower, length: upper - lower)
+    }
+
     // MARK: Apply
 
-    /// Parses and applies the script in memory (nothing is written), for the preview sheet.
-    func previewApply() throws -> TMDLApplyResult {
-        guard let store = storeRef, let text = activeTab?.text else { throw TMDLError("There is no script to apply.") }
-        return try TMDL.apply(script: text, to: store.model, queries: store.doc.queries)
+    /// Parses and applies a script to a copy of the model: nothing is written. Pure, so the apply
+    /// preview can run it off the main actor.
+    nonisolated static func computeApply(script: String, model: SemanticModel,
+                                         queries: [QueryDefinition]) -> Result<TMDLApplyResult, TMDLError> {
+        do { return .success(try TMDL.apply(script: script, to: model, queries: queries)) }
+        catch { return .failure(tmdlError(error)) }
     }
 
     /// Writes a computed apply result to the document as one undoable model edit.
-    func apply(_ result: TMDLApplyResult) {
+    func apply(_ result: TMDLApplyResult, tab: UUID? = nil) {
         guard let store = storeRef else { return }
-        let s = result.summary
         store.mutate("Apply TMDL Script", invalidates: .model) { d in
             d.model = result.model
             d.queries = result.queries
         }
-        error = nil
-        store.status = StatusMessage(kind: .success, text: "Applied: \(s.text.split(separator: "\n").first ?? ""). You can undo this.")
+        if let id = tab ?? activeTab?.id { errors[id] = nil }
+        store.status = StatusMessage(kind: .success, text: "Applied: \(TMDLViewSession.headline(result.summary)). You can undo this.")
     }
 
-    /// Checks the script without applying: syntax and semantic problems land in `error` and the status.
+    /// Checks the active script without applying: problems land on the tab and in the status bar.
     func validate() {
-        guard let store = storeRef, activeTab?.text != nil else { return }
-        let text = activeText
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard let store = storeRef, let tab = activeTab else { return }
+        guard hasScript else {
             store.status = StatusMessage(kind: .info, text: "The script is empty.")
             return
         }
-        do {
-            let result = try TMDL.apply(script: text, to: store.model, queries: store.doc.queries)
-            error = nil
-            let s = result.summary
+        switch TMDLViewSession.computeApply(script: tab.text, model: store.model, queries: store.doc.queries) {
+        case .success(let result):
+            errors[tab.id] = nil
             let warnings = result.warnings.filter { $0.severity != .info }
             if warnings.isEmpty {
-                store.status = StatusMessage(kind: .success, text: "No problems found: \(s.text.split(separator: "\n").first ?? "").")
+                store.status = StatusMessage(kind: .success, text: "No problems found: \(TMDLViewSession.headline(result.summary)).")
             } else {
                 store.status = StatusMessage(kind: .warning, text: warnings.map(\.description).joined(separator: "\n"))
             }
-        } catch let e as TMDLError {
-            fail(e)
-        } catch {
-            fail(TMDLError((error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
+        case .failure(let e):
+            report(e, tab: tab.id)
         }
     }
 
-    // MARK: Labels
+    /// "2 added, 1 changed, 0 removed".
+    static func headline(_ summary: TMDLChangeSummary) -> String {
+        "\(summary.added.count) added, \(summary.changed.count) changed, \(summary.removed.count) removed"
+    }
+
+    // MARK: What the view shows
 
     static func hasObjects(_ model: SemanticModel) -> Bool {
         !model.tables.isEmpty || !model.calculationGroups.isEmpty || !model.relationships.isEmpty
@@ -245,50 +261,17 @@ final class TMDLViewSession: ObservableObject {
             || !model.functions.isEmpty
     }
 
-    static func objectName(_ ref: TMDLObjectRef) -> String {
-        switch ref {
-        case .model: return "the model"
-        case .modelProperties: return "model properties"
-        case .table(let t): return "table \(t)"
-        case .column(let t, let c): return "column \(t)[\(c)]"
-        case .measure(let t, let m): return "measure \(t)[\(m)]"
-        case .hierarchy(let t, let h): return "hierarchy \(t)[\(h)]"
-        case .calculationGroup(let g): return "calculation group \(g)"
-        case .relationship(let id): return "relationship \(id.uuidString.prefix(8))"
-        case .relationships: return "relationships"
-        case .role(let r): return "role \(r)"
-        case .perspective(let p): return "perspective \(p)"
-        case .culture(let c): return "culture \(c)"
-        case .function(let f): return "function \(f)"
-        case .expression(let e): return "expression \(e)"
-        }
+    /// True when there is anything to script: the workspace shows its editor and tree exactly then,
+    /// and the `tmdl.*` commands are enabled on the same condition.
+    static func hasContent(model: SemanticModel, queries: [QueryDefinition]) -> Bool {
+        hasObjects(model) || !queries.isEmpty
     }
 
-    static func tabName(for ref: TMDLObjectRef) -> String {
-        switch ref {
-        case .model, .modelProperties: return "Model"
-        case .table(let t), .calculationGroup(let t): return t
-        case .column(let t, _), .measure(let t, _), .hierarchy(let t, _): return t
-        case .relationship, .relationships: return "Relationships"
-        case .role(let r), .perspective(let r), .culture(let r), .function(let r), .expression(let r): return r
-        }
-    }
-}
-
-/// What a scripting command should act on. Other panes set these just before running `tmdl.script`;
-/// the command clears them. Without a context, the command uses the tree selection.
-@MainActor
-enum TMDLScriptingContext {
-    static var table: String?
-    static var field: FieldRef?
-
-    /// Takes and clears the context, falling back to the tree selection.
-    static func take(_ store: DocumentStore?) -> TMDLObjectRef? {
-        defer { table = nil; field = nil }
+    /// The object a Data-pane context-menu command points at, as a TMDL object.
+    static func ref(table: String?, field: FieldRef?) -> TMDLObjectRef? {
         if let f = field {
             return f.kind == .measure ? .measure(table: f.table, name: f.name) : .column(table: f.table, name: f.name)
         }
-        if let t = table { return .table(t) }
-        return store.flatMap { TMDLViewSession.of($0).selectedRef }
+        return table.map { .table($0) }
     }
 }

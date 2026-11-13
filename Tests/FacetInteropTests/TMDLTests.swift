@@ -305,6 +305,43 @@ final class TMDLTests: XCTestCase {
         XCTAssertEqual(TMDLObjectRef(parsing: "measure:Sales[Total Sales]")?.description, "measure:Sales[Total Sales]")
     }
 
+    func testObjectRefAwkwardNamesRoundTrip() {
+        // Written form: quoted only when needed, with '' for a quote inside a quoted name.
+        XCTAssertEqual(TMDLObjectRef.table("Sales [2024]").description, "table:'Sales [2024]'")
+        XCTAssertEqual(TMDLObjectRef.measure(table: "Sales [2024]", name: "Total [All]").description,
+                       "measure:'Sales [2024]'['Total [All]']")
+        XCTAssertEqual(TMDLObjectRef.table("'Quoted").description, "table:'''Quoted'")
+        XCTAssertEqual(TMDLObjectRef.table(" Padded ").description, "table:' Padded '")
+        XCTAssertEqual(TMDLObjectRef.column(table: "It's", name: "Don't").description, "column:It's[Don't]")
+
+        let awkward: [TMDLObjectRef] = [
+            .table("Sales [2024]"), .table(" Padded "), .table("'Quoted"), .table("'Quoted'"), .table("URL: home"),
+            .table("a]b"), .table("It's"), .table("Tab\tEnd\t"),
+            .column(table: "Sales [2024]", name: "Amount"),
+            .column(table: "'Quoted", name: "It's = odd"),
+            .column(table: "It's", name: "Don't"),
+            .measure(table: "Sales [2024]", name: "Total [All]"),
+            .measure(table: "URL: home", name: " A[b]c "),
+            .measure(table: "Sales", name: "'x'"),
+            .measure(table: " T ", name: "]"),
+            .hierarchy(table: "Geo [old]", name: "'H"),
+            .calculationGroup("Time [Calc]"), .role(" West "), .perspective("'P'"), .culture("[x]"),
+            .function("f[1]"), .expression("'Base Path'"),
+        ]
+        for ref in awkward {
+            XCTAssertEqual(TMDLObjectRef(parsing: ref.description), ref, "\(ref.description) didn't round-trip")
+        }
+        // The plain forms keep parsing, with spaces around the argument ignored.
+        XCTAssertEqual(TMDLObjectRef(parsing: "table: Sales "), .table("Sales"))
+        XCTAssertEqual(TMDLObjectRef(parsing: "table:'My Table'"), .table("My Table"))
+        XCTAssertEqual(TMDLObjectRef(parsing: "column: 'My Table'[Col]"), .column(table: "My Table", name: "Col"))
+        XCTAssertNil(TMDLObjectRef(parsing: "table:"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:Sales"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:[Total]"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:Sales[]"))
+        XCTAssertNil(TMDLObjectRef(parsing: "measure:Sales[Total"))
+    }
+
     func testSharedExpressionsExcludesTablePartitions() {
         let (model, queries) = Fixtures.richModel()
         let shared = TMDL.sharedExpressions(model: model, queries: queries)

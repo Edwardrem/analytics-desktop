@@ -7,11 +7,12 @@ import FacetInterop
 /// per-file line diffs, and any warnings. Nothing is written until "Apply" runs, which is one
 /// undoable edit through `DocumentStore.mutate`.
 struct TMDLApplySheet: View {
-    @EnvironmentObject var store: DocumentStore
     @ObservedObject var session: TMDLViewSession
+    /// The difference, computed once in the background by `tmdl.apply`.
+    @ObservedObject var preview: TMDLApplyPreview
+    /// The script tab the preview was made from.
+    let tab: UUID
     @Binding var isPresented: Bool
-    @State private var result: TMDLApplyResult?
-    @State private var failure: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,51 +23,50 @@ struct TMDLApplySheet: View {
             }
             .padding(Design.Space.l)
             Hairline()
-            if let failure {
-                EmptyState(systemImage: "exclamationmark.triangle", title: "This script can't be applied", message: failure)
-                footer
-            } else if let result {
+            switch preview.state {
+            case .computing:
+                HStack(spacing: Design.Space.s) {
+                    ProgressView().controlSize(.small)
+                    Text("Comparing with the model…").foregroundStyle(.secondary)
+                }
+                .font(Design.Typeface.caption)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            case .ready(let result):
                 summary(result)
-                footer
-            } else {
-                HStack(spacing: Design.Space.s) { ProgressView().controlSize(.small); Text("Comparing with the model…").foregroundStyle(.secondary) }
-                    .font(Design.Typeface.caption)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                footer
+            case .failed(let error):
+                EmptyState(systemImage: "exclamationmark.triangle", title: "This script can't be applied",
+                           message: error.errorDescription ?? error.message)
             }
+            footer
         }
         .frame(width: 620)
         .frame(minHeight: 300, maxHeight: 620)
-        .task { compute() }
+        .onDisappear { preview.cancel() }
     }
 
     private var footer: some View {
         HStack {
             Spacer()
             Button("Cancel") { isPresented = false }.keyboardShortcut(.cancelAction)
-            if let result {
+            if case .ready(let result) = preview.state {
+                let blocked = TMDLApplySheet.blockedReason(result)
                 Button("Apply") {
-                    session.apply(result)
+                    session.apply(result, tab: tab)
                     isPresented = false
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(result.summary.isEmpty || result.warnings.contains { $0.severity == .error })
+                .disabled(blocked != nil)
+                .help(blocked ?? "Update the model; you can undo this")
             }
         }
         .padding(Design.Space.l)
     }
 
-    private func compute() {
-        do {
-            result = try session.previewApply()
-            failure = nil
-        } catch let e as TMDLError {
-            result = nil
-            failure = e.errorDescription ?? e.message
-        } catch {
-            result = nil
-            failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
-        }
+    /// Why Apply is unavailable for a computed result, or nil when it can be applied.
+    static func blockedReason(_ result: TMDLApplyResult) -> String? {
+        if result.warnings.contains(where: { $0.severity == .error }) { return "Fix the errors listed above first" }
+        if result.summary.isEmpty { return "The script matches the model; there is nothing to apply" }
+        return nil
     }
 
     // MARK: Content

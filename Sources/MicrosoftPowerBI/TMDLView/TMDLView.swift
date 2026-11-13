@@ -13,7 +13,7 @@ struct TMDLView: View {
     @AppStorage("tmdl.treeVisible") private var treeVisible = true
 
     var body: some View {
-        if !TMDLViewSession.hasObjects(store.model) && store.doc.queries.isEmpty {
+        if !TMDLViewFeature.hasContent(store) {
             VStack(spacing: Design.Space.m) {
                 EmptyState(systemImage: "curlybraces", title: "Nothing to script yet",
                            message: "Add data to the model, then script and edit it here as TMDL.")
@@ -46,16 +46,16 @@ struct TMDLView: View {
             if let tab = session.activeTab {
                 CodeEditor(text: Binding(get: { session.activeText }, set: { session.setText($0, for: tab.id) }),
                            language: .tmdl, model: store.model, issues: session.issues,
-                           showsLineNumbers: true, onCommit: nil)
+                           showsLineNumbers: true, onCommit: nil,
+                           // A tree row arrives under its own pasteboard type and is handled by the
+                           // text view itself, so it is scripted and never inserted as text.
+                           objectDrop: CodeEditor.ObjectDrop(type: TMDLDragPayload.pasteboardType, onDrop: { data in
+                               guard let ref = TMDLDragPayload.decode(data) else { return false }
+                               session.selectedRef = ref
+                               session.script(ref)
+                               return true
+                           }, onTargeted: { session.dropTargeted = $0 }))
                     .id(tab.id)
-                    .dropDestination(for: String.self) { items, _ in
-                        guard let ref = items.first.flatMap(TMDLObjectRef.init(parsing:)) else { return false }
-                        session.selectedRef = ref
-                        session.script(ref)
-                        return true
-                    } isTargeted: { targeted in
-                        session.dropTargeted = targeted
-                    }
             } else {
                 EmptyState(systemImage: "curlybraces", title: "No script tab",
                            message: "New Script creates a tab; select an object in the tree to script it.")
@@ -161,20 +161,26 @@ private struct TMDLToolbar: View {
     @Binding var treeVisible: Bool
 
     var body: some View {
+        let hasSelection = session.selectedRef != nil
+        let hasScript = session.hasScript
         HStack(spacing: Design.Space.xs) {
             Button { AppCommands.run("tmdl.script", store) } label: { Label("Script", systemImage: "arrow.down.doc") }
-                .help("Script the object selected in the tree into this tab")
-                .disabled(session.selectedRef == nil)
+                .help(hasSelection ? "Script the object selected in the tree into this tab"
+                                   : "Select an object in the model tree to script it")
+                .disabled(!hasSelection)
             IconButton("shippingbox", help: "Replace this tab with a fresh script of the whole model") {
-                session.scriptWholeModel()
+                AppCommands.run("tmdl.scriptModel", store)
             }
-            IconButton("checkmark.seal", help: "Check this script for syntax and semantic problems (⌥⇧V)") {
+            IconButton("checkmark.seal", help: hasScript ? "Check this script for syntax and semantic problems (⌥⇧V)"
+                                                         : "Nothing to check: this tab is empty") {
                 AppCommands.run("tmdl.validate", store)
             }
+            .disabled(!hasScript)
             Hairline(vertical: true).frame(height: 16).padding(.horizontal, Design.Space.xs)
             Button { AppCommands.run("tmdl.apply", store) } label: { Label("Apply…", systemImage: "arrow.up.doc") }
-                .help("Preview the difference, then update the model (⌥⇧A)")
-                .disabled(session.activeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .help(hasScript ? "Preview the difference, then update the model (⌥⇧A)"
+                                : "Nothing to apply: this tab is empty")
+                .disabled(!hasScript)
 
             Spacer(minLength: Design.Space.s)
 

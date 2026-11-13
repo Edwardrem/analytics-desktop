@@ -23,28 +23,28 @@ public enum TMDLObjectRef: Hashable, Sendable, CustomStringConvertible {
 
     /// Parses "model", "table:Sales", "measure:Sales[Total]", "column:Sales[Amount]", "hierarchy:Geo[Hier]",
     /// "calculationGroup:Time", "relationship:<uuid>", "relationships", "role:X", "perspective:X", "culture:fr-FR",
-    /// "function:X", "expression:X".
+    /// "function:X", "expression:X". A name may be single-quoted with '' for a quote, which is how
+    /// `description` writes names that would otherwise be ambiguous: "table:'Sales [2024]'",
+    /// "measure:'Sales [2024]'['Total [All]']".
     public init?(parsing text: String) {
         let t = text.trimmingCharacters(in: .whitespaces)
         let kind: String, arg: String
         if let colon = t.firstIndex(of: ":") {
             kind = t[..<colon].lowercased(); arg = t[t.index(after: colon)...].trimmingCharacters(in: .whitespaces)
         } else { kind = t.lowercased(); arg = "" }
-        func member() -> (String, String)? {
-            guard let (table, m) = TMDLVocabulary.splitMember(arg), let m else { return nil }
-            return (TMDLName.unquote(table), m)
-        }
+        func name() -> String? { arg.isEmpty ? nil : Self.readName(arg) }
+        func member() -> (String, String)? { Self.splitMember(arg) }
         switch kind {
         case "model", "": self = .model
         case "modelproperties": self = .modelProperties
         case "relationships": self = .relationships
-        case "table" where !arg.isEmpty: self = .table(TMDLName.unquote(arg))
-        case "calculationgroup" where !arg.isEmpty: self = .calculationGroup(arg)
-        case "role" where !arg.isEmpty: self = .role(arg)
-        case "perspective" where !arg.isEmpty: self = .perspective(arg)
-        case "culture" where !arg.isEmpty: self = .culture(arg)
-        case "function" where !arg.isEmpty: self = .function(arg)
-        case "expression" where !arg.isEmpty: self = .expression(arg)
+        case "table": guard let n = name() else { return nil }; self = .table(n)
+        case "calculationgroup": guard let n = name() else { return nil }; self = .calculationGroup(n)
+        case "role": guard let n = name() else { return nil }; self = .role(n)
+        case "perspective": guard let n = name() else { return nil }; self = .perspective(n)
+        case "culture": guard let n = name() else { return nil }; self = .culture(n)
+        case "function": guard let n = name() else { return nil }; self = .function(n)
+        case "expression": guard let n = name() else { return nil }; self = .expression(n)
         case "relationship": guard let u = UUID(uuidString: arg) else { return nil }; self = .relationship(u)
         case "measure": guard let (t, m) = member() else { return nil }; self = .measure(table: t, name: m)
         case "column": guard let (t, m) = member() else { return nil }; self = .column(table: t, name: m)
@@ -53,25 +53,57 @@ public enum TMDLObjectRef: Hashable, Sendable, CustomStringConvertible {
         }
     }
 
-    /// The canonical parseable form ("model", "table:Sales", "measure:Sales[Total]"), so refs can be
-    /// carried across drag and drop. `TMDLObjectRef(parsing: description)` round-trips.
+    /// The canonical parseable form ("model", "table:Sales", "measure:Sales[Total Sales]"), so refs can be
+    /// carried across drag and drop. A name is single-quoted when it is empty, starts with a quote, has
+    /// a bracket or has whitespace at either end, so `TMDLObjectRef(parsing: description)` round-trips
+    /// for every name.
     public var description: String {
+        let q = Self.writeName
         switch self {
         case .model: return "model"
         case .modelProperties: return "modelProperties"
-        case .table(let t): return "table:\(t)"
-        case .column(let t, let c): return "column:\(t)[\(c)]"
-        case .measure(let t, let m): return "measure:\(t)[\(m)]"
-        case .hierarchy(let t, let h): return "hierarchy:\(t)[\(h)]"
-        case .calculationGroup(let g): return "calculationGroup:\(g)"
+        case .table(let t): return "table:\(q(t))"
+        case .column(let t, let c): return "column:\(q(t))[\(q(c))]"
+        case .measure(let t, let m): return "measure:\(q(t))[\(q(m))]"
+        case .hierarchy(let t, let h): return "hierarchy:\(q(t))[\(q(h))]"
+        case .calculationGroup(let g): return "calculationGroup:\(q(g))"
         case .relationship(let id): return "relationship:\(id.uuidString)"
         case .relationships: return "relationships"
-        case .role(let r): return "role:\(r)"
-        case .perspective(let p): return "perspective:\(p)"
-        case .culture(let c): return "culture:\(c)"
-        case .function(let f): return "function:\(f)"
-        case .expression(let e): return "expression:\(e)"
+        case .role(let r): return "role:\(q(r))"
+        case .perspective(let p): return "perspective:\(q(p))"
+        case .culture(let c): return "culture:\(q(c))"
+        case .function(let f): return "function:\(q(f))"
+        case .expression(let e): return "expression:\(q(e))"
         }
+    }
+
+    /// A name as `description` writes it: quoted only when the plain text would not parse back to itself.
+    private static func writeName(_ name: String) -> String {
+        let edge: (Character?) -> Bool = { $0.map { $0.isWhitespace } ?? false }
+        let plain = !name.isEmpty && !name.hasPrefix("'") && !name.contains("[") && !name.contains("]")
+            && !edge(name.first) && !edge(name.last)
+        return plain ? name : "'" + name.replacingOccurrences(of: "'", with: "''") + "'"
+    }
+
+    /// A whole (already trimmed) argument as one name: unquoted when it is one complete quoted name.
+    private static func readName(_ s: String) -> String {
+        if s.hasPrefix("'"), let r = TMDLName.read(Substring(s)), r.rest.isEmpty { return r.name }
+        return s
+    }
+
+    /// Splits "Table[Member]" where either part may be quoted; a quoted table may itself contain brackets.
+    private static func splitMember(_ s: String) -> (String, String)? {
+        let table: String, rest: Substring
+        if s.hasPrefix("'"), let r = TMDLName.read(Substring(s)), r.rest.drop(while: { $0 == " " }).hasPrefix("[") {
+            table = r.name; rest = r.rest.drop(while: { $0 == " " })
+        } else {
+            guard let open = s.firstIndex(of: "["), open > s.startIndex else { return nil }
+            table = s[..<open].trimmingCharacters(in: .whitespaces); rest = s[open...]
+        }
+        guard rest.hasPrefix("["), rest.hasSuffix("]"), rest.count >= 2 else { return nil }
+        let inner = String(rest.dropFirst().dropLast())
+        guard !inner.isEmpty, !(table.isEmpty && !s.hasPrefix("'")) else { return nil }
+        return (table, readName(inner))
     }
 }
 
