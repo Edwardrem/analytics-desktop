@@ -204,10 +204,10 @@ public extension Transform {
         switch self {
         case .keepTopRows(let n): return "Table.FirstN(\(p), \(n))"
         case .keepBottomRows(let n): return "Table.LastN(\(p), \(n))"
-        case .keepRangeOfRows(let first, let count): return "Table.Range(\(p), \(first), \(count))"
+        case .keepRangeOfRows(let first, let count): return "Table.Range(\(p), \(max(0, first - 1)), \(count))"
         case .removeTopRows(let n): return "Table.Skip(\(p), \(n))"
         case .removeBottomRows(let n): return "Table.RemoveLastN(\(p), \(n))"
-        case .removeAlternateRows(let first, let remove, let keep): return "Table.AlternateRows(\(p), \(first), \(remove), \(keep))"
+        case .removeAlternateRows(let first, let remove, let keep): return "Table.AlternateRows(\(p), \(max(0, first - 1)), \(remove), \(keep))"
         case .removeDuplicates(let cols): return cols.isEmpty ? "Table.Distinct(\(p))" : "Table.Distinct(\(p), \(names(cols)))"
         case .keepDuplicates(let cols):
             let keys = cols.isEmpty ? "Table.ColumnNames(\(p))" : names(cols)

@@ -116,8 +116,10 @@ public enum CombineFilesFormat: Sendable {
 /// with a name it adds a column ("Add Column" tab).
 public enum Transform {
     // Rows
+    /// `first` is the 1-based row number, as typed in the Keep Range of Rows dialog.
     case keepTopRows(Int), keepBottomRows(Int), keepRangeOfRows(first: Int, count: Int)
     case removeTopRows(Int), removeBottomRows(Int)
+    /// `firstToRemove` is the 1-based row number, as typed in the Remove Alternate Rows dialog.
     case removeAlternateRows(firstToRemove: Int, numberToRemove: Int, numberToKeep: Int)
     case removeDuplicates(columns: [String]), keepDuplicates(columns: [String])
     case removeBlankRows
