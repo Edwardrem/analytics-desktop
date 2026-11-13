@@ -98,9 +98,8 @@ enum TimeSchema {
                 ci.ordinal = i
                 return ci
             }
+            // The engine creates the group's one-column table itself.
             model.calculationGroups.append(g)
-            model.tables.append(ModelTable(name: table, columns: [ModelColumn(name: column, dataType: .text)]))
-            data.tables[table] = DataTable(name: table, columnNames: [column], rows: items.map { [.string($0.name)] }, types: [.text])
         }
         let py = "CALCULATE(SELECTEDMEASURE(), SAMEPERIODLASTYEAR('Date'[Date]))"
         group("Time Calc", "Calc", timePrecedence, [

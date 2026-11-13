@@ -46,7 +46,7 @@ struct CmpCardStyle {
         weight = bold ? .semibold : .regular
         nsWeight = bold ? .semibold : .regular
         units = f.string("callout", "displayUnits", "auto")
-        decimals = f.value("callout", "decimals")?.doubleValue.map { Int($0) }
+        decimals = f.decimals("callout")
         switch f.string("callout", "alignment", defaultAlignment) {
         case "center": alignment = .center
         case "right": alignment = .trailing
@@ -327,7 +327,7 @@ struct CmpCardView: View {
     }
 
     private func columns(n: Int, size: CGSize) -> Int {
-        if let c = env.f.value("layout", "columns")?.doubleValue, c >= 1 { return min(n, Int(c)) }
+        if let c = FormatNumber.int(env.f.value("layout", "columns")?.doubleValue, in: 0...100), c >= 1 { return min(n, c) }
         guard size.height > 0 else { return n }
         // Aim for tiles about 1.7× wider than tall.
         let ideal = (Double(n) * Double(size.width) / Double(size.height) / 1.7).squareRoot()

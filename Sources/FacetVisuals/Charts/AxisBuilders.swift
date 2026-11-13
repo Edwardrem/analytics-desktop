@@ -11,7 +11,7 @@ enum ChartAxes {
                         showLabels: Bool, gridlinesDefault: Bool = true, centered: Bool = false) -> some AxisContent {
         let f = style.format
         let units = DisplayUnits(f.string(card, "displayUnits", "auto"))
-        let decimals = f.value(card, "decimals")?.doubleValue.map { Int($0) }
+        let decimals = f.decimals(card)
         let grid = f.bool(card, "gridlines", gridlinesDefault)
         let show = showLabels && f.bool(card, "show", true)
         let fs = style.size(card)

@@ -21,7 +21,7 @@ struct StatAxisOptions {
         min = f.value(card, "min")?.doubleValue
         max = f.value(card, "max")?.doubleValue
         units = DisplayUnits(f.string(card, "displayUnits", "auto"))
-        decimals = f.value(card, "decimals")?.doubleValue.map { Int($0) }
+        decimals = f.decimals(card)
         gridlines = f.bool(card, "gridlines", defaultGrid)
         size = style.size(card)
     }

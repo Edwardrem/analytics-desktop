@@ -5,6 +5,8 @@ import FacetDesign
 
 /// Bins a raw numeric column. An optional category column splits the bins into stacked or overlaid series.
 struct HistogramModel {
+    /// Largest fixed bin count the `histogram.bins` key accepts.
+    static let maxBins = 200
     struct Series { let index: Int; let name: String; let value: Value?; var counts: [Double] }
     struct Bar: Identifiable { let id: Int; let series: Int; let bin: Int; let x0: Double, x1: Double; let y0: Double, y1: Double; let count: Double; let isTop: Bool }
 
@@ -46,22 +48,24 @@ struct HistogramModel {
         total = Double(values.count)
 
         // Bin count: explicit, else Freedman–Diaconis with a Sturges fallback.
-        var bins = Int(f.double("histogram", "bins", 0))
+        // A fixed count is capped at `HistogramModel.maxBins` so a stray value can't stall the render.
+        let fixedBins = f.int("histogram", "bins", 0, in: 0...HistogramModel.maxBins)
+        var bins = fixedBins
         if bins <= 0 {
             let n = Double(values.count)
             let iqr = (ChartMath.percentile(values, 75) ?? hi) - (ChartMath.percentile(values, 25) ?? lo)
             let h = 2 * iqr * pow(n, -1.0 / 3)
-            bins = h > 0 ? Int(((hi - lo) / h).rounded(.up)) : Int((log2(max(n, 1))).rounded(.up)) + 1
-            bins = max(5, min(40, bins))
+            let wanted = h > 0 ? ((hi - lo) / h).rounded(.up) : log2(max(n, 1)).rounded(.up) + 1
+            bins = FormatNumber.int(wanted, in: 5...40) ?? 5
         }
         let step: Double
         let start: Double
         if hi > lo {
-            step = Int(f.double("histogram", "bins", 0)) > 0 ? (hi - lo) / Double(bins) : AxisFormatter.niceStep((hi - lo) / Double(bins))
-            start = Int(f.double("histogram", "bins", 0)) > 0 ? lo : (lo / step).rounded(.down) * step
+            step = fixedBins > 0 ? (hi - lo) / Double(bins) : AxisFormatter.niceStep((hi - lo) / Double(bins))
+            start = fixedBins > 0 ? lo : (lo / step).rounded(.down) * step
         } else { step = 1; start = lo - 0.5 }
         let count = max(1, Int(((hi - start) / step).rounded(.down)) + 1)
-        let binCount = start + Double(count - 1) * step >= hi && count > 1 && Int(f.double("histogram", "bins", 0)) > 0 ? count - 1 : count
+        let binCount = start + Double(count - 1) * step >= hi && count > 1 && fixedBins > 0 ? count - 1 : count
         edges = (0...binCount).map { start + Double($0) * step }
         for i in series.indices { series[i].counts = Array(repeating: 0, count: binCount) }
         for row in rows {
@@ -142,7 +146,7 @@ struct HistogramView: View {
                              let total = stacked ? H.series.reduce(0) { $0 + $1.counts[b.bin] } : b.count
                              let text = H.percent ? AxisFormatter.label(total / max(H.total, 1), format: "0.0%")
                                  : AxisFormatter.label(total, units: DisplayUnits(style.format.string("dataLabels", "displayUnits", "auto")),
-                                                       decimals: style.format.value("dataLabels", "decimals")?.doubleValue.map { Int($0) })
+                                                       decimals: style.format.decimals("dataLabels"))
                              let r = map.rect(x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1)
                              placer.place(text, color: color, candidates: [CGPoint(x: r.midX, y: r.minY - fs / 2 - 3)])
                          }
@@ -289,7 +293,7 @@ struct BoxPlotView: View {
                          let c = f.value("dataLabels", "color")?.stringValue.map { Color(hex: $0) } ?? style.foreground.opacity(0.85)
                          for b in M.boxes {
                              let text = AxisFormatter.label(b.median, units: DisplayUnits(f.string("dataLabels", "displayUnits", "auto")),
-                                                            decimals: f.value("dataLabels", "decimals")?.doubleValue.map { Int($0) }, format: M.format)
+                                                            decimals: f.decimals("dataLabels"), format: M.format)
                              let p = map.point(b.center + b.half, b.median)
                              placer.place(text, color: c, candidates: [CGPoint(x: p.x + ChartText.size(text, fontSize: fs).width / 2 + 4, y: p.y)])
                          }

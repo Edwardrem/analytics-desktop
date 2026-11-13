@@ -58,6 +58,7 @@ extension DataPane {
         modelCommand(t.isDateTable ? "Date table settings…" : "Mark as date table…", "model.markDateTable", table: t.name)
         modelCommand("Incremental refresh…", "model.incrementalRefresh", table: t.name)
         Button("Copy table") { copyTable(t.name) }
+        modelCommand("Script as TMDL", "tmdl.script", table: t.name)
     }
 
     // MARK: Column
@@ -104,6 +105,7 @@ extension DataPane {
         Divider()
         filterMenu(ref)
         Button("Copy name") { copy("'\(table)'[\(c.name)]") }
+        modelCommand("Script as TMDL", "tmdl.script", table: table, field: ref)
     }
 
     // MARK: Measure
@@ -138,6 +140,7 @@ extension DataPane {
         Divider()
         filterMenu(ref)
         Button("Copy name") { copy("[\(m.name)]") }
+        modelCommand("Script as TMDL", "tmdl.script", table: table, field: ref)
     }
 
     // MARK: Hierarchy

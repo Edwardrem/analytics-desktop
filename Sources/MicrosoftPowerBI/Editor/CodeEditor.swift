@@ -15,11 +15,21 @@ struct CodeEditor: NSViewRepresentable {
     var onCommit: (() -> Void)?
     /// Esc when no completion list is showing.
     var onCancel: (() -> Void)?
+    /// Drops of one custom pasteboard type that the editor hands to its owner instead of inserting.
+    var objectDrop: ObjectDrop?
+
+    struct ObjectDrop {
+        var type: NSPasteboard.PasteboardType
+        /// Receives the dragged data; returns whether the drop was taken.
+        var onDrop: (Data) -> Bool
+        /// True while such a drag is over the editor.
+        var onTargeted: (Bool) -> Void = { _ in }
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSTextView.scrollableTextView()
+        let scroll = objectDrop == nil ? NSTextView.scrollableTextView() : ObjectDropTextView.scrollable()
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
@@ -48,6 +58,9 @@ struct CodeEditor: NSViewRepresentable {
             scroll.rulersVisible = true
         }
         context.coordinator.textView = tv
+        if let dropView = tv as? ObjectDropTextView {
+            dropView.objectDrop = { [weak coordinator = context.coordinator] in coordinator?.parent.objectDrop }
+        }
         context.coordinator.highlight()
         return scroll
     }
@@ -159,6 +172,81 @@ struct CodeEditor: NSViewRepresentable {
             completing = false
             return false
         }
+    }
+}
+
+/// A text view that takes drops of one custom pasteboard type itself and passes them to a handler,
+/// so they are never inserted as text. Every other drag behaves as in any text view.
+final class ObjectDropTextView: NSTextView {
+    /// The current drop handling, read when a drag arrives.
+    var objectDrop: () -> CodeEditor.ObjectDrop? = { nil }
+    private var targeted = false
+
+    /// A scroll view around a new text view, laid out like `NSTextView.scrollableTextView()`.
+    static func scrollable() -> NSScrollView {
+        let scroll = NSScrollView()
+        scroll.borderType = .noBorder
+        scroll.hasHorizontalScroller = false
+        let tv = ObjectDropTextView(frame: NSRect(origin: .zero, size: scroll.contentSize))
+        tv.minSize = NSSize(width: 0, height: scroll.contentSize.height)
+        tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.textContainer?.containerSize = NSSize(width: scroll.contentSize.width, height: CGFloat.greatestFiniteMagnitude)
+        tv.textContainer?.widthTracksTextView = true
+        scroll.documentView = tv
+        return scroll
+    }
+
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] {
+        super.acceptableDragTypes + (objectDrop().map { [$0.type] } ?? [])
+    }
+
+    private func drop(for sender: NSDraggingInfo) -> CodeEditor.ObjectDrop? {
+        guard let drop = objectDrop(), sender.draggingPasteboard.availableType(from: [drop.type]) != nil else { return nil }
+        return drop
+    }
+
+    private func setTargeted(_ on: Bool) {
+        guard on != targeted else { return }
+        targeted = on
+        objectDrop()?.onTargeted(on)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard drop(for: sender) != nil else { return super.draggingEntered(sender) }
+        setTargeted(true)
+        return .copy
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        drop(for: sender) != nil ? .copy : super.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        if targeted { setTargeted(false) } else { super.draggingExited(sender) }
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        setTargeted(false)
+        super.draggingEnded(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        drop(for: sender) != nil ? true : super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let drop = drop(for: sender) else { return super.performDragOperation(sender) }
+        setTargeted(false)
+        guard let data = sender.draggingPasteboard.data(forType: drop.type) else { return false }
+        return drop.onDrop(data)
+    }
+
+    override func concludeDragOperation(_ sender: NSDraggingInfo?) {
+        if let sender, drop(for: sender) != nil { return }
+        super.concludeDragOperation(sender)
     }
 }
 

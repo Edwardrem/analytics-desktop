@@ -101,7 +101,7 @@ final class TMDLEmitter {
     /// `key: value`, quoting the value when a bare value would not survive.
     func prop(_ level: Int, _ key: String, _ value: String) {
         let needsQuote = value.isEmpty || value != value.trimmingCharacters(in: .whitespacesAndNewlines) || value.hasPrefix("\"")
-            || value.contains("\n") || value.contains("\r")
+            || value.hasLineBreak
         raw(level, "\(key): " + (needsQuote ? "\"" + value.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : value))
     }
     func flag(_ level: Int, _ key: String) { raw(level, key) }
@@ -115,7 +115,7 @@ final class TMDLEmitter {
         let nonBlank = lines.filter { !$0.isEmpty }
         let commonIndent = nonBlank.allSatisfy { $0.first == " " || $0.first == "\t" }
         let whitespaceOnly = lines.contains { !$0.isEmpty && $0.allSatisfy(\.isWhitespace) }
-        let fenced = !trimmedSame || commonIndent || whitespaceOnly || expr.contains("\r")
+        let fenced = !trimmedSame || commonIndent || whitespaceOnly || expr.hasCarriageReturn
         raw(level, declaration + (fenced ? " = ```" : " ="))
         let pad = String(repeating: "\t", count: level + 2)
         for l in lines { text += (l.isEmpty ? "" : pad + l) + "\n" }
@@ -131,6 +131,13 @@ final class TMDLEmitter {
     func facet<T: Encodable>(_ level: Int, _ name: String, encoding value: T) {
         if let j = try? JSONValue(encoding: value) { facet(level, name, j) }
     }
+}
+
+extension String {
+    /// True when the text has a line feed or carriage return. Checked on scalars: as a `Character`,
+    /// "\r\n" is neither "\n" nor "\r", so `contains("\n")` misses it.
+    var hasLineBreak: Bool { unicodeScalars.contains { $0 == "\n" || $0 == "\r" } }
+    var hasCarriageReturn: Bool { unicodeScalars.contains("\r") }
 }
 
 // MARK: - Syntax tree
@@ -206,11 +213,13 @@ struct TMDLParser {
         var t = text
         if t.hasPrefix("\u{FEFF}") { t.removeFirst() }
         // Files written with CRLF line ends are normalised; a CR inside an LF file is kept as data.
-        let scalars = t.unicodeScalars
-        if let nl = scalars.firstIndex(of: "\n"), nl > scalars.startIndex, scalars[scalars.index(before: nl)] == "\r" {
-            t = t.replacingOccurrences(of: "\r\n", with: "\n")
+        // The first line that is not a `///` description tells which: a description can carry a CR
+        // of its own, a declaration cannot.
+        var rawLines = t.components(separatedBy: "\n")
+        let firstDeclaration = rawLines.dropLast().first { !$0.drop(while: { $0 == " " || $0 == "\t" }).hasPrefix("///") }
+        if firstDeclaration?.unicodeScalars.last == "\r" {
+            rawLines = rawLines.map { $0.unicodeScalars.last == "\r" ? String($0.unicodeScalars.dropLast()) : $0 }
         }
-        let rawLines = t.components(separatedBy: "\n")
         // Detect the indentation unit from the first indented line.
         for l in rawLines {
             guard let f = l.first, f == " " || f == "\t", !l.allSatisfy(\.isWhitespace) else { continue }

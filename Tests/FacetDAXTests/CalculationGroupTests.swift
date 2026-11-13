@@ -153,16 +153,22 @@ final class CalculationGroupTests: TimeSchemaTestCase {
 
     // MARK: Loading problems
 
-    func testInvalidGroupsAreReported() throws {
+    func testInvalidItemIsReportedAndItsGroupIsNotApplied() throws {
         var model = TimeSchema.model(), data = TimeSchema.data()
         TimeSchema.addCalculationGroups(&model, &data)
         model.calculationGroups[1].items[0].expression = "SELECTEDMEASURE( +"
-        var orphan = CalculationGroup(name: "Missing Table")
-        orphan.items = [CalculationItem(name: "X", expression: "SELECTEDMEASURE()")]
-        model.calculationGroups.append(orphan)
-        let errors = DAXEngine().load(model: model, data: data)
+        let engine = DAXEngine()
+        let errors = engine.load(model: model, data: data)
         XCTAssertNotNil(errors["Averages[Total]"], "\(errors)")
-        XCTAssertNotNil(errors["Missing Table"], "\(errors)")
-        XCTAssertEqual(errors.count, 2, "\(errors)")
+        XCTAssertEqual(errors.count, 1, "\(errors)")
+        // The healthy group still works; the broken one applies none of its items.
+        XCTAssertEqual(try engine.scalar("[Amt]", filters: [filter("Date", "Year", 2024), calc("PY")]).asDouble, 210)
+        XCTAssertEqual(try engine.scalar("[Amt]", filters: [filter("Date", "Year", 2024), average("Per Day")]).asDouble, 4500)
+    }
+
+    func testGroupTableListsItemsInOrdinalOrder() throws {
+        XCTAssertEqual(try column("EVALUATE VALUES('Time Calc'[Calc])", name: "Time Calc[Calc]"),
+                       ["Current", "YTD", "PY", "YoY %", "Name"])
+        XCTAssertEqual(try num("COUNTROWS('Averages')"), 4)
     }
 }

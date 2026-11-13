@@ -53,7 +53,7 @@ struct WaterfallVisual: View {
             cells[ci][bk] = ((cells[ci][bk]?.v ?? 0) + v, r)
             brLabels[bk] = label(r, brCols)
         }
-        let maxMovers = max(1, Int(f.double("waterfall", "maxBreakdowns", 5)))
+        let maxMovers = f.int("waterfall", "maxBreakdowns", 5, in: 1...100)
         for ci in catKeys.indices {
             let total = cells[ci].values.reduce(0) { $0 + $1.v }
             if ci > 0 {
@@ -161,7 +161,7 @@ struct WaterfallVisual: View {
                             var area = map.plot.insetBy(dx: -2, dy: -2); area.origin.y -= lfs + 2; area.size.height += lfs + 2
                             var placer = DataLabelPlacer(bounds: area, fontSize: lfs)
                             let units = DisplayUnits(f.string("dataLabels", "displayUnits", "auto"))
-                            let decimals = f.value("dataLabels", "decimals")?.doubleValue.map { Int($0) }
+                            let decimals = f.decimals("dataLabels")
                             let custom = f.value("dataLabels", "color")?.stringValue.map { Color(hex: $0) }
                             for (b, r) in zip(bars, rects) {
                                 let v = b.kind == .total ? b.v1 : b.delta

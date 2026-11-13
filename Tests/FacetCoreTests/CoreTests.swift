@@ -42,4 +42,63 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(back.data["Sales"]?[2, 0], .date(Date(timeIntervalSince1970: 86400)))
         XCTAssertEqual(back.report.pages[0].visuals.first?.type, .card)
     }
+
+    /// Everything the modeling dialogs write must come back from a saved `.facet` package.
+    func testModelingObjectsSurviveThePackage() throws {
+        var doc = FacetDocument()
+        var table = ModelTable(name: "Sales", columns: [ModelColumn(name: "OrderDate", dataType: .date)])
+        var bins = ModelColumn(name: "OrderDate (bins)", dataType: .date)
+        var grouping = ColumnGrouping(kind: .binSize, sourceColumn: "OrderDate")
+        grouping.binValue = 3; grouping.binUnit = .month
+        bins.grouping = grouping
+        table.columns.append(bins)
+        table.hierarchies = [Hierarchy(name: "Dates", levels: ["OrderDate (bins)", "OrderDate"])]
+        table.dateColumn = "OrderDate"
+        var calendar = CalendarDefinition(name: "Fiscal", columnsByUnit: ["date": "OrderDate"])
+        calendar.fiscalYearStartMonth = 7
+        table.calendars = [calendar]
+        var policy = IncrementalRefreshPolicy(dateColumn: "OrderDate")
+        policy.realTimeDirectQuery = true; policy.onlyCompletePeriods = true
+        table.incrementalRefresh = policy
+        doc.model.tables = [table]
+        var role = SecurityRole(name: "West")
+        role.tableFilters = ["Sales": "[Region] = \"West\""]; role.hiddenColumns = ["Sales[OrderDate]"]
+        doc.model.roles = [role]
+        var group = CalculationGroup(name: "Time")
+        var item = CalculationItem(name: "YTD", expression: "CALCULATE(SELECTEDMEASURE())")
+        item.formatExpression = "\"0.0\""
+        group.items = [item]; group.precedence = 3
+        doc.model.calculationGroups = [group]
+        var parameter = FunctionParameter(name: "rate")
+        parameter.defaultExpression = "0.1"
+        doc.model.functions = [UserFunction(name: "AddTax", parameters: [parameter], expression: "100 * rate")]
+        doc.model.perspectives = [Perspective(name: "Finance")]
+        var french = Translation(culture: "fr-FR")
+        french.captions = ["Sales": "Ventes"]
+        doc.model.translations = [french]
+        doc.model.whatIfParameters = [WhatIfParameter(name: "Discount", minimum: 0, maximum: 1, increment: 0.5, defaultValue: 0)]
+        doc.model.fieldParameters = [FieldParameter(name: "Axis", fields: [.column("Sales", "OrderDate")])]
+        doc.model.aggregations = [AggregationMapping(aggTable: "Agg", aggColumn: "Rows", summarization: .count, detailTable: "Sales", detailColumn: "")]
+        doc.model.aiExcludedFields = ["Sales[OrderDate]"]
+        doc.model.aiInstructions = "Revenue means net sales."
+        doc.model.verifiedAnswers = [VerifiedAnswer(question: "How are sales?")]
+        doc.model.qnaSynonyms = ["Sales[Total]": ["revenue"]]
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).facet")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try DocumentPackage.write(doc, to: url)
+        let back = try DocumentPackage.read(from: url).model
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        XCTAssertEqual(String(decoding: try encoder.encode(back), as: UTF8.self), String(decoding: try encoder.encode(doc.model), as: UTF8.self))
+        XCTAssertEqual(back.tables.first?.columns.last?.grouping?.binUnit, .month)
+    }
+
+    /// Documents saved before date bins had a unit still open.
+    func testGroupingWithoutABinUnitStillDecodes() throws {
+        let old = #"{"kind":"binSize","sourceColumn":"Amount","groups":{},"binValue":25}"#
+        let g = try JSONDecoder().decode(ColumnGrouping.self, from: Data(old.utf8))
+        XCTAssertNil(g.binUnit)
+        XCTAssertEqual(g.bin(.double(60), minimum: 0, maximum: 100), .double(50))
+    }
 }
