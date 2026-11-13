@@ -386,7 +386,8 @@ public final class DAXEngine {
             let byValues = db.column(byCid).values
             var idx = Array(0..<n)
             idx.sort { DAXOps.sortCompare(byValues[$0], byValues[$1]) < 0 }
-            if f.topN.isBottom { idx.reverse() }
+            // "Top N" keeps the largest values, "Bottom N" the smallest.
+            if !f.topN.isBottom { idx.reverse() }
             let keep = Set(idx.prefix(max(0, f.topN.count))).map { Int32($0) }
             return CtxFilter(.rows(cid.table, RowSel(n: n, rows: keep.count == n ? nil : keep, blank: false)))
         case .relativeDate, .relativeTime:

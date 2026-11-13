@@ -429,7 +429,7 @@ extension DAXEngine {
         d["ISCROSSFILTERED"] = { e, a, c, _ in
             let (n, ac) = e.deref(a[0], c)
             if case .ident(let tn) = n.kind, let ti = e.db.tableIndex[tn.daxKey] { return .scalar(.bool(c.fc.isCrossFiltered(ti))) }
-            return .scalar(.bool(c.fc.isCrossFiltered(try e.columnArg(n, ac, "ISCROSSFILTERED").table)))
+            return .scalar(.bool(c.fc.isCrossFiltered(try e.columnArg(n, ac, "ISCROSSFILTERED"))))
         }
         d["ISINSCOPE"] = { e, a, c, _ in
             if let vc = c.visual, case .column(nil, let name, _) = a[0].kind {

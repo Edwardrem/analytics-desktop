@@ -219,6 +219,16 @@ final class FilterContext {
         }
     }
 
+    /// True when a filter other than a direct filter on column `c` restricts its table
+    /// (another column of the same table, a row filter, or a related table).
+    func isCrossFiltered(_ c: ColumnID) -> Bool {
+        filters.contains { f in
+            if f.columns == [c] && f.tables == [c.table] { return false }
+            guard let s = f.selection(for: c.table, rel: rel, db: db) else { return false }
+            return !(s.isAll && s.blank)
+        }
+    }
+
     func adding(_ new: [CtxFilter], keep: Bool = false) -> FilterContext {
         if new.isEmpty { return self }
         var base = filters
