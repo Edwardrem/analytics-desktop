@@ -95,11 +95,20 @@ public final class DAXEngine {
     // MARK: Security
 
     /// Applies row-level and object-level security of the named roles. Returns per-role problems.
+    ///
+    /// Within a role the table filters combine (AND); a user in several roles sees the union of
+    /// what each role allows, so a role without row filters lifts the restriction. Security
+    /// filters travel from the one side to the many side of relationships only, unless a
+    /// relationship applies its security filter in both directions. A filter that cannot be
+    /// evaluated hides every row of its table rather than exposing the table.
     private func applySecurity(model: SemanticModel, roleNames: [String]) -> [String: String] {
         var problems: [String: String] = [:]
         let active = roleNames.isEmpty ? [] : model.roles.filter { roleNames.contains($0.name) }
+        for name in roleNames where !model.roles.contains(where: { $0.name == name }) {
+            problems["Role “\(name)”"] = "The model has no role named “\(name)”."
+        }
         self.roleNames = active.map(\.name)
-        var filters: [CtxFilter] = []
+        var alternatives: [[CtxFilter]] = []
         for role in active {
             for table in role.hiddenTables {
                 if let ti = db.tableIndex[table.daxKey] { olsTables.insert(ti) }
@@ -110,16 +119,34 @@ public final class DAXEngine {
                     olsColumns.insert(cid)
                 }
             }
+            var filters: [CtxFilter] = []
             for (table, filter) in role.tableFilters.sorted(by: { $0.key < $1.key }) {
-                guard let ti = db.tableIndex[table.daxKey] else { continue }
+                guard !filter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+                guard let ti = db.tableIndex[table.daxKey] else {
+                    problems["Role “\(role.name)”"] = "The row filter refers to table \(table), which does not exist."
+                    continue
+                }
+                let rowFilter: CtxFilter
                 do {
-                    filters.append(try rowFilter(ti, filter))
+                    rowFilter = try self.rowFilter(ti, filter)
                 } catch {
                     problems["Role “\(role.name)”"] = "The row filter on \(table) could not be applied: \((error as? DAXError)?.message ?? error.localizedDescription)"
+                    rowFilter = CtxFilter(.rows(ti, RowSel(n: db.tables[ti].rowCount, rows: [], blank: false)))
                 }
+                rowFilter.isSecurity = true
+                filters.append(rowFilter)
             }
+            alternatives.append(filters)
         }
-        db.securityFilters = filters
+        if alternatives.count == 1 {
+            db.securityFilters = alternatives[0]
+        } else if !alternatives.isEmpty, !alternatives.contains(where: \.isEmpty) {
+            let union = CtxFilter(.union(alternatives))
+            union.isSecurity = true
+            db.securityFilters = [union]
+        } else {
+            db.securityFilters = []
+        }
         return problems
     }
 
@@ -196,6 +223,9 @@ public final class DAXEngine {
             }
             if ok { calcGroups.append(CalcGroupDef(name: g.name, column: ColumnID(table: ti, col: cid), precedence: g.precedence, items: items)) }
         }
+
+        // The group with the highest precedence is applied first (outermost).
+        calcGroups.sort { $0.precedence > $1.precedence }
 
         // Calculated tables: replace their (empty) storage with the evaluated result.
         for t in model.tables where t.isCalculated {
@@ -389,43 +419,11 @@ public final class DAXEngine {
             guard !alternatives.isEmpty else { return nil }
             return CtxFilter(.union(alternatives))
         case .topN:
-            guard let by = f.topN.by, let byCid = db.columnID(table: by.table, column: by.name) else { return nil }
-            let n = col.values.count
-            let byValues = db.column(byCid).values
-            var idx = Array(0..<n)
-            idx.sort { DAXOps.sortCompare(byValues[$0], byValues[$1]) < 0 }
-            if f.topN.isBottom { idx.reverse() }
-            let keep = Set(idx.prefix(max(0, f.topN.count))).map { Int32($0) }
-            return CtxFilter(.rows(cid.table, RowSel(n: n, rows: keep.count == n ? nil : keep, blank: false)))
+            guard let by = f.topN.by else { return nil }
+            return CtxFilter(.values(cid, try topNValues(of: cid, count: f.topN.count, by: by, bottom: f.topN.isBottom)))
         case .relativeDate, .relativeTime:
-            let r = f.relative
-            let now = Date()
-            let cal = Calendar.utc
-            var start = now, end = now
-            let unit: Calendar.Component
-            switch r.unit {
-            case .minutes: unit = .minute
-            case .hours: unit = .hour
-            case .days, .weeks, .calendarWeeks: unit = .day
-            case .months, .calendarMonths: unit = .month
-            case .years, .calendarYears: unit = .year
-            }
-            func add(_ d: Date, _ n: Int) -> Date { cal.date(byAdding: unit, value: n, to: d) ?? d }
-            switch r.direction {
-            case .this:
-                let lo = r.unit == .days ? cal.startOfDay(for: now) : now
-                start = lo; end = add(lo, 1)
-            case .last:
-                end = r.includeToday ? add(now, 1) : now
-                start = add(end, -r.count)
-            case .next:
-                start = r.includeToday ? now : add(now, 1)
-                end = add(start, r.count)
-            }
-            if r.unit == .calendarWeeks || r.unit == .calendarMonths || r.unit == .calendarYears {
-                start = cal.dateInterval(of: unit, for: start)?.start ?? start
-                end = cal.dateInterval(of: unit, for: add(end, -1))?.end ?? end
-            }
+            let window = RelativeDates.window(f.relative)
+            let start = window.lowerBound, end = window.upperBound
             let n = col.values.count
             let idx: [Int32] = (0..<n).compactMap { r in
                 guard let d = col.values[r].asDate else { return nil }
@@ -500,6 +498,8 @@ public final class DAXEngine {
     /// Runs a DAX query (`DEFINE` + one or more `EVALUATE` statements).
     public func query(_ dax: String, filters: [FilterSpec] = [], crossFilters: [[DataPointSelection]] = []) throws -> [DataTable] {
         queryTables = [:]; queryFunctions = [:]; queryMeasures = [:]
+        // DEFINE is scoped to its query: nothing it declares may leak into later evaluations.
+        defer { queryTables = [:]; queryFunctions = [:]; queryMeasures = [:] }
         let parsed = try Parser.parseQuery(dax)
         let ctx = try rootContext(filters, crossFilters: crossFilters)
         try define(parsed, ctx: ctx)
@@ -599,24 +599,36 @@ public final class DAXEngine {
     }
 
     /// Evaluates one visual calculation over a visual's result grid, one value per row.
-    public func visualCalculation(_ expression: String, on grid: DataTable, rowAxis: [String] = [], colAxis: [String] = []) throws -> [Value] {
+    /// - Parameters:
+    ///   - grid: the visual's rows at its deepest level: axis columns and value columns.
+    ///   - rowAxis: names of the row-axis grouping columns, outermost first.
+    ///   - colAxis: names of the column-axis grouping columns, outermost first.
+    ///   - levels: grids of the visual's higher levels (subtotals and the grand total), each with
+    ///     the axis columns it keeps and the value columns, as the model computes them. COLLAPSE,
+    ///     COLLAPSEALL and LOOKUPWITHTOTALS read these. For a level that is not supplied the value
+    ///     columns are summed from the grid, which is exact for additive values only.
+    public func visualCalculation(_ expression: String, on grid: DataTable, rowAxis: [String] = [], colAxis: [String] = [],
+                                  levels: [DataTable] = []) throws -> [Value] {
         let node = try Parser.parseExpression(expression)
-        let infos = grid.columns.map { ColInfo(name: $0.name) }
-        let tv = TableValue(cols: Columns(infos), rows: grid.rows)
-        let cols = Columns(infos)
-        func indexOf(_ names: [String]) -> [Int] {
-            names.compactMap { n in cols.byName[n.daxKey] }
-        }
-        let vc = VisualCalcContext(grid: tv, rowAxis: indexOf(rowAxis), colAxis: indexOf(colAxis),
-                                   allRowFields: rowAxis, allColFields: colAxis)
+        // A model column arrives as `Table[Column]`: the calculation refers to it as [Column].
+        let cols = Columns(grid.columns.map { column -> ColInfo in
+            if column.name.hasSuffix("]"), let open = column.name.firstIndex(of: "["), open != column.name.startIndex {
+                let inner = column.name[column.name.index(after: open)..<column.name.index(before: column.name.endIndex)]
+                return ColInfo(name: String(inner), table: String(column.name[..<open]))
+            }
+            return ColInfo(name: column.name)
+        })
+        let tv = TableValue(cols: cols, rows: grid.rows)
+        func indexOf(_ names: [String]) -> [Int] { names.compactMap { grid.columnIndex($0) ?? cols.byName[$0.daxKey] } }
+        let rows = indexOf(rowAxis), columns = indexOf(colAxis)
+        let vc = VisualCalcContext(grid: tv, rowAxis: rows, colAxis: columns, allRowFields: rowAxis, allColFields: colAxis)
+        let builder = VisualLevels(leaf: tv, names: grid.columnNames, axis: rows + columns, supplied: levels)
+        vc.levelGrid = { kept in builder.grid(keeping: kept) }
         var ctx = Ctx(fc: FilterContext(db: db))
-        ctx.visual = vc
         var out: [Value] = []
         out.reserveCapacity(tv.count)
         for r in 0..<tv.count {
-            vc.row = r
-            vc.aggRows = nil
-            ctx.visual = vc
+            ctx.visual = vc.moved(to: r)
             out.append(try scalar(node, ctx))
         }
         return out

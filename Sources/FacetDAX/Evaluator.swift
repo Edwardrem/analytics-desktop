@@ -190,7 +190,7 @@ extension DAXEngine {
                 case .pure(let p): return .scalar(try p(try args.map { try scalar($0, ctx) }))
                 }
             }
-            if let f = queryFunctions[name.daxKey] ?? functionDefs[name.daxKey] { return try callUDF(f, args, ctx, n) }
+            if let f = userFunction(name) { return try callUDF(f, args, ctx, n) }
             if name == "__TUPLE" { throw DAXError("A tuple can only be used with IN or inside a table constructor.") }
             let builtin = DAXEngine.builtins[name]
             let pure = builtin == nil ? DAXEngine.pureFns[name] : nil
@@ -380,6 +380,12 @@ extension DAXEngine {
 
     func lookupMeasure(_ key: String) -> MeasureDef? { queryMeasures[key] ?? measureDefs[key] }
 
+    /// The user-defined function with this name (query definitions shadow the model's); names are case-insensitive.
+    func userFunction(_ name: String) -> FunctionDef? {
+        let key = name.daxKey
+        return queryFunctions[key] ?? functionDefs[key]
+    }
+
     @inline(__always)
     func cell(_ c: ColumnID, _ row: Int32) -> Value { row < 0 ? .null : db.tables[c.table].columns[c.col].values[Int(row)] }
 
@@ -415,6 +421,10 @@ extension DAXEngine {
         while i >= 0 {
             if case .row(let cols, let vals) = ctx.frames[i], let k = cols.byName[b.nameKey] { return vals[k] }
             i -= 1
+        }
+        // A visual calculation refers to the visual's columns by name, ahead of model measures.
+        if let vc = ctx.visual, let k = vc.grid.cols.byName[b.nameKey] {
+            return vc.grid.data[safe: vc.row]?[safe: k] ?? .null
         }
         if let m = lookupMeasure(b.nameKey) { return try evalMeasure(m, ctx) }
         i = ctx.frames.count - 1
@@ -485,24 +495,23 @@ extension DAXEngine {
     }
 
     /// The format string for a measure in a filter context (dynamic format strings and calculation items).
+    /// Calculation items apply as they do to the value: the highest-precedence active item is the
+    /// outermost, and SELECTEDMEASUREFORMATSTRING() inside its format expression is the format
+    /// string after the remaining groups have been applied.
     func formatString(for m: MeasureDef, _ ctx: Ctx) -> String {
         var c = Ctx(fc: ctx.fc)
         c.selected = ctx.selected
-        var base = m.formatString
-        if let fe = m.formatExpr, let v = try? scalar(fe, c), !v.isNull { base = v.asString }
-        var fc = c.fc
-        var applied = Set<String>()
-        while let (item, group) = activeCalcItem(fc), applied.insert(group.name).inserted {
-            fc = fc.removing(columns: [group.column])
-            if let fe = item.formatExpr {
-                var c2 = Ctx(fc: fc)
-                c2.selected = ctx.selected
-                c2.selectedMeasure = m
-                c2.vars = VarScope(name: "__selectedmeasureformat", value: .scalar(.string(base)), parent: nil)
-                if let v = try? scalar(fe, c2), !v.isNull { base = v.asString }
-            }
+        c.depth = ctx.depth + 1
+        if ctx.depth < 64, let (item, group) = activeCalcItem(c.fc) {
+            c.fc = c.fc.removing(columns: [group.column])
+            let inner = formatString(for: m, c)
+            guard let fe = item.formatExpr else { return inner }
+            c.selectedMeasure = m
+            if let v = try? scalar(fe, c), !v.isNull { return v.asString }
+            return inner
         }
-        return base
+        if let fe = m.formatExpr, let v = try? scalar(fe, c), !v.isNull { return v.asString }
+        return m.formatString
     }
 
     // MARK: Shared helpers

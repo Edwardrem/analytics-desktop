@@ -219,6 +219,10 @@ final class FilterContext {
         }
     }
 
+    /// True when column `c` is cross-filtered: a filter on the column itself, on another column
+    /// of its table, or on a related table restricts the table.
+    func isCrossFiltered(_ c: ColumnID) -> Bool { isCrossFiltered(c.table) }
+
     func adding(_ new: [CtxFilter], keep: Bool = false) -> FilterContext {
         if new.isEmpty { return self }
         var base = filters

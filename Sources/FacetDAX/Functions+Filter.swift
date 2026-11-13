@@ -23,6 +23,8 @@ extension DAXEngine {
         let col = t.columns[c.col]
         if let dc = t.model?.dateColumn, dc.daxKey == col.name.daxKey { return true }
         if autoDateTables.contains(c.table), col.name == "Date" { return true }
+        // A relationship on a date column gives its table the same behaviour as a marked date table.
+        if col.type.isTemporal, db.rels.contains(where: { $0.oneT == c.table && $0.oneC == c.col }) { return true }
         return false
     }
 
@@ -140,7 +142,7 @@ extension DAXEngine {
             if let v = c.vars?.lookup(k) { if case .table = v { return true }; return false }
             return queryTables[k] != nil || db.tableIndex[k] != nil
         case .call(let name, let args):
-            if let f = queryFunctions[name.daxKey] ?? functionDefs[name.daxKey] { return isTableNode(f.body, Ctx(fc: c.fc)) }
+            if let f = userFunction(name) { return isTableNode(f.body, Ctx(fc: c.fc)) }
             if name == "IF" || name == "IF.EAGER" { return args.count > 1 && isTableNode(args[1], c) }
             return DAXEngine.tableFunctionNames.contains(name)
         case .vars(let vs, let body):
@@ -152,7 +154,10 @@ extension DAXEngine {
     }
 
     /// Applies CALCULATE filter arguments and context transition, returning the context for the inner expression.
-    func calculateContext(_ filterArgs: ArraySlice<Node>, _ ctx: Ctx) throws -> Ctx {        var removeCols = Set<ColumnID>(), removeTables = Set<Int>(), removeRowTables = Set<Int>()
+    /// `tables` are further filter tables (time intelligence's dates table) and `clearTables` are
+    /// tables whose filters are removed first, as a filter on a calendar's date column does.
+    func calculateContext(_ filterArgs: ArraySlice<Node>, _ ctx: Ctx, tables: [TableValue] = [], clearTables: [Int] = []) throws -> Ctx {
+        var removeCols = Set<ColumnID>(), removeTables = Set<Int>(clearTables), removeRowTables = Set<Int>()
         var removeAll = false
         var restore: [CtxFilter] = []
         var replaceAdds: [CtxFilter] = [], keepAdds: [CtxFilter] = []
@@ -264,6 +269,15 @@ extension DAXEngine {
         }
 
         for a in filterArgs where !a.isMissing { try collect(a, ctx, keep: false) }
+        // Filter tables replace existing filters on their columns exactly as a table argument of
+        // CALCULATE does; a filter on a date table's date column clears the rest of that table.
+        for t in tables {
+            let fs = filters(from: t)
+            for f in fs {
+                if case .values(let cid, _) = f.kind, isDateKeyColumn(cid) { removeTables.insert(cid.table) }
+            }
+            replaceAdds.append(contentsOf: fs)
+        }
 
         var fc = transition(ctx)
         if relChanged { fc = fc.with(rel: db.relState(active: active, dir: dir)) }
@@ -277,20 +291,8 @@ extension DAXEngine {
         return out
     }
 
-    /// CALCULATE with additional filter tables (time intelligence's dates table) and tables whose
-    /// own filters clear, as a filter on a date column does.
-    func calculateContext(_ filterArgs: ArraySlice<Node>, _ ctx: Ctx, tables: [TableValue], clearTables: [Int]) throws -> Ctx {
-        var out = try calculateContext(filterArgs, ctx)
-        if !clearTables.isEmpty { out.fc = out.fc.removing(tables: Set(clearTables)) }
-        if !tables.isEmpty {
-            var adds: [CtxFilter] = []
-            for t in tables { adds += filters(from: t) }
-            out.fc = out.fc.adding(adds, keep: true)
-        }
-        return out
-    }
-
-    func allTable(_ args: [Node], _ ctx: Ctx, blankRow: Bool, name: String) throws -> TableValue {        guard !args.isEmpty else { throw DAXError("\(name)() without arguments can only be used as a CALCULATE filter.") }
+    func allTable(_ args: [Node], _ ctx: Ctx, blankRow: Bool, name: String) throws -> TableValue {
+        guard !args.isEmpty else { throw DAXError("\(name)() without arguments can only be used as a CALCULATE filter.") }
         var c = ctx
         c.fc = ctx.fc.removingAll()
         let (n, ac) = deref(args[0], ctx)
@@ -429,7 +431,7 @@ extension DAXEngine {
         d["ISCROSSFILTERED"] = { e, a, c, _ in
             let (n, ac) = e.deref(a[0], c)
             if case .ident(let tn) = n.kind, let ti = e.db.tableIndex[tn.daxKey] { return .scalar(.bool(c.fc.isCrossFiltered(ti))) }
-            return .scalar(.bool(c.fc.isCrossFiltered(try e.columnArg(n, ac, "ISCROSSFILTERED").table)))
+            return .scalar(.bool(c.fc.isCrossFiltered(try e.columnArg(n, ac, "ISCROSSFILTERED"))))
         }
         d["ISINSCOPE"] = { e, a, c, _ in
             if let vc = c.visual, case .column(nil, let name, _) = a[0].kind {
