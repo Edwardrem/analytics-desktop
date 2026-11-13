@@ -40,6 +40,9 @@ struct PaneDock: Codable, Equatable {
     static let stripWidth: Double = 30
     /// The canvas never gets narrower than this while a pane can still be collapsed.
     static let minimumCanvas: Double = 340
+    /// The canvas the default arrangement aims for. With all three panes at their default widths
+    /// this is a window of about 1300 pt; below it Filters starts as its strip.
+    static let comfortableCanvas: Double = 420
     /// Panes that only mean something in Report view.
     static let reportOnly: Set<String> = [
         InspectorPane.bookmarks.rawValue, InspectorPane.selection.rawValue, InspectorPane.syncSlicers.rawValue,
@@ -230,6 +233,15 @@ struct PaneDock: Codable, Equatable {
         var columns = slots(for: view).map { slot -> DockColumn in
             let isCollapsed = collapsed.contains(slot)
             return DockColumn(slot: slot, width: isCollapsed ? PaneDock.stripWidth : width(of: slot), collapsed: isCollapsed)
+        }
+        // A Filters pane the user has never asked for starts as its strip when the default panes
+        // would leave the page too small to work on. Default widths decide, so dragging a pane
+        // wider never folds another one away.
+        if !recency.contains(.filters), let i = columns.firstIndex(where: { $0.slot == .filters && !$0.collapsed }) {
+            let defaults = columns.reduce(0) { $0 + ($1.collapsed ? $1.width : $1.slot.defaultWidth) }
+            if available - defaults < PaneDock.comfortableCanvas {
+                columns[i] = DockColumn(slot: .filters, width: PaneDock.stripWidth, collapsed: true, automatic: true)
+            }
         }
         // Give way in this order: never-touched columns in Windows order of importance, then by age.
         let untouched: [DockSlot] = [.filters, .extras, .data, .visualizations].filter { !recency.contains($0) }

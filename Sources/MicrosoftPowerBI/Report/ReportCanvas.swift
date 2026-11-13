@@ -62,12 +62,12 @@ struct ReportCanvas: View {
         GeometryReader { geo in
             let size = store.canvasSize
             let scale = store.fitToWindow
-                ? max(0.1, min((geo.size.width - 64) / size.width, (geo.size.height - 64) / size.height))
+                ? CanvasFit.scale(viewport: geo.size, page: CGSize(width: size.width, height: size.height))
                 : store.zoom
             ScrollView([.horizontal, .vertical]) {
                 page(scale: scale)
                     .frame(width: size.width * scale, height: size.height * scale)
-                    .padding(32)
+                    .padding(CanvasFit.margin)
                     .frame(minWidth: geo.size.width, minHeight: geo.size.height)
             }
             .background(wallpaper)

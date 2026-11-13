@@ -46,6 +46,19 @@ enum StatusModel {
     static func percent(_ zoom: Double) -> String { "\(Int(((zoom.isFinite ? zoom : 1) * 100).rounded()))%" }
 }
 
+/// "Fit to page": the largest zoom at which the whole page shows in the canvas.
+enum CanvasFit {
+    /// Space kept clear around the page, each side.
+    static let margin: Double = 16
+    static func scale(viewport: CGSize, page: CGSize) -> Double {
+        guard page.width > 0, page.height > 0 else { return 1 }
+        let w = (Double(viewport.width) - margin * 2) / Double(page.width)
+        let h = (Double(viewport.height) - margin * 2) / Double(page.height)
+        let s = min(w, h)
+        return s.isFinite ? min(max(s, StatusModel.zoomRange.lowerBound), StatusModel.zoomRange.upperBound) : 1
+    }
+}
+
 /// The bar along the bottom of the window: where you are, what the document is doing, how the
 /// model is stored, and the zoom.
 struct StatusBar: View {
