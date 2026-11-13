@@ -59,6 +59,8 @@ public struct QueryEnvironment: Sendable {
     public var networkTimeout: TimeInterval = 100
     /// Extra directories searched for command-line database clients (psql, mysql, sqlcmd, isql) before PATH and Homebrew.
     public var toolSearchPaths: [String] = []
+    /// Largest file (or decompressed archive entry) a file connector will read, in bytes. Larger inputs fail with a clear error.
+    public var maxSourceBytes: Int = 4 << 30
 
     public init(baseDirectory: URL? = nil, credentials: CredentialProvider? = nil) {
         self.baseDirectory = baseDirectory; self.credentials = credentials

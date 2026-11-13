@@ -150,7 +150,9 @@ extension MLibrary {
                 return parts
             }
         }
-        lib.fn("Splitter.SplitByNothing", 0) { _, _ in splitter { s, _ in [s] } }
+        lib.fn("Splitter.SplitByNothing", 0) { _, _ in
+            .function(MFunction(name: "Splitter", minArgs: 1, maxArgs: 1) { a, _ in .list([a[0]]) }) // keeps the value, whatever its type
+        }
 
         /// A combiner: `list → text`; nulls combine as empty text.
         func combiner(_ body: @escaping ([String]) -> String) -> MValue {
