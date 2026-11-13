@@ -493,6 +493,16 @@ struct Parser {
             }
             return Node(.column(table: t.text, name: c.text, sub: sub), t.range.lowerBound..<end)
         }
+        // The two-word axes of visual calculations: ROWS COLUMNS and COLUMNS ROWS.
+        let first = t.text.uppercased()
+        if (first == "ROWS" || first == "COLUMNS"), cur.kind == .identifier {
+            let second = cur.text.uppercased()
+            if second != first, second == "ROWS" || second == "COLUMNS" {
+                let end = cur.range.upperBound
+                advance()
+                return Node(.ident("\(first) \(second)"), t.range.lowerBound..<end)
+            }
+        }
         return Node(.ident(t.text), t.range)
     }
 
