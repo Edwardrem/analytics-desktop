@@ -3,21 +3,31 @@ import FacetCore
 import FacetDesign
 import FacetVisuals
 
-/// One document window, laid out like Power BI Desktop on Windows:
-/// ribbon · view rail | workspace over page tabs | Filters, Visualizations, Data panes · status bar.
+/// One document window. Owns the document's store for the life of the window and hands it,
+/// with its shell state, to the layout.
 struct DocumentWindow: View {
     let handle: DocumentHandle
     @StateObject private var store: DocumentStore
-    @ObservedObject private var shell: ShellState
-    @Environment(\.openWindow) private var openWindow
-    @State private var paletteVisible = false
 
     init(handle: DocumentHandle) {
         self.handle = handle
-        let store = StoreRegistry.shared.store(for: handle)
-        _store = StateObject(wrappedValue: store)
-        _shell = ObservedObject(wrappedValue: ShellState.of(store))
+        // The autoclosure runs once, when SwiftUI first installs the state — not on every `init`.
+        _store = StateObject(wrappedValue: StoreRegistry.shared.store(for: handle))
     }
+
+    var body: some View {
+        DocumentLayout(handle: handle, store: store, shell: ShellState.of(store))
+    }
+}
+
+/// The window laid out like Power BI Desktop on Windows:
+/// ribbon · view rail | workspace over page tabs | Filters, Visualizations, Data panes · status bar.
+private struct DocumentLayout: View {
+    let handle: DocumentHandle
+    @ObservedObject var store: DocumentStore
+    @ObservedObject var shell: ShellState
+    @Environment(\.openWindow) private var openWindow
+    @State private var paletteVisible = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,12 +49,17 @@ struct DocumentWindow: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if store.inspectorVisible && !store.presenting {
-                        PaneDockView(shell: shell, available: geo.size.width - ShellMetrics.railWidth)
+                        PaneDockView(shell: shell)
                             .transition(.move(edge: .trailing))
                     }
                 }
+                .onChange(of: geo.size.width, initial: true) { _, width in
+                    shell.available = Double(width - ShellMetrics.railWidth)
+                }
             }
-            .overlay(alignment: .top) { RibbonPeek(shell: shell, modeling: store.modeling) }
+            .overlay(alignment: .top) {
+                if !store.presenting { RibbonPeek(shell: shell, modeling: store.modeling) }
+            }
             if !store.presenting {
                 Hairline()
                 StatusBar()
@@ -58,7 +73,7 @@ struct DocumentWindow: View {
         .background(Design.Palette.surface)
         .toolbar { TitleBarToolbar(store: store, showPalette: { paletteVisible = true }) }
         .navigationTitle(store.displayName)
-        .navigationSubtitle(subtitle)
+        .navigationSubtitle(store.isDirty ? "Edited" : "")
         .environmentObject(store)
         .focusedSceneObject(store)
         .overlay(alignment: .bottom) { StatusToast().environmentObject(store) }
@@ -66,18 +81,24 @@ struct DocumentWindow: View {
         .overlay { overlays }
         .sheet(item: $store.sheet) { $0.view }
         .background(WindowCloseGuard(store: store, handleID: handle.id))
-        .onReceive(NotificationCenter.default.publisher(for: .facetShowPalette)) { _ in
-            if NSApp.keyWindow != nil { paletteVisible = true }
+        .onChange(of: store.presenting) { _, presenting in
+            if presenting { shell.ribbonPeeking = false }
+        }
+        // Notifications reach every window; each acts only on the ones addressed to its own document.
+        .onReceive(NotificationCenter.default.publisher(for: .facetShowPalette)) { note in
+            if ShellNotifications.isAddressed(note, to: store) { paletteVisible = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: .facetOpenQueryEditor)) { note in
-            if (note.object as? DocumentStore) === store { openWindow(id: "query-editor", value: handle.id) }
+            if ShellNotifications.isAddressed(note, to: store) { openWindow(id: "query-editor", value: handle.id) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .facetRunDataFunction)) { note in
+            guard ShellNotifications.isAddressed(note, to: store) else { return }
+            store.status = StatusMessage(kind: .warning, text: ShellNotifications.dataFunctionMessage(note))
         }
         .onAppear {
             FileOperations.openInNewWindow = { url in openWindow(id: "document", value: DocumentHandle(url: url)) }
         }
     }
-
-    private var subtitle: String { store.isDirty ? "Edited" : "" }
 
     @ViewBuilder private var workspace: some View {
         switch store.view {
@@ -108,6 +129,21 @@ struct DocumentWindow: View {
 
 extension Notification.Name {
     static let facetOpenQueryEditor = Notification.Name("facet.openQueryEditor")
+}
+
+/// How windows decide whether a document-scoped notification is theirs.
+enum ShellNotifications {
+    /// A notification belongs to the window whose store posted it. One with no sender belongs to nobody.
+    static func isAddressed(_ note: Notification, to store: DocumentStore) -> Bool {
+        (note.object as? DocumentStore) === store
+    }
+    /// A button asked to run a user data function. Nothing in this build can call one, so say so
+    /// instead of doing nothing.
+    static func dataFunctionMessage(_ note: Notification) -> String {
+        let name = (note.userInfo?["action"] as? ActionSpec)?.functionName ?? ""
+        let subject = name.isEmpty ? "This button's data function" : "The data function “\(name)”"
+        return "\(subject) can't run: \(AppIdentity.name) can't call Fabric user data functions yet. Choose another action for the button in the Build pane."
+    }
 }
 
 /// The title bar keeps only what Windows keeps there: save, undo, redo, search and the account.

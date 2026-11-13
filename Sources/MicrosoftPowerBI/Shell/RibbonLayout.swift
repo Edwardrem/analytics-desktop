@@ -313,9 +313,13 @@ enum RibbonLayout {
                     entry("optimize.presetInteractive", "Full Interactivity", "hare"),
                 ]),
             ]),
-            RibbonGroup(title: "Slicers", items: [
-                large("optimize.applyAllSlicers", "Apply all slicers", "checkmark.rectangle"),
-                large("optimize.clearSlicers", "Clear all slicers", "xmark.rectangle"),
+            // As on Windows, this group inserts the two buttons; it does not act on the slicers itself.
+            RibbonGroup(title: "Insert slicer buttons", items: [
+                large("optimize.applyAllSlicers", "Apply all slicers button", "checkmark.rectangle"),
+                large("optimize.clearAllSlicersButton", "Clear all slicers button", "xmark.rectangle"),
+            ]),
+            RibbonGroup(title: "Selections", items: [
+                large("optimize.clearSlicers", "Clear selections now", "xmark.circle"),
             ]),
             RibbonGroup(title: "Diagnostics", items: [
                 large("optimize.performance", "Performance analyzer", "gauge.with.needle"),
@@ -498,15 +502,13 @@ enum RibbonLayout {
     }
 
     /// Every command id the table names, sorted and without repeats.
-    static var referencedIDs: [String] {
+    static let referencedIDs: [String] =
         Array(Set(tabs.flatMap { $0.groups.flatMap { $0.items.flatMap(commands(in:)).map(\.id) } })).sorted()
-    }
     /// Prefixes whose commands are picked up as they register.
-    static var registeredPrefixes: [String] {
+    static let registeredPrefixes: [String] =
         tabs.flatMap { $0.groups.flatMap { $0.items.compactMap { item -> String? in
             if case .registered(let p) = item.control { return p } else { return nil }
         } } }
-    }
     /// Ids the ribbon names that the registry does not have: these draw disabled.
     static func unregisteredIDs(in registered: Set<String>) -> [String] {
         referencedIDs.filter { !registered.contains($0) }
@@ -565,9 +567,18 @@ enum RibbonLayout {
     /// The tabs to show, in order: those that belong to the view and whose requirement holds.
     /// A tab that resolves to no groups (nothing registered for it yet) is left out.
     static func visibleTabs(_ context: RibbonContext, registry: [RibbonCommandInfo]) -> [RibbonTab] {
-        tabs.filter { $0.views.contains(context.view) && context.satisfies($0.requirement) }
-            .map { expand($0, registry: registry) }
-            .filter { !$0.groups.isEmpty }
+        visibleTabs(context, resolved: resolve(registry: registry))
+    }
+
+    /// Every tab resolved against a registry, empty ones dropped. This depends only on the set of
+    /// commands, so it is computed once per registry generation (`RibbonRegistry.resolved`).
+    static func resolve(registry: [RibbonCommandInfo]) -> [RibbonTab] {
+        tabs.map { expand($0, registry: registry) }.filter { !$0.groups.isEmpty }
+    }
+
+    /// The per-render part: pick the already-resolved tabs that belong to this window state.
+    static func visibleTabs(_ context: RibbonContext, resolved: [RibbonTab]) -> [RibbonTab] {
+        resolved.filter { $0.views.contains(context.view) && context.satisfies($0.requirement) }
     }
 
     /// The tab to draw: the chosen one while it is visible, otherwise the first (Home).
