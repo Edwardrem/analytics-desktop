@@ -19,7 +19,7 @@ enum FileOperations {
         panel.canChooseDirectories = true     // .pbip projects are folders; .facet packages are treated as files
         panel.treatsFilePackagesAsDirectories = false
         panel.allowedContentTypes = openableExtensions.compactMap { UTType(filenameExtension: $0) } + [.folder]
-        panel.message = "Open a Power BI document, project, template, or report."
+        panel.message = "Open an \(AppIdentity.name) document, or a Power BI project, template or report."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url, into: store)
     }
@@ -49,7 +49,7 @@ enum FileOperations {
         if let importer = importers["pbip"], (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
             return try importer(url)
         }
-        throw CocoaError(.fileReadUnsupportedScheme, userInfo: [NSLocalizedDescriptionKey: "Power BI can't read “.\(ext)” files."])
+        throw CocoaError(.fileReadUnsupportedScheme, userInfo: [NSLocalizedDescriptionKey: "\(AppIdentity.name) can't read “.\(ext)” files."])
     }
 
     @discardableResult

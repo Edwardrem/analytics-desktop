@@ -225,7 +225,7 @@ final class AssistantPaneModel: ObservableObject {
     private var turnTask: Task<Void, Never>?
 
     static let instructions = """
-    You are the assistant built into Power BI for Mac. You help analyse data, write DAX, and build reports.
+    You are the assistant built into \(AppIdentity.name) for Mac. You help analyse data, write DAX, and build reports.
     Prefer running a DAX query with run_dax to answer questions about the data, then describe the result.
     Use get_model_schema when unsure what tables, columns or measures exist.
     Use add_visual to create a visual on the report page when the user asks for one, and add_measure to add a measure.

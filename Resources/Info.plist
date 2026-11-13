@@ -17,11 +17,11 @@
     <key>NSPrincipalClass</key><string>NSApplication</string>
     <key>NSSupportsAutomaticTermination</key><false/>
     <key>NSHumanReadableCopyright</key><string>Independent desktop app. Not affiliated with or endorsed by Microsoft.</string>
-    <key>NSLocationWhenInUseUsageDescription</key><string>Power BI uses your location only to centre maps when you ask it to.</string>
+    <key>NSLocationWhenInUseUsageDescription</key><string>Analytics Desktop uses your location only to centre maps when you ask it to.</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
-            <key>CFBundleTypeName</key><string>Power BI Document</string>
+            <key>CFBundleTypeName</key><string>Analytics Desktop Document</string>
             <key>CFBundleTypeRole</key><string>Editor</string>
             <key>LSHandlerRank</key><string>Owner</string>
             <key>LSTypeIsPackage</key><true/>
@@ -38,7 +38,7 @@
     <array>
         <dict>
             <key>UTTypeIdentifier</key><string>com.facet.document</string>
-            <key>UTTypeDescription</key><string>Power BI Document</string>
+            <key>UTTypeDescription</key><string>Analytics Desktop Document</string>
             <key>UTTypeConformsTo</key><array><string>com.apple.package</string><string>public.composite-content</string></array>
             <key>UTTypeTagSpecification</key><dict><key>public.filename-extension</key><array><string>facet</string></array></dict>
         </dict>

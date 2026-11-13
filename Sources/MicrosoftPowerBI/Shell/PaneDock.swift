@@ -111,12 +111,7 @@ struct PaneDock: Codable, Equatable {
     /// The columns a view shows, left to right. Report view has the three Windows panes; Table and
     /// Model view keep Data; the code views keep only the extra panes that are not about the report.
     func slots(for view: WorkspaceView) -> [DockSlot] {
-        let fixed: [DockSlot]
-        switch view {
-        case .report: fixed = [.filters, .visualizations, .data]
-        case .table, .model: fixed = [.data]
-        case .dax, .tmdl: fixed = []
-        }
+        let fixed = PaneDock.fixedSlots(in: view)
         return DockSlot.allCases.filter { slot in
             slot == .extras ? !extras(for: view).isEmpty : (fixed.contains(slot) && !hidden.contains(slot))
         }
@@ -132,20 +127,42 @@ struct PaneDock: Codable, Equatable {
         }
     }
 
-    /// True when the pane is open, expanded and the one showing in its column.
-    func isShowing(_ pane: String) -> Bool {
-        let slot = PaneDock.slot(for: pane)
-        guard !collapsed.contains(slot) else { return false }
-        switch slot {
-        case .filters, .data: return !hidden.contains(slot)
-        case .visualizations: return !hidden.contains(slot) && visualizationsPane == pane
-        case .extras: return openExtras.contains(pane) && (activeExtra ?? openExtras.last) == pane
+    /// The fixed columns a view has room for in principle.
+    static func fixedSlots(in view: WorkspaceView) -> [DockSlot] {
+        switch view {
+        case .report: return [.filters, .visualizations, .data]
+        case .table, .model: return [.data]
+        case .dax, .tmdl: return []
         }
+    }
+
+    /// Whether a pane can be shown in a view at all. Its switch is disabled when it cannot.
+    static func isAvailable(_ pane: String, in view: WorkspaceView) -> Bool {
+        let slot = slot(for: pane)
+        if slot == .extras { return view == .report || !reportOnly.contains(pane) }
+        return fixedSlots(in: view).contains(slot)
+    }
+
+    /// True when the pane is actually drawn, expanded, in this view at this width: its column is
+    /// there, is not a strip (whether the user or the layout collapsed it), and it is the pane in front.
+    func isShowing(_ pane: String, view: WorkspaceView, available: Double) -> Bool {
+        let slot = PaneDock.slot(for: pane)
+        guard let column = columns(for: view, available: available).first(where: { $0.slot == slot }),
+              !column.collapsed else { return false }
+        return self.pane(in: slot, view: view) == pane
+    }
+
+    /// True when two arrangements differ at most in pane widths.
+    func sameArrangement(as other: PaneDock) -> Bool {
+        var a = self, b = other
+        a.widths = [:]; b.widths = [:]
+        return a == b
     }
 
     // MARK: - Changing it
 
-    private mutating func touch(_ slot: DockSlot) {
+    /// Marks a column as the one most recently asked for, so it is the last to give way.
+    mutating func bringForward(_ slot: DockSlot) {
         recency.removeAll { $0 == slot }
         recency.append(slot)
     }
@@ -162,7 +179,7 @@ struct PaneDock: Codable, Equatable {
             activeExtra = pane
         case .filters, .data: break
         }
-        touch(slot)
+        bringForward(slot)
     }
 
     /// Closes a pane. Build and Format close the Visualizations column they share.
@@ -176,14 +193,23 @@ struct PaneDock: Codable, Equatable {
         }
     }
 
-    /// The View-tab switch for a pane: show it, or close it when it is already showing.
-    mutating func toggle(_ pane: String) {
-        if isShowing(pane) { close(pane) } else { reveal(pane) }
-    }
-
     /// Collapses a column to its strip, or expands it again.
     mutating func setCollapsed(_ slot: DockSlot, _ value: Bool) {
-        if value { collapsed.insert(slot) } else { collapsed.remove(slot); touch(slot) }
+        if value { collapsed.insert(slot) } else { collapsed.remove(slot); bringForward(slot) }
+    }
+
+    /// The widest a column may be dragged in this view and window: what is left once the canvas has
+    /// its minimum and the other columns keep the widths they are drawn at. Never below the minimum width.
+    func maximumWidth(of slot: DockSlot, view: WorkspaceView, available: Double) -> Double {
+        let others = columns(for: view, available: available).filter { $0.slot != slot }.reduce(0) { $0 + $1.width }
+        let budget = available - PaneDock.minimumCanvas - others
+        return min(PaneDock.widthRange.upperBound, max(PaneDock.widthRange.lowerBound, budget))
+    }
+    /// Sets a width while dragging: clamped so the drag cannot push the canvas under its minimum,
+    /// which would otherwise collapse a pane (possibly the one being dragged).
+    mutating func setWidth(_ width: Double, of slot: DockSlot, view: WorkspaceView, available: Double) {
+        guard width.isFinite else { return }
+        setWidth(min(width, maximumWidth(of: slot, view: view, available: available)), of: slot)
     }
 
     func width(of slot: DockSlot) -> Double {

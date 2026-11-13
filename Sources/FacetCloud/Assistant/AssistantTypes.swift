@@ -1,4 +1,5 @@
 import Foundation
+import FacetCore
 
 /// Claude models offered for Facet's assistant. IDs are the exact Claude API model strings.
 public enum AssistantModel: Hashable, Sendable, CaseIterable {
@@ -97,7 +98,7 @@ public enum AssistantError: LocalizedError, Equatable {
         func rid(_ id: String?) -> String { id.map { " Request ID: \($0)." } ?? "" }
         switch self {
         case .notConfigured:
-            return "The assistant is not set up. Add your Anthropic API key in Power BI's Assistant settings (create one at console.anthropic.com)."
+            return "The assistant is not set up. Add your Anthropic API key in \(AppIdentity.name)'s Assistant settings (create one at console.anthropic.com)."
         case .authentication(let m, let id):
             return "The Anthropic API key was not accepted. Check the key in Assistant settings. \(m)" + rid(id)
         case .permissionDenied(let m, let id):
@@ -115,7 +116,7 @@ public enum AssistantError: LocalizedError, Equatable {
         case .network(let m):
             return "Could not reach the assistant service: \(m)"
         case .invalidResponse(let m):
-            return "The assistant service sent a response Power BI could not read (\(m))."
+            return "The assistant service sent a response \(AppIdentity.name) could not read (\(m))."
         case .toolRoundLimit(let n):
             return "The assistant stopped after \(n) rounds of tool use without finishing. Ask it to continue if needed."
         }

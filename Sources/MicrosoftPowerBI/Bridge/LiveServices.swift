@@ -429,7 +429,7 @@ enum LiveBridge {
                     }
                 }
                 guard !doc.report.pages.isEmpty else {
-                    throw InteropError.invalidFormat("“\(url.lastPathComponent)” holds no report layout Power BI can read.")
+                    throw InteropError.invalidFormat("“\(url.lastPathComponent)” holds no report layout \(AppIdentity.name) can read.")
                 }
                 warnings.append(ImportWarning("A \(ext) file carries its semantic model in a binary form; connect to your data with Get Data.",
                                               severity: .info))

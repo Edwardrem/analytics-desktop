@@ -152,10 +152,10 @@ struct PowerBIMenus: Commands {
         let enabled = store.map(c.isEnabled) ?? false
         let title = title(for: c)
         if let isOn = c.isOn {
-            Toggle(title, isOn: Binding(get: { store.map(isOn) ?? false }, set: { _ in if let store { c.run(store) } }))
+            Toggle(title, isOn: Binding(get: { store.map(isOn) ?? false }, set: { _ in if let store { AppCommands.perform(c, store) } }))
                 .keyboardShortcut(c.shortcut).disabled(!enabled)
         } else {
-            Button(title) { if let store { c.run(store) } }
+            Button(title) { if let store { AppCommands.perform(c, store) } }
                 .keyboardShortcut(c.shortcut).disabled(!enabled)
         }
     }

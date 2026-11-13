@@ -226,22 +226,79 @@ final class PaneDockTests: XCTestCase {
 
     func testRevealCloseAndToggle() {
         var dock = PaneDock()
-        XCTAssertTrue(dock.isShowing(InspectorPane.build.rawValue))
-        XCTAssertFalse(dock.isShowing(InspectorPane.format.rawValue))
+        func showing(_ pane: InspectorPane, _ view: WorkspaceView = .report, _ width: Double = 1400) -> Bool {
+            dock.isShowing(pane.rawValue, view: view, available: width)
+        }
+        XCTAssertTrue(showing(.build))
+        XCTAssertFalse(showing(.format))
         dock.reveal(InspectorPane.format.rawValue)
         XCTAssertEqual(dock.pane(in: .visualizations, view: .report), InspectorPane.format.rawValue)
-        XCTAssertFalse(dock.isShowing(InspectorPane.build.rawValue))
+        XCTAssertFalse(showing(.build))
 
-        dock.toggle(InspectorPane.filters.rawValue)
+        dock.close(InspectorPane.filters.rawValue)
         XCTAssertEqual(dock.slots(for: .report), [.visualizations, .data])
-        dock.toggle(InspectorPane.filters.rawValue)
+        XCTAssertFalse(showing(.filters))
+        dock.reveal(InspectorPane.filters.rawValue)
         XCTAssertEqual(dock.slots(for: .report), [.filters, .visualizations, .data])
 
-        // A collapsed pane is not "showing"; asking for it expands it rather than closing it.
+        // A collapsed pane is not "showing"; revealing it expands it.
         dock.setCollapsed(.data, true)
-        XCTAssertFalse(dock.isShowing(InspectorPane.data.rawValue))
-        dock.toggle(InspectorPane.data.rawValue)
-        XCTAssertTrue(dock.isShowing(InspectorPane.data.rawValue))
+        XCTAssertFalse(showing(.data))
+        dock.reveal(InspectorPane.data.rawValue)
+        XCTAssertTrue(showing(.data))
+    }
+
+    func testShowingMeansDrawnExpandedInThisViewAtThisWidth() {
+        var dock = PaneDock()
+        let filters = InspectorPane.filters.rawValue, build = InspectorPane.build.rawValue, data = InspectorPane.data.rawValue
+        // Wide window: all three are drawn.
+        XCTAssertTrue(dock.isShowing(filters, view: .report, available: 1400))
+        // Narrow window: Filters is an automatic strip, so it is not showing — although nothing hid it.
+        XCTAssertFalse(dock.isShowing(filters, view: .report, available: 952))
+        XCTAssertTrue(dock.isShowing(build, view: .report, available: 952))
+        // Asking for it expands it; another pane gives way instead.
+        dock.reveal(filters)
+        XCTAssertTrue(dock.isShowing(filters, view: .report, available: 952))
+        XCTAssertFalse(dock.isShowing(data, view: .report, available: 952))
+        // Table view has no Filters or Visualizations column, whatever the dock remembers.
+        XCTAssertFalse(dock.isShowing(filters, view: .table, available: 1400))
+        XCTAssertFalse(dock.isShowing(build, view: .table, available: 1400))
+        XCTAssertTrue(dock.isShowing(data, view: .table, available: 1400))
+        dock.reveal(bookmarks)
+        XCTAssertTrue(dock.isShowing(bookmarks, view: .report, available: 1600))
+        XCTAssertFalse(dock.isShowing(bookmarks, view: .table, available: 1600))
+    }
+
+    func testPaneAvailabilityByView() {
+        for pane in InspectorPane.allCases { XCTAssertTrue(PaneDock.isAvailable(pane.rawValue, in: .report), "\(pane)") }
+        XCTAssertTrue(PaneDock.isAvailable(InspectorPane.data.rawValue, in: .table))
+        XCTAssertTrue(PaneDock.isAvailable(assistant, in: .dax))
+        XCTAssertTrue(PaneDock.isAvailable("properties", in: .model))      // a pane from a later feature
+        for pane in [InspectorPane.filters, .build, .format, .bookmarks, .selection, .syncSlicers, .performance, .theme] {
+            XCTAssertFalse(PaneDock.isAvailable(pane.rawValue, in: .table), "\(pane)")
+        }
+        XCTAssertFalse(PaneDock.isAvailable(InspectorPane.data.rawValue, in: .tmdl))
+    }
+
+    func testResizeIsClampedToTheCanvasBudget() {
+        var dock = PaneDock()
+        dock.bringForward(.data)               // what a drag does first
+        // 1400 wide: Filters 260 + Visualizations 300 + canvas 340 leave 500 for Data.
+        XCTAssertEqual(dock.maximumWidth(of: .data, view: .report, available: 1400), 500)
+        dock.setWidth(5000, of: .data, view: .report, available: 1400)
+        XCTAssertEqual(dock.width(of: .data), 500)
+        // Dragging as far as it goes collapses nothing — least of all the pane being dragged.
+        XCTAssertFalse(dock.columns(for: .report, available: 1400).contains { $0.collapsed })
+        // The budget never drops below the minimum pane width, and NaN is ignored.
+        XCTAssertEqual(dock.maximumWidth(of: .data, view: .report, available: 400), PaneDock.widthRange.lowerBound)
+        dock.setWidth(.nan, of: .data, view: .report, available: 1400)
+        XCTAssertEqual(dock.width(of: .data), 500)
+        // Width-only differences are not a change of arrangement (they are saved when the drag ends).
+        var other = dock
+        other.setWidth(300, of: .data)
+        XCTAssertTrue(dock.sameArrangement(as: other))
+        other.setCollapsed(.data, true)
+        XCTAssertFalse(dock.sameArrangement(as: other))
     }
 
     func testExtraPanesShareOneColumn() {
@@ -250,10 +307,11 @@ final class PaneDockTests: XCTestCase {
         dock.reveal(selection)
         XCTAssertEqual(dock.extras(for: .report), [bookmarks, selection])
         XCTAssertEqual(dock.activeExtra(for: .report), selection)
-        XCTAssertFalse(dock.isShowing(bookmarks))
-        dock.toggle(bookmarks)                 // behind another pane: bring it forward
+        XCTAssertFalse(dock.isShowing(bookmarks, view: .report, available: 1600))
+        dock.reveal(bookmarks)                 // behind another pane: bring it forward
         XCTAssertEqual(dock.activeExtra(for: .report), bookmarks)
-        dock.toggle(bookmarks)                 // showing: close it
+        XCTAssertTrue(dock.isShowing(bookmarks, view: .report, available: 1600))
+        dock.close(bookmarks)
         XCTAssertEqual(dock.extras(for: .report), [selection])
         XCTAssertEqual(dock.activeExtra(for: .report), selection)
         dock.close(selection)
@@ -437,6 +495,188 @@ final class ShellStateTests: XCTestCase {
         store.undo()
         XCTAssertFalse(store.currentPage.visuals.contains { $0.type == .button })
     }
+
+    // MARK: Review findings
+
+    /// 2: under about 1218 pt Filters is an automatic strip. Its switch must be off, and choosing it
+    /// must expand the pane, not close it.
+    func testPaneSwitchInANarrowWindowExpandsTheStrip() {
+        let store = DocumentStore(services: .live())
+        let shell = ShellState.of(store)
+        shell.available = 952
+        let filters = AppCommands.command("view.pane.filters")
+        XCTAssertEqual(filters?.isOn?(store), false)
+        AppCommands.run("view.pane.filters", store)
+        XCTAssertFalse(shell.dock.hidden.contains(.filters), "the switch closed a pane that was only a strip")
+        XCTAssertEqual(filters?.isOn?(store), true)
+        XCTAssertEqual(shell.dock.columns(for: .report, available: 952).map(\.collapsed), [false, false, true])
+        AppCommands.run("view.pane.filters", store)          // now it is showing: the switch closes it
+        XCTAssertTrue(shell.dock.hidden.contains(.filters))
+        // A strip the user collapsed behaves the same way.
+        shell.available = 1600
+        shell.dock.setCollapsed(.data, true)
+        XCTAssertEqual(AppCommands.command("view.pane.data")?.isOn?(store), false)
+        AppCommands.run("view.pane.data", store)
+        XCTAssertEqual(AppCommands.command("view.pane.data")?.isOn?(store), true)
+    }
+
+    /// 2: switches for panes the current view cannot show are disabled and do nothing.
+    func testPaneSwitchesAreDisabledWhereThePaneCannotShow() {
+        let store = DocumentStore(services: .live())
+        let shell = ShellState.of(store)
+        store.view = .table
+        for id in ["view.pane.build", "view.pane.format", "view.pane.filters", "view.pane.bookmarks"] {
+            XCTAssertEqual(AppCommands.command(id)?.isEnabled(store), false, id)
+            XCTAssertEqual(AppCommands.command(id)?.isOn?(store), false, id)
+        }
+        let before = shell.dock
+        AppCommands.run("view.pane.bookmarks", store)
+        shell.toggle(.format)
+        XCTAssertEqual(shell.dock, before)
+        XCTAssertEqual(AppCommands.command("view.pane.data")?.isEnabled(store), true)
+        XCTAssertEqual(AppCommands.command("view.pane.data")?.isOn?(store), true)
+        XCTAssertEqual(AppCommands.command("view.pane.assistant")?.isEnabled(store), true)
+        // Nothing is showing while presenting.
+        store.view = .report
+        store.presenting = true
+        XCTAssertFalse(shell.isShowing(.data))
+    }
+
+    /// 12: `store.inspector` is the pane most recently brought forward, however that happened.
+    func testStoreInspectorFollowsThePaneOnShow() {
+        let store = DocumentStore(services: .live())
+        let shell = ShellState.of(store)
+        shell.show(.format)
+        XCTAssertEqual(store.inspector, .format)
+        XCTAssertTrue(shell.isShowing(.format))
+        AppCommands.run("view.pane.selection", store)
+        XCTAssertEqual(store.inspector, .selection)
+        store.inspector = .data
+        XCTAssertTrue(shell.isShowing(.data))
+        shell.dock.setCollapsed(.data, true)
+        shell.show(.data)                       // already the current pane: still brought forward
+        XCTAssertTrue(shell.isShowing(.data))
+    }
+
+    /// 3 and 8: a drag marks its pane first, publishes and saves nothing per tick, and saves once at the end.
+    func testResizeDragSavesOnceAndDoesNotPublishThroughTheStore() throws {
+        let store = DocumentStore(services: .live())
+        let shell = ShellState.of(store)
+        shell.available = 1400
+        func savedWidth() -> Double? {
+            ShellState.preferences.data(forKey: "shell.paneDock")
+                .flatMap { try? JSONDecoder().decode(PaneDock.self, from: $0) }?.widths[DockSlot.data.rawValue]
+        }
+        shell.beginResize(.data)
+        XCTAssertEqual(shell.dock.recency.last, .data)
+        var published = 0
+        let observation = store.objectWillChange.sink { published += 1 }
+        defer { observation.cancel() }
+        for width in [300.0, 380, 460, 5000] { shell.resize(.data, to: width) }
+        XCTAssertEqual(published, 0, "a width change went through the store's publisher")
+        XCTAssertNil(savedWidth(), "a width was saved in the middle of a drag")
+        XCTAssertEqual(shell.dock.width(of: .data), 500)        // clamped to the canvas budget
+        XCTAssertFalse(shell.dock.columns(for: .report, available: 1400).contains { $0.collapsed })
+        shell.endResize()
+        XCTAssertEqual(savedWidth(), 500)
+    }
+
+    func testResizeCursorStaysBalanced() {
+        var depth = 0
+        let cursor = ResizeCursor(push: { depth += 1 }, pop: { depth -= 1 })
+        cursor.set(true); cursor.set(true)      // hover reported twice
+        XCTAssertEqual(depth, 1)
+        cursor.set(false)                       // the handle disappears while hovered
+        cursor.set(false)                       // …and a late hover-out arrives
+        XCTAssertEqual(depth, 0)
+        cursor.set(true); cursor.set(false)
+        XCTAssertEqual(depth, 0)
+    }
+
+    /// 11: a command run from anywhere puts a peeking ribbon away.
+    func testAnyCommandRunPutsThePeekAway() throws {
+        let store = DocumentStore(services: .live())
+        let shell = ShellState.of(store)
+        shell.ribbonCollapsed = true
+        shell.choose(.view)
+        XCTAssertTrue(shell.ribbonPeeking)
+        AppCommands.run("view.gridlines", store)                 // toolbar, rail, panes
+        XCTAssertFalse(shell.ribbonPeeking)
+        shell.choose(.view)
+        AppCommands.perform(try XCTUnwrap(AppCommands.command("view.snap")), store)   // menu bar, shortcut, palette
+        XCTAssertFalse(shell.ribbonPeeking)
+        // A disabled command does not run and so changes nothing.
+        shell.choose(.view)
+        AppCommands.run("edit.delete", store)
+        XCTAssertTrue(shell.ribbonPeeking)
+    }
+
+    /// 1: document-scoped notifications carry their store, and a window answers only its own.
+    func testDocumentNotificationsAreAddressedToTheirStore() {
+        let store = DocumentStore(services: .live())
+        let other = DocumentStore(services: .live())
+        for (command, name) in [("data.transform", Notification.Name.facetOpenQueryEditor), ("view.palette", .facetShowPalette)] {
+            var received: Notification?
+            let token = NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { received = $0 }
+            AppCommands.run(command, store)
+            NotificationCenter.default.removeObserver(token)
+            guard let note = received else { XCTFail("\(command) posted nothing"); continue }
+            XCTAssertTrue(ShellNotifications.isAddressed(note, to: store), "\(command) is not addressed to its document")
+            XCTAssertFalse(ShellNotifications.isAddressed(note, to: other))
+        }
+        XCTAssertFalse(ShellNotifications.isAddressed(Notification(name: .facetOpenQueryEditor, object: nil), to: store))
+        // A data-function button says why nothing happened, by name.
+        var action = ActionSpec()
+        action.kind = .dataFunction
+        action.functionName = "ApproveOrder"
+        var note: Notification?
+        let token = NotificationCenter.default.addObserver(forName: .facetRunDataFunction, object: nil, queue: nil) { note = $0 }
+        store.perform(action)
+        NotificationCenter.default.removeObserver(token)
+        XCTAssertTrue(note.map { ShellNotifications.isAddressed($0, to: store) } ?? false)
+        XCTAssertTrue(note.map(ShellNotifications.dataFunctionMessage)?.contains("“ApproveOrder”") ?? false)
+    }
+
+    /// 9: the ribbon is resolved against the registry once per generation, not per render.
+    func testRibbonIsResolvedOncePerRegistryGeneration() {
+        let store = DocumentStore(services: .live())
+        _ = RibbonRegistry.visibleTabs(store)
+        let resolutions = RibbonRegistry.resolutions
+        for view in WorkspaceView.allCases {
+            store.view = view
+            XCTAssertFalse(RibbonRegistry.visibleTabs(store).isEmpty)
+            _ = RibbonRegistry.fileMenu
+        }
+        XCTAssertEqual(RibbonRegistry.resolutions, resolutions)
+        XCTAssertEqual(RibbonRegistry.visibleTabs(store), RibbonLayout.visibleTabs(.current(store), registry: RibbonRegistry.infos))
+        AppCommands.invalidate()
+        _ = RibbonRegistry.visibleTabs(store)
+        XCTAssertEqual(RibbonRegistry.resolutions, resolutions + 1)
+    }
+
+    /// 10: Optimize ▸ slicers inserts the two buttons; the immediate clear is apart and says "now".
+    func testOptimizeSlicerGroupInsertsButtons() throws {
+        let optimize = try XCTUnwrap(RibbonLayout.tabs.first { $0.id == .optimize })
+        let group = try XCTUnwrap(optimize.groups.first { $0.title == "Insert slicer buttons" })
+        let commands = group.items.compactMap { item -> RibbonCommand? in
+            if case .button(let c) = item.control { return c } else { return nil }
+        }
+        XCTAssertEqual(commands.map(\.id), ["optimize.applyAllSlicers", "optimize.clearAllSlicersButton"])
+        XCTAssertTrue(commands.allSatisfy { $0.label.hasSuffix("button") })
+        for id in commands.map(\.id) {
+            XCTAssertTrue(AppCommands.command(id)?.title.hasSuffix("Button") ?? false, id)
+        }
+        XCTAssertEqual(AppCommands.command("optimize.clearSlicers")?.title, "Clear Slicer Selections Now")
+        let store = DocumentStore(services: .live())
+        AppCommands.run("optimize.clearAllSlicersButton", store)
+        XCTAssertEqual(store.currentPage.visuals.last?.action?.kind, .clearAllSlicers)
+    }
+
+    func testAppNameComesFromOneConstant() {
+        XCTAssertEqual(AppIdentity.name, "Analytics Desktop")
+        XCTAssertEqual(AppCommands.command("help.about")?.title, "About Analytics Desktop")
+        XCTAssertEqual(ExternalTools.folder?.pathComponents.suffix(2), ["Analytics Desktop", "External Tools"])
+    }
 }
 
 // MARK: - Status bar, page tabs, external tools
@@ -506,12 +746,64 @@ final class ShellModelTests: XCTestCase {
         let json = #"{"version":"1.0","name":"DAX Studio","description":"Query tool","path":"/Applications/DAX Studio.app","arguments":"\"%file%\" -s \"%server%\""}"#
         let tool = ExternalTool.decode(Data(json.utf8))
         XCTAssertEqual(tool?.name, "DAX Studio")
-        XCTAssertEqual(tool?.commandID, "externalTools.tool.dax-studio")
-        XCTAssertEqual(tool.map { ExternalTool.arguments($0.arguments, file: "/tmp/My Report.facet") }, ["/tmp/My Report.facet", "-s", ""])
+        XCTAssertEqual(tool?.description, "Query tool")
+        XCTAssertEqual(tool?.slug, "dax-studio")
         XCTAssertNil(ExternalTool.decode(Data(#"{"name":"  ","path":"/x"}"#.utf8)))
         XCTAssertNil(ExternalTool.decode(Data(#"{"name":"X"}"#.utf8)))
         XCTAssertNil(ExternalTool.decode(Data("not json".utf8)))
-        XCTAssertEqual(ExternalTool.arguments("", file: "f"), [])
-        XCTAssertEqual(ExternalTool.arguments("  a   \"b c\"  ", file: "f"), ["a", "b c"])
+        XCTAssertEqual(ExternalTool.split(""), [])
+        XCTAssertEqual(ExternalTool.split("  a   \"b c\"  \"\" "), ["a", "b c", ""])
+    }
+
+    private func tool(_ arguments: String, name: String = "Tool") -> ExternalTool {
+        ExternalTool(name: name, description: "", path: "/usr/bin/true", arguments: arguments)
+    }
+
+    /// 5: one pass over the template; what is substituted in is never scanned again, and every
+    /// value stays one argv entry.
+    func testExternalToolPlaceholdersAreFilledInOnePass() {
+        let awkward = "/Users/me/50%database% \"final\" %file%/My Report.facet"
+        XCTAssertEqual(tool("\"%file%\" --in=%FILE% plain").argv(file: awkward), [awkward, "--in=" + awkward, "plain"])
+        XCTAssertEqual(ExternalTool.substitute("%file%%file%", values: [.file: "%file%"]), "%file%%file%")
+        XCTAssertEqual(ExternalTool.substitute("100% %filex% %", values: [.file: "F"]), "100% %filex% %")
+        XCTAssertEqual(ExternalTool.placeholders(in: "-s %Server% \"%file%\""), [.server, .file])
+        XCTAssertEqual(ExternalTool.placeholders(in: "--verbose"), [])
+    }
+
+    /// 4 and 6: what happens when a tool is chosen, from the document's saved state.
+    func testExternalToolLaunchDecisions() {
+        let saved = URL(fileURLWithPath: "/tmp/My Report.facet")
+        // Needs the file: an untitled or edited document must be saved first — never an empty argument.
+        XCTAssertEqual(tool("\"%file%\"").launch(file: nil, isDirty: false, isApplication: false), .saveFirst)
+        XCTAssertEqual(tool("\"%file%\"").launch(file: saved, isDirty: true, isApplication: true), .saveFirst)
+        XCTAssertEqual(tool("-o \"%file%\"").launch(file: saved, isDirty: false, isApplication: false),
+                       .run(arguments: ["-o", "/tmp/My Report.facet"]))
+        // An app given just the document is asked to open it, which works when it is already running.
+        XCTAssertEqual(tool("\"%file%\"").launch(file: saved, isDirty: false, isApplication: true), .openDocument(saved))
+        XCTAssertEqual(tool("--edit %file%").launch(file: saved, isDirty: false, isApplication: true),
+                       .run(arguments: ["--edit", "/tmp/My Report.facet"]))
+        // No placeholders: the document's state does not matter.
+        XCTAssertEqual(tool("--new").launch(file: nil, isDirty: true, isApplication: false), .run(arguments: ["--new"]))
+        XCTAssertEqual(tool("").launch(file: nil, isDirty: true, isApplication: true), .run(arguments: []))
+        // There is no local engine endpoint: refuse, with the reason, rather than pass empty strings.
+        for template in ["\"%server%\" \"%database%\"", "%file% -d %DATABASE%"] {
+            guard case .refuse(let reason) = tool(template, name: "DAX Studio").launch(file: saved, isDirty: false, isApplication: false) else {
+                XCTFail("\(template) should be refused"); continue
+            }
+            XCTAssertTrue(reason.contains("DAX Studio") && reason.contains("no local Analysis Services endpoint"), reason)
+        }
+    }
+
+    /// 7: names that differ only in case or punctuation keep separate commands, and the
+    /// description is the tooltip.
+    func testExternalToolCommandIDsAreUniqueAndDescriptionsAreTooltips() {
+        let tools = ["DAX Studio", "dax.studio", "Dax-Studio", "Bravo"].map { tool("", name: $0) }
+        XCTAssertEqual(ExternalTool.commandIDs(for: tools), [
+            "externalTools.tool.dax-studio", "externalTools.tool.dax-studio-2", "externalTools.tool.dax-studio-3", "externalTools.tool.bravo",
+        ])
+        XCTAssertEqual(ExternalTool.commandIDs(for: []), [])
+        let ref = RibbonCommand(id: "x", label: "Bravo", symbol: "hammer")
+        let command = AppCommand(id: "x", title: "Bravo", menu: .tools, help: "Optimise a model") { _ in }
+        XCTAssertEqual(RibbonHelp.text(for: ref, command: command), "Bravo — Optimise a model")
     }
 }

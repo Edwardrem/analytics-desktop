@@ -12,6 +12,8 @@ struct AppCommand: Identifiable {
     var shortcut: KeyboardShortcut?
     /// Starts a new menu section before this item.
     var separatorBefore = false
+    /// Extra tooltip text, shown after the title (for example an external tool's description).
+    var help = ""
     var isEnabled: @MainActor (DocumentStore) -> Bool = { _ in true }
     var isOn: (@MainActor (DocumentStore) -> Bool)?
     var run: @MainActor (DocumentStore) -> Void
@@ -43,7 +45,14 @@ enum AppCommands {
             store.status = StatusMessage(kind: .warning, text: "“\(id)” isn't available yet.")
             return
         }
-        if c.isEnabled(store) { c.run(store) }
+        perform(c, store)
+    }
+    /// The one way a command runs — from the ribbon, the menu bar, a shortcut or the palette — so
+    /// window chrome that reacts to "a command ran" (a peeking ribbon) always hears about it.
+    static func perform(_ c: AppCommand, _ store: DocumentStore) {
+        guard c.isEnabled(store) else { return }
+        ShellState.of(store).commandWillRun()
+        c.run(store)
     }
 }
 
@@ -148,6 +157,7 @@ enum CoreCommands {
             c.append(AppCommand(id: "view.pane.\(p.rawValue)", title: "\(p.title) Pane", menu: .view, symbol: p.symbol,
                                 shortcut: i < 9 ? .init(KeyEquivalent(Character("\(i + 1)")), modifiers: [.command, .option]) : nil,
                                 separatorBefore: i == 0,
+                                isEnabled: { ShellState.of($0).isAvailable(p) },
                                 isOn: { ShellState.of($0).isShowing(p) }) { ShellState.of($0).toggle(p) })
         }
         c.append(AppCommand(id: "view.fit", title: "Fit to Page", menu: .view, shortcut: .init("0"), separatorBefore: true, isOn: { $0.fitToWindow }) { $0.fitToWindow = true })
@@ -159,8 +169,9 @@ enum CoreCommands {
         c.append(AppCommand(id: "view.lock", title: "Lock Objects", menu: .view, symbol: "lock", isOn: { $0.lockObjects }) { $0.lockObjects.toggle() })
         c.append(AppCommand(id: "view.mobile", title: "Mobile Layout", menu: .view, symbol: "iphone", isOn: { $0.mobileLayout }) { $0.mobileLayout.toggle(); $0.selection = [] })
         c.append(AppCommand(id: "view.present", title: "Present", menu: .view, symbol: "play.rectangle", shortcut: .init(.return, modifiers: [.command, .option]), separatorBefore: true) { $0.view = .report; $0.selection = []; $0.presenting = true })
-        c.append(AppCommand(id: "view.palette", title: "Command Palette…", menu: .view, symbol: "command", shortcut: .init("k")) { _ in
-            NotificationCenter.default.post(name: .facetShowPalette, object: nil)
+        c.append(AppCommand(id: "view.palette", title: "Command Palette…", menu: .view, symbol: "command", shortcut: .init("k")) { store in
+            // Addressed to this document's window; every window hears the notification.
+            NotificationCenter.default.post(name: .facetShowPalette, object: store)
         })
 
         // Optimize
@@ -185,7 +196,7 @@ enum CoreCommands {
             }
         })
         c.append(AppCommand(id: "optimize.performance", title: "Performance Analyzer", menu: .optimize, symbol: "gauge.with.needle", separatorBefore: true) { $0.inspector = .performance; $0.inspectorVisible = true })
-        c.append(AppCommand(id: "optimize.clearSlicers", title: "Clear All Slicers", menu: .optimize) { $0.clearAllSlicers() })
+        c.append(AppCommand(id: "optimize.clearSlicers", title: "Clear Slicer Selections Now", menu: .optimize, symbol: "xmark.circle") { $0.clearAllSlicers() })
         // Buttons that apply or clear every slicer on the page, for reports that use query reduction.
         let slicerButtons: [(String, String, String, ActionSpec.Kind, String)] = [
             ("optimize.applyAllSlicers", "Add Apply All Slicers Button", "Apply all slicers", .applyAllSlicers, "checkmark.rectangle"),
@@ -258,7 +269,7 @@ enum CoreCommands {
         c.append(AppCommand(id: "help.shortcuts", title: "Keyboard Shortcuts", menu: .help, symbol: "keyboard", separatorBefore: true) { s in
             s.present { KeyboardShortcutsSheet() }
         })
-        c.append(AppCommand(id: "help.about", title: "About Analytics Desktop", menu: .help, symbol: "info.circle") { _ in
+        c.append(AppCommand(id: "help.about", title: "About \(AppIdentity.name)", menu: .help, symbol: "info.circle") { _ in
             NSApp.activate(ignoringOtherApps: true)
             NSApp.orderFrontStandardAboutPanel(nil)
         })

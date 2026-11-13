@@ -23,7 +23,18 @@ enum ShellMetrics {
 /// the collapsed ribbon and the dock arrangement are remembered across launches as preferences.
 @MainActor
 final class ShellState: ObservableObject {
-    @Published var dock: PaneDock { didSet { if dock != oldValue { dockChanged() } } }
+    @Published var dock: PaneDock { didSet { if !dock.sameArrangement(as: oldValue) { dockChanged() } } }
+    /// Window width right of the view rail, reported by the window. Decides which panes fit.
+    @Published var available: Double = .greatestFiniteMagnitude {
+        didSet {
+            guard let store, available != oldValue else { return }
+            let expanded: (Double) -> [DockSlot] = { [dock] width in
+                dock.columns(for: store.view, available: width).filter { !$0.collapsed }.map(\.slot)
+            }
+            // Pane switches in the menu bar follow what is drawn; tell them only when that changed.
+            if expanded(available) != expanded(oldValue) { store.objectWillChange.send() }
+        }
+    }
     @Published var ribbonCollapsed: Bool { didSet { if ribbonCollapsed != oldValue { ribbonChanged() } } }
     @Published var ribbonTab: RibbonTabID = .home
     /// While the ribbon is collapsed: a tab was clicked and its commands are showing over the window.
@@ -54,17 +65,22 @@ final class ShellState: ObservableObject {
         self.defaults = defaults
         dock = defaults.data(forKey: Self.dockKey).flatMap { try? JSONDecoder().decode(PaneDock.self, from: $0) } ?? PaneDock()
         ribbonCollapsed = defaults.bool(forKey: Self.ribbonKey)
-        // Features open a pane by setting `store.inspector` (and `inspectorVisible`). Every assignment
-        // — also of the value it already had — is a request to bring that pane forward.
+        // `store.inspector` is the pane most recently asked for. Features open a pane by setting it
+        // (and `inspectorVisible`), and `show(_:)` sets it too, so the two never disagree. Every
+        // assignment — also of the value it already had — brings that pane forward.
         observation = store.$inspector.dropFirst().sink { [weak self] pane in
             self?.dock.reveal(pane.rawValue)
         }
     }
 
+    /// The arrangement changed (not just a width, which is saved when its drag ends).
     private func dockChanged() {
-        if let data = try? JSONEncoder().encode(dock) { defaults.set(data, forKey: Self.dockKey) }
+        persistDock()
         // Menu-bar check marks are computed from the store's commands; tell them the answer changed.
         store?.objectWillChange.send()
+    }
+    private func persistDock() {
+        if let data = try? JSONEncoder().encode(dock) { defaults.set(data, forKey: Self.dockKey) }
     }
     private func ribbonChanged() {
         defaults.set(ribbonCollapsed, forKey: Self.ribbonKey)
@@ -89,19 +105,45 @@ final class ShellState: ObservableObject {
         ribbonPeeking = false
         if let store { AppCommands.run(id, store) }
     }
+    /// Called by `AppCommands.perform` for every command, however it was invoked.
+    func commandWillRun() {
+        if ribbonPeeking { ribbonPeeking = false }
+    }
 
     // MARK: Panes
 
+    /// Whether the pane can be shown in the current view; its switch is disabled otherwise.
+    func isAvailable(_ pane: InspectorPane) -> Bool {
+        guard let store else { return false }
+        return PaneDock.isAvailable(pane.rawValue, in: store.view)
+    }
+    /// True only when the pane is drawn, expanded, in this window right now.
     func isShowing(_ pane: InspectorPane) -> Bool {
-        (store?.inspectorVisible ?? false) && dock.isShowing(pane.rawValue)
+        guard let store, store.inspectorVisible, !store.presenting else { return false }
+        return dock.isShowing(pane.rawValue, view: store.view, available: available)
     }
+    /// Brings a pane forward: opens it, expands its column (others give way if the window is narrow)
+    /// and records it as the store's current pane.
     func show(_ pane: InspectorPane) {
-        dock.reveal(pane.rawValue)
-        store?.inspectorVisible = true
+        guard let store else { return }
+        // Assigning `store.inspector` reveals the pane through the observation above.
+        if store.inspector != pane { store.inspector = pane } else { dock.reveal(pane.rawValue) }
+        store.inspectorVisible = true
     }
+    /// The switch for a pane: close it when it is showing, otherwise show it — including when it is
+    /// a collapsed strip.
     func toggle(_ pane: InspectorPane) {
+        guard isAvailable(pane) else { return }
         if isShowing(pane) { dock.close(pane.rawValue) } else { show(pane) }
     }
+
+    // Resizing a pane by dragging its edge.
+    func beginResize(_ slot: DockSlot) { dock.bringForward(slot) }
+    func resize(_ slot: DockSlot, to width: Double) {
+        guard let store else { return }
+        dock.setWidth(width, of: slot, view: store.view, available: available)
+    }
+    func endResize() { persistDock() }
 }
 
 /// Human-readable keyboard shortcuts, for tooltips and the shortcuts sheet.
