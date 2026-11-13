@@ -11,6 +11,7 @@ enum FeatureRegistration {
         ReportPanesFeature.register()
         ModelingFeature.register()
         DAXQueryFeature.register()
+        TMDLViewFeature.register()
         PowerQueryFeature.register()
         AIFeature.register()
         AnalyzeFeature.register()

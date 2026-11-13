@@ -2,7 +2,7 @@ import Foundation
 import FacetCore
 
 /// Identifies a model object to script in TMDL view.
-public enum TMDLObjectRef: Hashable, Sendable {
+public enum TMDLObjectRef: Hashable, Sendable, CustomStringConvertible {
     /// Every object in the model.
     case model
     /// Only the model's own properties (culture, annotations).
@@ -50,6 +50,27 @@ public enum TMDLObjectRef: Hashable, Sendable {
         case "column": guard let (t, m) = member() else { return nil }; self = .column(table: t, name: m)
         case "hierarchy": guard let (t, m) = member() else { return nil }; self = .hierarchy(table: t, name: m)
         default: return nil
+        }
+    }
+
+    /// The canonical parseable form ("model", "table:Sales", "measure:Sales[Total]"), so refs can be
+    /// carried across drag and drop. `TMDLObjectRef(parsing: description)` round-trips.
+    public var description: String {
+        switch self {
+        case .model: return "model"
+        case .modelProperties: return "modelProperties"
+        case .table(let t): return "table:\(t)"
+        case .column(let t, let c): return "column:\(t)[\(c)]"
+        case .measure(let t, let m): return "measure:\(t)[\(m)]"
+        case .hierarchy(let t, let h): return "hierarchy:\(t)[\(h)]"
+        case .calculationGroup(let g): return "calculationGroup:\(g)"
+        case .relationship(let id): return "relationship:\(id.uuidString)"
+        case .relationships: return "relationships"
+        case .role(let r): return "role:\(r)"
+        case .perspective(let p): return "perspective:\(p)"
+        case .culture(let c): return "culture:\(c)"
+        case .function(let f): return "function:\(f)"
+        case .expression(let e): return "expression:\(e)"
         }
     }
 }
@@ -112,6 +133,11 @@ public struct TMDLFileDiff: Hashable, Sendable {
 }
 
 public extension TMDL {
+    /// The document's queries that are not table partitions — the shared expressions TMDL view scripts.
+    static func sharedExpressions(model: SemanticModel, queries: [QueryDefinition]) -> [QueryDefinition] {
+        TMDLWriter(model: model, queries: queries).sharedQueries
+    }
+
     /// Produces a `createOrReplace` script for one object, ready to edit and apply.
     static func script(for object: TMDLObjectRef, in model: SemanticModel, queries: [QueryDefinition] = []) throws -> String {
         let w = TMDLWriter(model: model, queries: queries)

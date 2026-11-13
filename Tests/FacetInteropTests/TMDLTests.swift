@@ -294,6 +294,29 @@ final class TMDLTests: XCTestCase {
         XCTAssertNil(TMDLObjectRef(parsing: "widget:x"))
     }
 
+    func testObjectRefDescriptionRoundTrips() {
+        let refs: [TMDLObjectRef] = [.model, .modelProperties, .table("Sales"), .column(table: "Sales", name: "Amount"),
+                                     .measure(table: "Sales", name: "Total Sales"), .hierarchy(table: "Customer", name: "Geography"),
+                                     .calculationGroup("Time"), .relationship(UUID()), .relationships, .role("Sales West"),
+                                     .perspective("Executive"), .culture("fr-FR"), .function("AddTax"), .expression("BasePath")]
+        for ref in refs {
+            XCTAssertEqual(TMDLObjectRef(parsing: ref.description), ref, "\(ref.description) didn't round-trip")
+        }
+        XCTAssertEqual(TMDLObjectRef(parsing: "measure:Sales[Total Sales]")?.description, "measure:Sales[Total Sales]")
+    }
+
+    func testSharedExpressionsExcludesTablePartitions() {
+        let (model, queries) = Fixtures.richModel()
+        let shared = TMDL.sharedExpressions(model: model, queries: queries)
+        // Sales and Customer Source are loaded as table partitions; BasePath and fnClean are shared.
+        XCTAssertEqual(shared.map(\.name), ["BasePath", "fnClean"])
+        // Every shared expression scripts.
+        for q in shared {
+            XCTAssertNoThrow(try TMDL.script(for: .expression(q.name), in: model, queries: queries))
+        }
+        XCTAssertThrowsError(try TMDL.script(for: .expression("Nope"), in: model, queries: queries))
+    }
+
     func testTextDiff() {
         let old = (1...20).map { "line \($0)" }.joined(separator: "\n")
         var lines = (1...20).map { "line \($0)" }
