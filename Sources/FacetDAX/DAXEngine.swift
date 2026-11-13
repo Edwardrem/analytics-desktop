@@ -16,6 +16,9 @@ public final class DAXEngine {
     var calcGroups: [CalcGroupDef] = []
     var olsTables: Set<Int> = []
     var olsColumns: Set<ColumnID> = []
+    /// Tables and `Table[Column]` identifiers the active roles hide (object-level security).
+    var hiddenTableNames: [String] = []
+    var hiddenColumnNames: [String] = []
     var autoDateColumns: [ColumnID: [String: ColumnID]] = [:]
     var autoDateTables: Set<Int> = []
     var calendars: [String: CalendarDef] = [:]
@@ -76,9 +79,12 @@ public final class DAXEngine {
         var errors: [String: String] = [:]
         for problem in db.buildRelationships(model.relationships) { errors[problem] = problem }
         aggregationMappings = model.aggregations
+        // Calculated objects are computed first, as at refresh: no role applies to them, and
+        // role filters may refer to calculated columns.
+        for e in refreshCalculatedObjects() { errors[e.object] = e.message }
         let security = applySecurity(model: model, roleNames: roleNames)
         for (k, v) in security where errors[k] == nil { errors[k] = v }
-        for e in refreshCalculatedObjects() { errors[e.object] = e.message }
+        applyObjectSecurity()
         return errors
     }
 
@@ -86,7 +92,7 @@ public final class DAXEngine {
         db = Database()
         queryTables = [:]; queryFunctions = [:]; functionDefs = [:]
         queryMeasures = [:]; measureDefs = [:]; calcGroups = []
-        olsTables = []; olsColumns = []; autoDateColumns = [:]; autoDateTables = []
+        olsTables = []; olsColumns = []; hiddenTableNames = []; hiddenColumnNames = []; autoDateColumns = [:]; autoDateTables = []
         calendars = [:]; dateIndexCache = [:]; aggregationMappings = []
         data = DataStore()
         userName = ""; userPrincipalName = ""; userCulture = "en-US"; userObjectID = ""; customData = ""; roleNames = []
@@ -110,15 +116,8 @@ public final class DAXEngine {
         self.roleNames = active.map(\.name)
         var alternatives: [[CtxFilter]] = []
         for role in active {
-            for table in role.hiddenTables {
-                if let ti = db.tableIndex[table.daxKey] { olsTables.insert(ti) }
-            }
-            for column in role.hiddenColumns {
-                if let open = column.firstIndex(of: "["), column.hasSuffix("]"),
-                   let cid = db.columnID(table: String(column[..<open]), column: String(column[column.index(after: open)..<column.index(before: column.endIndex)])) {
-                    olsColumns.insert(cid)
-                }
-            }
+            hiddenTableNames += role.hiddenTables
+            hiddenColumnNames += role.hiddenColumns
             var filters: [CtxFilter] = []
             for (table, filter) in role.tableFilters.sorted(by: { $0.key < $1.key }) {
                 guard !filter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
@@ -138,7 +137,14 @@ public final class DAXEngine {
             }
             alternatives.append(filters)
         }
-        if alternatives.count == 1 {
+        if active.isEmpty, !roleNames.isEmpty {
+            // None of the requested roles exists: nothing is granted.
+            db.securityFilters = db.tables.indices.map { ti in
+                let none = CtxFilter(.rows(ti, RowSel(n: db.tables[ti].rowCount, rows: [], blank: false)))
+                none.isSecurity = true
+                return none
+            }
+        } else if alternatives.count == 1 {
             db.securityFilters = alternatives[0]
         } else if !alternatives.isEmpty, !alternatives.contains(where: \.isEmpty) {
             let union = CtxFilter(.union(alternatives))
@@ -148,6 +154,29 @@ public final class DAXEngine {
             db.securityFilters = []
         }
         return problems
+    }
+
+    /// Turns object-level security on: a hidden table or column does not exist for the role.
+    /// References to it are errors and table expressions do not return it.
+    private func applyObjectSecurity() {
+        olsTables = Set(hiddenTableNames.compactMap { db.tableIndex[$0.daxKey] })
+        olsColumns = []
+        for column in hiddenColumnNames {
+            guard let open = column.firstIndex(of: "["), column.hasSuffix("]"),
+                  let cid = db.columnID(table: String(column[..<open]),
+                                        column: String(column[column.index(after: open)..<column.index(before: column.endIndex)])) else { continue }
+            olsColumns.insert(cid)
+        }
+        for t in db.tables {
+            let hidden = olsTables.contains(t.index) ? Set(t.columns.indices) : Set(olsColumns.filter { $0.table == t.index }.map(\.col))
+            if hidden != t.hiddenColumns { t.hiddenColumns = hidden; t.colsCache = nil }
+        }
+    }
+
+    /// Turns object-level security off while calculated objects are computed.
+    private func suspendObjectSecurity() {
+        olsTables = []; olsColumns = []
+        for t in db.tables where !t.hiddenColumns.isEmpty { t.hiddenColumns = []; t.colsCache = nil }
     }
 
     /// Evaluates a boolean DAX filter per row, producing a row filter.
@@ -172,6 +201,8 @@ public final class DAXEngine {
     @discardableResult
     public func refreshCalculatedObjects() -> [DAXObjectError] {
         var issues: [DAXObjectError] = []
+        suspendObjectSecurity()
+        defer { applyObjectSecurity() }
 
         // User-defined functions, so measures and columns can call them.
         for f in model.functions {
@@ -609,7 +640,8 @@ public final class DAXEngine {
     /// The distinct values of a field under filters, capped at `limit`.
     public func distinctValues(field: FieldRef, filters: [FilterSpec], limit: Int = 1000) -> [Value] {
         guard field.kind == .column, field.aggregation == .none,
-              let cid = db.columnID(table: field.table, column: field.name) else { return [] }
+              let cid = db.columnID(table: field.table, column: field.name),
+              (try? checkColumnAccess(cid, nil)) != nil else { return [] }
         guard let ctx = try? rootContext(filters) else { return [] }
         var out = self.distinctValues(cid, ctx.fc, blankRow: true)
         if out.count > limit { out = Array(out.prefix(limit)) }
