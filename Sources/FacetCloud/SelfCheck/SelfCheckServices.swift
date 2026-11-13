@@ -166,7 +166,8 @@ extension FacetCloudSelfCheck {
     static func checkRESTClient(_ c: Checker) async throws {
         let provider = StubTokenProvider()
         let rest = RESTClient(service: "Microsoft Graph", scope: "scope-x", tokenProvider: provider,
-                              session: URLSession(configuration: SelfCheckURLProtocol.configuration()))
+                              session: RESTClient.makeSession(SelfCheckURLProtocol.configuration()),
+                              policy: EndpointPolicy(cloud: .public, extraHosts: ["graph.example"]))
         let sleeps = Recorder<[TimeInterval]>([])
         rest.sleeper = { s in sleeps.update { $0.append(s) } }
         let seen = Recorder<[String]>([])

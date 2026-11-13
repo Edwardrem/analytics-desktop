@@ -291,17 +291,27 @@ final class RESTClient {
     /// Injectable so the self-check can run retries without real waiting.
     var sleeper: (TimeInterval) async throws -> Void = { try await Task.sleep(nanoseconds: UInt64(max(0, $0) * 1_000_000_000)) }
     let decoder = HTTPHelpers.makeDecoder()
+    /// Hosts the bearer token may be sent to.
+    let policy: EndpointPolicy
+    /// Largest response body accepted.
+    var responseLimit = BoundedHTTP.restLimit
 
-    init(service: String, scope: String, tokenProvider: AccessTokenProviding, session: URLSession) {
+    init(service: String, scope: String, tokenProvider: AccessTokenProviding, session: URLSession, policy: EndpointPolicy) {
         self.service = service; self.scope = scope; self.tokenProvider = tokenProvider; self.session = session
+        self.policy = policy
     }
 
-    static func defaultSession() -> URLSession {
-        let c = URLSessionConfiguration.ephemeral
-        c.timeoutIntervalForRequest = 60
-        c.timeoutIntervalForResource = 3600
-        c.httpAdditionalHeaders = ["User-Agent": "Facet/1.0 (macOS)"]
-        return URLSession(configuration: c)
+    /// A session for REST calls: ephemeral (no cookies or cache on disk), time-bounded, and guarded against
+    /// redirects that would leak the bearer token. `configuration` is overridden in tests.
+    static func makeSession(_ configuration: URLSessionConfiguration? = nil) -> URLSession {
+        let c = configuration ?? {
+            let c = URLSessionConfiguration.ephemeral
+            c.timeoutIntervalForRequest = 60
+            c.timeoutIntervalForResource = 3600
+            c.httpAdditionalHeaders = ["User-Agent": "AnalyticsDesktop/1.0 (macOS)"]
+            return c
+        }()
+        return URLSession(configuration: c, delegate: RedirectGuard(), delegateQueue: nil)
     }
 
     /// Sends a request and returns the body for any 2xx/3xx status; throws `CloudAPIError` otherwise.
@@ -312,14 +322,24 @@ final class RESTClient {
         while true {
             try Task.checkCancellation()
             var req = request
+            guard req.url?.scheme?.lowercased() == "https" else {
+                throw CloudAPIError(service: service, kind: .badRequest, statusCode: 0, message: "Refused to send a request over an insecure connection.")
+            }
             if authenticated {
+                guard policy.allowsCredentials(for: req.url) else {
+                    throw CloudAPIError(service: service, kind: .badRequest, statusCode: 0,
+                                        message: "Refused to send your sign-in to “\(req.url?.host ?? "an unknown host")”, which is not a \(service) address.")
+                }
                 let t = try await tokenProvider.accessToken(resource: scope)
                 req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
             }
             CloudLog.log("→ " + CloudLog.redactedDescription(of: req))
             let (data, raw): (Data, URLResponse)
             do {
-                (data, raw) = try await session.data(for: req)
+                (data, raw) = try await BoundedHTTP.data(for: req, session: session, limit: responseLimit)
+            } catch is BoundedHTTP.TooLarge {
+                throw CloudAPIError(service: service, kind: .invalidResponse, statusCode: 0,
+                                    message: "The response was larger than \(responseLimit / (1024 * 1024)) MB and was not read.")
             } catch let e as URLError where e.code == .cancelled {
                 throw CancellationError()
             } catch let e as URLError where Self.isTransient(e) && attempt < maxRetries {

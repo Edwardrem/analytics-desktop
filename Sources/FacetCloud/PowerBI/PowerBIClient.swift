@@ -15,9 +15,10 @@ public final class PowerBIClient {
     public init(tokenProvider: AccessTokenProviding, cloud: MicrosoftCloud = .public, sessionConfiguration: URLSessionConfiguration? = nil) {
         self.cloud = cloud
         self.transferConfiguration = sessionConfiguration
-        let session = sessionConfiguration.map { URLSession(configuration: $0) } ?? RESTClient.defaultSession()
+        let policy = EndpointPolicy(cloud: cloud)
+        let session = RESTClient.makeSession(sessionConfiguration)
         self.rest = RESTClient(service: "Power BI", scope: MicrosoftResource.powerBI.scopeString(cloud: cloud),
-                               tokenProvider: tokenProvider, session: session)
+                               tokenProvider: tokenProvider, session: session, policy: policy)
     }
 
     private func url(_ pathAndQuery: String) throws -> URL { try rest.url(baseURL, pathAndQuery) }

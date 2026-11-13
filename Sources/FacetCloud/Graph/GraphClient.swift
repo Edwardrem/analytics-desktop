@@ -21,9 +21,10 @@ public final class GraphClient {
     public init(tokenProvider: AccessTokenProviding, cloud: MicrosoftCloud = .public, sessionConfiguration: URLSessionConfiguration? = nil) {
         self.cloud = cloud
         self.transferConfiguration = sessionConfiguration
-        let session = sessionConfiguration.map { URLSession(configuration: $0) } ?? RESTClient.defaultSession()
+        let policy = EndpointPolicy(cloud: cloud)
+        let session = RESTClient.makeSession(sessionConfiguration)
         self.rest = RESTClient(service: "Microsoft Graph", scope: MicrosoftResource.graph.scopeString(cloud: cloud),
-                               tokenProvider: tokenProvider, session: session)
+                               tokenProvider: tokenProvider, session: session, policy: policy)
     }
 
     private func url(_ pathAndQuery: String) throws -> URL { try rest.url(baseURL, pathAndQuery) }
@@ -202,7 +203,9 @@ public final class GraphClient {
             progress?(TransferProgress(completedBytes: size, totalBytes: size))
             return item
         }
-        return try await uploadLarge(fileURL: fileURL, size: size, to: folder, named: fileName, conflict: conflict, progress: progress)
+        return try await uploadLarge(fileURL: fileURL, size: size, sessionPath: folder.childPath(named: fileName) + "/createUploadSession",
+                                     createBody: ["item": ["@microsoft.graph.conflictBehavior": .string(conflict.rawValue), "name": .string(fileName)]],
+                                     ifMatchETag: nil, progress: progress)
     }
 
     /// Uploads in-memory data (≤ 4 MB) with a single PUT.
@@ -220,6 +223,27 @@ public final class GraphClient {
         return try rest.decode(DriveItem.self, from: body)
     }
 
+    /// Replaces the content of an existing file ("save back"). With `ifMatchETag`, Graph refuses the write with
+    /// HTTP 412 (`CloudAPIError.kind == .preconditionFailed`) when the file changed in the cloud since that eTag was
+    /// read, so someone else's newer version is never silently overwritten.
+    public func replaceContent(of location: DriveLocation, withFileAt fileURL: URL, ifMatchETag: String? = nil,
+                               progress: TransferProgressHandler? = nil) async throws -> DriveItem {
+        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        if size <= Self.simpleUploadLimit {
+            var request = rest.request("PUT", try url(location.subresource("content")))
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            if let ifMatchETag, !ifMatchETag.isEmpty { request.setValue(ifMatchETag, forHTTPHeaderField: "If-Match") }
+            request.httpBody = try Data(contentsOf: fileURL)
+            let (body, _) = try await rest.send(request)
+            progress?(TransferProgress(completedBytes: size, totalBytes: size))
+            return try rest.decode(DriveItem.self, from: body)
+        }
+        return try await uploadLarge(fileURL: fileURL, size: size, sessionPath: location.subresource("createUploadSession"),
+                                     createBody: ["item": ["@microsoft.graph.conflictBehavior": "replace"]],
+                                     ifMatchETag: ifMatchETag, progress: progress)
+    }
+
     struct UploadSession: Decodable {
         let uploadUrl: String
         let nextExpectedRanges: [String]?
@@ -231,11 +255,11 @@ public final class GraphClient {
         return Int64(start)
     }
 
-    private func uploadLarge(fileURL: URL, size: Int64, to folder: DriveLocation, named name: String,
-                             conflict: ConflictBehavior, progress: TransferProgressHandler?) async throws -> DriveItem {
-        let createBody: JSONValue = ["item": ["@microsoft.graph.conflictBehavior": .string(conflict.rawValue), "name": .string(name)]]
-        let session = try await rest.sendJSON(UploadSession.self, "POST",
-                                              try url(folder.childPath(named: name) + "/createUploadSession"), body: createBody)
+    private func uploadLarge(fileURL: URL, size: Int64, sessionPath: String, createBody: JSONValue, ifMatchETag: String?,
+                             progress: TransferProgressHandler?) async throws -> DriveItem {
+        var headers: [String: String] = [:]
+        if let ifMatchETag, !ifMatchETag.isEmpty { headers["If-Match"] = ifMatchETag }
+        let session = try await rest.sendJSON(UploadSession.self, "POST", try url(sessionPath), body: createBody, headers: headers)
         guard let uploadURL = URL(string: session.uploadUrl), uploadURL.scheme == "https" else {
             throw CloudAPIError(service: rest.service, kind: .invalidResponse, statusCode: 0, message: "The upload session did not return a valid URL.")
         }

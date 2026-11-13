@@ -144,11 +144,12 @@ public final class FabricClient {
         self.transferConfiguration = sessionConfiguration
         self.fabricBase = (fabricEndpoint ?? cloud.fabricEndpoint)?.appendingPathComponent("v1")
         self.oneLakeBase = oneLakeEndpoint ?? cloud.oneLakeEndpoint
-        let session = sessionConfiguration.map { URLSession(configuration: $0) } ?? RESTClient.defaultSession()
-        self.rest = RESTClient(service: "Fabric", scope: MicrosoftResource.fabric.scopeString(cloud: cloud), tokenProvider: tokenProvider, session: session)
-        self.oneLake = RESTClient(service: "OneLake", scope: MicrosoftResource.storage.scopeString(cloud: cloud), tokenProvider: tokenProvider, session: session)
+        let policy = EndpointPolicy(cloud: cloud, extraHosts: [fabricEndpoint?.host, oneLakeEndpoint?.host].compactMap { $0 })
+        let session = RESTClient.makeSession(sessionConfiguration)
+        self.rest = RESTClient(service: "Fabric", scope: MicrosoftResource.fabric.scopeString(cloud: cloud), tokenProvider: tokenProvider, session: session, policy: policy)
+        self.oneLake = RESTClient(service: "OneLake", scope: MicrosoftResource.storage.scopeString(cloud: cloud), tokenProvider: tokenProvider, session: session, policy: policy)
         self.labels = RESTClient(service: "Microsoft Graph", scope: cloud.graphEndpoint.absoluteString + "/InformationProtectionPolicy.Read",
-                                 tokenProvider: tokenProvider, session: session)
+                                 tokenProvider: tokenProvider, session: session, policy: policy)
     }
 
     private func url(_ pathAndQuery: String) throws -> URL {
@@ -219,6 +220,22 @@ public final class FabricClient {
     public func updateSemanticModelDefinition(workspaceID: String, modelID: String, parts: [FabricDefinitionPart],
                                               updateMetadata: Bool = false) async throws {
         let target = try url("/workspaces/\(seg(workspaceID))/semanticModels/\(seg(modelID))/updateDefinition?updateMetadata=\(updateMetadata)")
+        _ = try await runOperation(rest.request("POST", target, json: Self.definitionBody(parts)), wantsResult: false)
+    }
+
+    /// Creates an item (semantic model, report…) from its definition parts and returns it. Waits for the operation to finish.
+    public func createItem(workspaceID: String, type: FabricItemType, displayName: String, description: String? = nil,
+                           parts: [FabricDefinitionPart]) async throws -> FabricItem {
+        var body: JSONValue = ["displayName": .string(displayName), "type": .string(type.rawValue)]
+        if let description, !description.isEmpty { body = body.setting("description", to: .string(description)) }
+        if let definition = Self.definitionBody(parts)["definition"] { body = body.setting("definition", to: definition) }
+        let data = try await runOperation(rest.request("POST", try url("/workspaces/\(seg(workspaceID))/items"), json: body), wantsResult: true)
+        return try rest.decode(FabricItem.self, from: data)
+    }
+
+    /// Replaces the definition of any item (used to publish over an item that already exists).
+    public func updateItemDefinition(workspaceID: String, itemID: String, parts: [FabricDefinitionPart]) async throws {
+        let target = try url("/workspaces/\(seg(workspaceID))/items/\(seg(itemID))/updateDefinition")
         _ = try await runOperation(rest.request("POST", target, json: Self.definitionBody(parts)), wantsResult: false)
     }
 
