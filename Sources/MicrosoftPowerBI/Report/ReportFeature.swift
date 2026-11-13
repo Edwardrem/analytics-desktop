@@ -27,6 +27,18 @@ enum ReportFeature {
                             isEnabled: { $0.view == .report && $0.currentPage.hasMobileLayout }) { s in
             s.removeFromMobileLayout(s.currentPage.visuals.map(\.id))
         })
+        c.append(AppCommand(id: "filters.clearAll", title: "Clear All Filters", menu: .data, symbol: "line.3.horizontal.decrease.circle",
+                            separatorBefore: true, isEnabled: inReport) { $0.clearAllFilters() })
+        c.append(AppCommand(id: "filters.apply", title: "Apply Filters", menu: .data, symbol: "checkmark.circle",
+                            isEnabled: { $0.view == .report && $0.report.settings.filterPaneApplyButton && ReportRuntime.of($0).filtersPending }) {
+            $0.applyPendingFilters()
+        })
+        c.append(AppCommand(id: "filters.applyButton", title: "Add an Apply Button to the Filters Pane", menu: .data,
+                            isOn: { $0.report.settings.filterPaneApplyButton }) { s in
+            let on = !s.report.settings.filterPaneApplyButton
+            s.mutate(on ? "Add Filter Apply Button" : "Remove Filter Apply Button", invalidates: .layout) { $0.report.settings.filterPaneApplyButton = on }
+            if !on { s.applyPendingFilters() }
+        })
         return c
     }
 }

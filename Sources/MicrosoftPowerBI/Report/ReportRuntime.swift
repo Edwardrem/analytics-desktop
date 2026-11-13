@@ -14,6 +14,8 @@ final class ReportRuntime: ObservableObject {
     private var tooltipLoading: Set<String> = []
     /// The visual shown at full strength while the rest of the page is dimmed.
     @Published var spotlightID: UUID? { didSet { if spotlightID != oldValue { store?.objectWillChange.send() } } }
+    /// With the report's Apply button on: filter edits are saved but their queries have not run yet.
+    @Published var filtersPending = false
     /// Reader changes per visual id.
     @Published private(set) var personalizations: [UUID: Personalization] = [:]
     /// Query results for personalised visuals (the store only queries the saved ones).

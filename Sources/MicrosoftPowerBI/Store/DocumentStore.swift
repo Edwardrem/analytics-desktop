@@ -318,17 +318,17 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let id = selectedVisual?.id else { return }
-            updateVisual(id, name: announce ? "Add Visual Filter" : "Change Visual Filters") {
+            updateVisual(id, name: announce ? "Add Visual Filter" : "Change Visual Filters", invalidates: filterInvalidation(.visuals([id]))) {
                 guard !$0.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.filters.append(filter)
             }
         case .page:
-            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters") {
+            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters", invalidates: filterInvalidation(.visuals(nil))) {
                 guard !$0.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.filters.append(filter)
             }
         case .report:
-            mutate(announce ? "Add Report Filter" : "Change Report Filters") {
+            mutate(announce ? "Add Report Filter" : "Change Report Filters", invalidates: filterInvalidation(.visuals(nil))) {
                 guard !$0.report.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.report.filters.append(filter)
             }
@@ -342,11 +342,11 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let target = selectedVisual?.id else { return }
-            updateVisual(target, name: "Remove Visual Filter") { $0.filters.removeAll { $0.id == id } }
+            updateVisual(target, name: "Remove Visual Filter", invalidates: filterInvalidation(.visuals([target]))) { $0.filters.removeAll { $0.id == id } }
         case .page:
-            updatePage(name: "Remove Page Filter") { $0.filters.removeAll { $0.id == id } }
+            updatePage(name: "Remove Page Filter", invalidates: filterInvalidation(.visuals(nil))) { $0.filters.removeAll { $0.id == id } }
         case .report:
-            mutate("Remove Report Filter") { $0.report.filters.removeAll { $0.id == id } }
+            mutate("Remove Report Filter", invalidates: filterInvalidation(.visuals(nil))) { $0.report.filters.removeAll { $0.id == id } }
         case .drillthrough:
             // A drillthrough field belongs to the page; a kept filter only to this visit.
             if currentPage.drillthroughFilters.contains(where: { $0.id == id }) {
@@ -365,15 +365,15 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let target = selectedVisual?.id else { return }
-            updateVisual(target, name: name) {
+            updateVisual(target, name: name, invalidates: filterInvalidation(.visuals([target]))) {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .page:
-            updatePage(name: name) {
+            updatePage(name: name, invalidates: filterInvalidation(.visuals(nil))) {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .report:
-            mutate(name) {
+            mutate(name, invalidates: filterInvalidation(.visuals(nil))) {
                 if let i = $0.report.filters.firstIndex(where: { $0.id == id }) { body(&$0.report.filters[i]) }
             }
         case .drillthrough:

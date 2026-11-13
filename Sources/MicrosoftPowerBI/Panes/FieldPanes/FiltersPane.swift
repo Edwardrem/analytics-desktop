@@ -8,7 +8,8 @@ struct FiltersPane: View {
     @EnvironmentObject var store: DocumentStore
 
     var body: some View {
-        ScrollView {
+        VStack(spacing: 0) {
+          ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 if let visual = store.selectedVisual {
                     FiltersSection(visual: visual, scope: .visual, title: "Filters on this visual", filters: visual.filters)
@@ -17,6 +18,9 @@ struct FiltersPane: View {
                 FiltersSection(scope: .report, title: "Filters on all pages", filters: store.doc.report.filters)
                 FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughDisplay)
             }
+          }
+          Hairline()
+          FilterPaneFooter(runtime: ReportRuntime.of(store))
         }
     }
 
@@ -106,12 +110,15 @@ private struct FilterRow: View {
                     Button(filter.isLocked ? "Unlock" : "Lock") { toggle { $0.isLocked.toggle() } }
                     Button(filter.isHidden ? "Show" : "Hide") { toggle { $0.isHidden.toggle() } }
                     if filter.kind == .basic {
+                        Button(filter.requireSingleSelection ? "Allow multiple selections" : "Require single selection") {
+                            toggle { $0 = FilterTools.requiringSingleSelection($0, !$0.requireSingleSelection) }
+                        }
                         Button(filter.isInverted ? "Keep selected values" : "Exclude selected values") { toggle { $0.isInverted.toggle() } }
                     }
                     if filter.kind == .advanced {
                         Button(filter.conditionsUseOr ? "Match all conditions" : "Match any condition") { toggle { $0.conditionsUseOr.toggle() } }
                     }
-                    Button("Clear filter") { toggle { f in clear(&f) } }
+                    Button("Clear filter") { toggle { $0 = FilterTools.cleared($0) } }
                     Button("Remove", role: .destructive) { store.removeFilter(id: filter.id, scope: scope) }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 22, height: 20).contentShape(Rectangle())
@@ -272,10 +279,7 @@ private struct BasicValuesEditor: View {
     }
 
     private func toggleValue(_ value: Value) {
-        store.updateFilter(id: filter.id, scope: scope, name: "Change Filter") { f in
-            if let i = f.values.firstIndex(where: { $0 == value }) { f.values.remove(at: i) }
-            else { f.values.append(value) }
-        }
+        store.updateFilter(id: filter.id, scope: scope, name: "Change Filter") { $0 = FilterTools.toggling($0, value) }
     }
 
     private func load() async {

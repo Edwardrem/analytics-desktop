@@ -13,6 +13,7 @@ struct PresentationView: View {
 private struct ReadingPage: View {
     @EnvironmentObject var store: DocumentStore
     @ObservedObject var runtime: ReportRuntime
+    @State private var showFilters = false
 
     var body: some View {
         GeometryReader { geo in
@@ -51,6 +52,13 @@ private struct ReadingPage: View {
                 Menu("Bookmarks") {
                     ForEach(store.report.bookmarks) { b in Button(b.name) { store.applyBookmark(b.id) } }
                 }.fixedSize()
+            }
+            if store.report.settings.filterPaneVisibleToReaders {
+                Button { showFilters.toggle() } label: { Label("Filters", systemImage: "line.3.horizontal.decrease") }
+                    .help("Filters on this page")
+                    .popover(isPresented: $showFilters, arrowEdge: .top) {
+                        ReaderFiltersPanel(runtime: runtime).environmentObject(store)
+                    }
             }
             Spacer()
             if runtime.spotlightID != nil {
