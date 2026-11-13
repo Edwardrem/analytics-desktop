@@ -4,9 +4,10 @@ import FacetCore
 extension MInterpreter {
     /// Read a local file for a connector: records the data source, enforces the size limit, and reports
     /// missing or unreadable files as `DataSource.Error`.
-    func readFile(_ path: String, kind: String = "File") throws -> Data {
+    /// `kind` nil reads a file that belongs to a source already recorded (a file inside a `Folder.Files` listing).
+    func readFile(_ path: String, kind: String? = "File") throws -> Data {
         let url = resolvePath(path)
-        try noteDataSource(kind: kind, location: url.path)
+        if let kind { try noteDataSource(kind: kind, location: url.path) }
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
             throw MError.dataSource("Could not find the file '\(url.path)'.")
@@ -73,7 +74,7 @@ extension MLibrary {
                     let isFolder = v?.isDirectory ?? false, path = u.standardizedFileURL.path
                     let content: MValue = isFolder
                         ? .lazy(MThunk { try ctx.invoke(lib.values[name] ?? .null, [.text(path)]) })
-                        : .lazy(MThunk { .binary(try ctx.readFile(path)) })
+                        : .lazy(MThunk { .binary(try ctx.readFile(path, kind: nil)) })
                     let attributes = MRecord(names: ["Hidden", "Directory", "Size", "Kind"],
                                              values: [.logical(v?.isHidden ?? false), .logical(isFolder), .int(v?.fileSize ?? 0), .text(isFolder ? "Folder" : "File")])
                     let ext = u.pathExtension
