@@ -9,7 +9,14 @@ import FacetDesign
 @MainActor
 enum ModelingFeature {
     static func register() {
+        Features.workspaceBuilders[.table] = { store in AnyView(TableWorkspaceView(store: store)) }
+        Features.workspaceBuilders[.model] = { store in AnyView(ModelWorkspaceView(store: store)) }
+        // The Data pane sets FieldPaneContext while it runs a model.* command for its document;
+        // the command acts on what the pane pointed at. (See ModelingTarget's contract.)
+        ModelingTarget.externalTable = { FieldPaneContext.table(for: $0) }
+        ModelingTarget.externalField = { FieldPaneContext.field(for: $0) }
         AppCommands.register { commands }
+        AppCommands.register { ModelingToolCommands.commands }
         ModelingDialogsFeature.register()   // every modeling dialog: see Dialogs/ModelingDialogsFeature.swift
     }
 
@@ -26,8 +33,6 @@ enum ModelingFeature {
                        isEnabled: { $0.model.tables.isEmpty == false }) { store in
                 store.present { QuickMeasureSheet() }
             },
-            AppCommand(id: "view.model", title: "Model View", menu: .view, symbol: "rectangle.split.3x1",
-                       isEnabled: { $0.model.tables.isEmpty == false }) { $0.view = .model },
         ]
     }
 }

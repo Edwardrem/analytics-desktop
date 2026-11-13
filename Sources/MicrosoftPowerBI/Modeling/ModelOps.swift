@@ -133,6 +133,9 @@ enum ModelOps {
             store.status = StatusMessage(kind: .warning, text: "A table named “\(new)” already exists.")
             return false
         }
+        // View-only sort and filters follow the table to its new name (before the write: the
+        // document change prunes state for names the model no longer has).
+        store.modeling.renameGridTable(old, to: new)
         store.mutate("Rename Table", invalidates: .model) { d in
             guard let i = d.model.tableIndex(old) else { return }
             d.model.tables[i].name = new
@@ -209,6 +212,7 @@ enum ModelOps {
             return false
         }
         let measureNamedOld = store.model.measure(old) != nil
+        store.modeling.renameGridColumn(table: table, old, to: new)
         store.mutate("Rename Column", invalidates: .model) { d in
             guard let t = d.model.tableIndex(table),
                   let c = d.model.tables[t].columns.firstIndex(where: { ModelDAX.same($0.name, old) }) else { return }
@@ -317,6 +321,7 @@ enum ModelOps {
             for ref in refs { remove(ref, from: &d) }
         }
         let ui = store.modeling
+        ui.pruneGrid(to: store.model)
         ui.selection.removeAll { refs.contains($0) }
         if let t = ui.tableViewTable, store.model.table(t) == nil { ui.tableViewTable = store.model.tables.first?.name }
     }
@@ -572,6 +577,36 @@ enum ModelOps {
         }
         for (k, v) in errors where keys.contains(where: { ModelDAX.same($0, k) }) { return v }
         return nil
+    }
+
+    // MARK: Sort by column
+
+    /// Sets (or with nil clears) the column another column is sorted by. Refuses a choice that
+    /// would make two columns sort by each other, or where one value maps to several.
+    static func setSortByColumn(_ store: DocumentStore, table: String, column: String, by other: String?) {
+        guard let other else {
+            updateColumns(store, [(table, column)], name: "Sort by Column") { $0.sortByColumn = nil }
+            return
+        }
+        guard let mt = store.model.table(table) else { return }
+        let data = store.computedData[mt.name] ?? store.doc.data[mt.name]
+        Task {
+            let problem = await Task.detached(priority: .userInitiated) {
+                TableGrid.sortByProblem(column: column, by: other, in: mt, data: data)
+            }.value
+            if let problem {
+                store.status = StatusMessage(kind: .warning, text: problem)
+                return
+            }
+            let name = mt.column(other)?.name ?? other
+            // Checked again inside the write: the model may have changed while the data was read.
+            store.mutate("Sort by Column", invalidates: .model) { d in
+                guard let t = d.model.tableIndex(table),
+                      let c = d.model.tables[t].columns.firstIndex(where: { ModelDAX.same($0.name, column) }),
+                      TableGrid.sortByProblem(column: column, by: name, in: d.model.tables[t], data: nil) == nil else { return }
+                d.model.tables[t].columns[c].sortByColumn = name
+            }
+        }
     }
 
     // MARK: Hidden

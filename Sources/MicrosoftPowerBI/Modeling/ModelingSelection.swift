@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import FacetCore
 
 /// Identifies one object of the semantic model. Tables, columns and measures are addressed by name
@@ -67,6 +68,43 @@ final class ModelingState: ObservableObject {
     @Published var offset: CGSize = .zero
     /// Bumped to ask the diagram to zoom to fit.
     @Published var fitRequest = 0
+    /// View-only sort and filters per table in Table view, with a revision bumped on every
+    /// change so the grid recomputes its row order. Never written to the document.
+    @Published private var grid = GridViewStates()
+    @Published private(set) var gridRevision = 0
+    /// Bumped whenever the engine publishes data, so the grid reloads after a refresh that
+    /// returns the same shape with new values.
+    @Published private(set) var dataRevision = 0
+    private var subscriptions: Set<AnyCancellable> = []
+
+    func gridState(for table: String) -> GridViewState { grid.state(for: table) }
+    func setGridState(_ state: GridViewState, for table: String) {
+        grid.set(state, for: table)
+        gridRevision += 1
+    }
+    /// Carries a table's sort and filters over to its new name. Call before the rename is written.
+    func renameGridTable(_ old: String, to new: String) {
+        if grid.renameTable(old, to: new) { gridRevision += 1 }
+    }
+    func renameGridColumn(table: String, _ old: String, to new: String) {
+        if grid.renameColumn(table: table, old, to: new) { gridRevision += 1 }
+    }
+    /// Drops sort and filters that point at tables or columns the model no longer has.
+    func pruneGrid(to model: SemanticModel) {
+        if grid.prune(to: model) { gridRevision += 1 }
+    }
+
+    /// Follows a document: view state is pruned whenever the document changes (delete, undo,
+    /// open), and the data revision moves whenever the engine publishes data.
+    func bind(to store: DocumentStore) {
+        subscriptions.removeAll()
+        store.$doc.dropFirst()
+            .sink { [weak self] doc in self?.pruneGrid(to: doc.model) }
+            .store(in: &subscriptions)
+        store.$computedData.dropFirst()
+            .sink { [weak self] _ in self?.dataRevision += 1 }
+            .store(in: &subscriptions)
+    }
 
     var primary: ModelObjectRef? { selection.last }
     func isSelected(_ ref: ModelObjectRef) -> Bool { selection.contains(ref) }
@@ -104,6 +142,7 @@ final class ModelingSelection: ObservableObject {
         if let e = entries[key], e.store != nil { return e.state }
         entries = entries.filter { $0.value.store != nil }
         let s = ModelingState()
+        s.bind(to: store)
         entries[key] = Entry(store: store, state: s)
         return s
     }
@@ -140,30 +179,121 @@ extension DocumentStore {
     }
 }
 
-/// Resolves "the current table / field" for commands: modeling selection, then the Data pane's
-/// context, then the table chosen in Table view, then the first table.
+/// Resolves "the current table / field" for commands.
+///
+/// The Data pane's context is only live while a command it started is running for the same
+/// document (`FieldPaneContext.run` sets it, runs the command and clears it), so it can't go stale
+/// or leak into another window. It wins while live because the user pointed at that object. After
+/// that: in Table view the table on screen; otherwise the modeling selection, the table last shown
+/// in Table view, and the first table.
 @MainActor
 enum ModelingTarget {
-    /// What the Data pane last focused, when that pane publishes it. See `ModelingExternalContext.swift`.
+    /// What the Data pane is running a command on, for this document, right now.
     static var externalTable: (DocumentStore) -> String? = { _ in nil }
     static var externalField: (DocumentStore) -> FieldRef? = { _ in nil }
 
     static func table(_ store: DocumentStore) -> String? {
         let ui = store.modeling
-        for r in ui.selection.reversed() { if let t = r.tableName, store.model.table(t) != nil { return t } }
-        if let t = externalTable(store) ?? externalField(store)?.table, store.model.table(t) != nil { return t }
-        if let t = ui.tableViewTable, store.model.table(t) != nil { return t }
-        return store.model.tables.first?.name
+        return resolveTable(model: store.model, view: store.view, selection: ui.selection, shown: ui.tableViewTable,
+                            external: externalTable(store) ?? externalField(store)?.table)
     }
     static func column(_ store: DocumentStore) -> (table: String, name: String)? {
-        if let c = store.modeling.selectedColumn, store.model.table(c.table)?.column(c.name) != nil { return c }
-        if let f = externalField(store), f.kind == .column, store.model.table(f.table)?.column(f.name) != nil { return (f.table, f.name) }
-        return nil
+        resolveField(.column, model: store.model, selection: store.modeling.selection, external: externalField(store))
     }
     static func measure(_ store: DocumentStore) -> (table: String, name: String)? {
-        if let m = store.modeling.selectedMeasure, store.model.table(m.table)?.measure(m.name) != nil { return m }
-        if let f = externalField(store), f.kind == .measure, let found = store.model.measure(f.name) { return (found.table.name, found.measure.name) }
+        resolveField(.measure, model: store.model, selection: store.modeling.selection, external: externalField(store))
+    }
+
+    nonisolated static func resolveTable(model: SemanticModel, view: WorkspaceView, selection: [ModelObjectRef],
+                                         shown: String?, external: String?) -> String? {
+        if let t = external, let found = model.table(t) { return found.name }
+        if view == .table, let t = shown, let found = model.table(t) { return found.name }
+        for r in selection.reversed() { if let t = r.tableName, let found = model.table(t) { return found.name } }
+        if let t = shown, let found = model.table(t) { return found.name }
+        return model.tables.first?.name
+    }
+
+    nonisolated static func resolveField(_ kind: FieldRef.Kind, model: SemanticModel, selection: [ModelObjectRef],
+                                         external: FieldRef?) -> (table: String, name: String)? {
+        if let f = external, f.kind == kind {
+            switch kind {
+            case .column:
+                if let t = model.table(f.table), let c = t.column(f.name) { return (t.name, c.name) }
+            case .measure:
+                if let t = model.table(f.table), let m = t.measure(f.name) { return (t.name, m.name) }
+                if let found = model.measure(f.name) { return (found.table.name, found.measure.name) }
+            }
+        }
+        for r in selection.reversed() {
+            switch (kind, r) {
+            case (.column, .column(let t, let n)):
+                if let table = model.table(t), let c = table.column(n) { return (table.name, c.name) }
+                return nil
+            case (.measure, .measure(let t, let n)):
+                if let table = model.table(t), let m = table.measure(n) { return (table.name, m.name) }
+                return nil
+            default: continue
+            }
+        }
         return nil
+    }
+}
+
+/// View-only sort and filters for every table, keyed case-insensitively by table name the way the
+/// model resolves names. Pure, so its upkeep on rename and delete is tested.
+struct GridViewStates: Equatable {
+    private var states: [String: GridViewState] = [:]
+
+    private func key(_ table: String) -> String { table.lowercased() }
+    var isEmpty: Bool { states.isEmpty }
+
+    func state(for table: String) -> GridViewState { states[key(table)] ?? GridViewState() }
+
+    mutating func set(_ state: GridViewState, for table: String) {
+        if state == GridViewState() { states[key(table)] = nil } else { states[key(table)] = state }
+    }
+
+    /// Moves a table's state to its new name. Returns whether anything changed.
+    @discardableResult
+    mutating func renameTable(_ old: String, to new: String) -> Bool {
+        guard key(old) != key(new), let state = states.removeValue(forKey: key(old)) else { return false }
+        states[key(new)] = state
+        return true
+    }
+
+    @discardableResult
+    mutating func renameColumn(table: String, _ old: String, to new: String) -> Bool {
+        guard var state = states[key(table)] else { return false }
+        var changed = false
+        if let sort = state.sortColumn, ModelDAX.same(sort, old), sort != new { state.sortColumn = new; changed = true }
+        for name in state.filters.keys where ModelDAX.same(name, old) && name != new {
+            state.filters[new] = state.filters.removeValue(forKey: name)
+            changed = true
+        }
+        if changed { states[key(table)] = state }
+        return changed
+    }
+
+    /// Drops state for tables the model no longer has, and sort and filters on columns it no
+    /// longer has. Returns whether anything changed.
+    @discardableResult
+    mutating func prune(to model: SemanticModel) -> Bool {
+        var changed = false
+        for (name, var state) in states {
+            guard let table = model.table(name) else {
+                states[name] = nil
+                changed = true
+                continue
+            }
+            let before = state
+            if let sort = state.sortColumn, table.column(sort) == nil { state.sortColumn = nil }
+            state.filters = state.filters.filter { table.column($0.key) != nil }
+            if state != before {
+                set(state, for: name)
+                changed = true
+            }
+        }
+        return changed
     }
 }
 

@@ -41,10 +41,11 @@ final class ModelDialogCommandsTests: XCTestCase {
         XCTAssertEqual(ids.count, Set(ids).count, "a model command is registered twice")
     }
 
-    func testEveryModelCommandOnTheRibbonIsRegisteredExceptTheTableViewTools() {
+    /// Sort by column was the last one missing; `ModelingToolCommands` registers it with the column tools.
+    func testEveryModelCommandOnTheRibbonIsRegistered() {
         let registered = Set(AppCommands.all.map(\.id))
         let missing = RibbonLayout.unregisteredIDs(in: registered).filter { $0.hasPrefix("model.") }
-        XCTAssertEqual(missing, ["model.sortByColumn"])
+        XCTAssertEqual(missing, [])
     }
 
     func testDialogCommandsPresentASheet() {

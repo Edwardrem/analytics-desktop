@@ -6,9 +6,8 @@ import FacetCore
 enum ModelingDialogsFeature {
     static func register() {
         AppCommands.register { commands }
-        // Commands run from the Data pane's context menus act on the table or field that was right-clicked.
-        ModelingTarget.externalTable = { _ in FieldPaneContext.table }
-        ModelingTarget.externalField = { _ in FieldPaneContext.field }
+        // Commands run from the Data pane's context menus act on the table or field that was
+        // right-clicked: `ModelingFeature.register()` wires `ModelingTarget` to that context, per document.
     }
 
     private static let hasTables: @MainActor (DocumentStore) -> Bool = { !$0.model.tables.isEmpty }

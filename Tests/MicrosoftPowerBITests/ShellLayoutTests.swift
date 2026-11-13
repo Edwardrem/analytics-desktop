@@ -12,7 +12,6 @@ final class RibbonLayoutTests: XCTestCase {
     /// remove it here; the test only fails if an id goes missing that is not on this list.
     static let pending: Set<String> = [
         "account.sensitivity", "insert.sparkline",
-        "model.sortByColumn",   // a column tool, owned by the Table view
     ]
 
     override func setUp() {
