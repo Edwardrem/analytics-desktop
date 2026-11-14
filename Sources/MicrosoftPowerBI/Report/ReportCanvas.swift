@@ -65,6 +65,13 @@ extension DocumentStore {
         if !spec.type.isPageElement, !spec.type.isSlicer {
             c.onSeeRecords = { [weak self] point in self?.showRecords(for: id, point: point) }
         }
+        if interactive, ExplainChange.supportedTypes.contains(spec.type) {
+            c.analyzeActions = { [weak self] point in
+                guard let self, let data = self.visualData[id],
+                      let plan = ExplainChange.plan(spec: spec, data: data, point: point) else { return [] }
+                return [VisualMenuAction(title: plan.title) { [weak self] in self?.explainChange(in: id, point: point) }]
+            }
+        }
         c.extensionView = { [weak self] spec, data, ctx in
             guard let self else { return nil }
             return VisualExtensions.provider?(spec, data, ctx, self)

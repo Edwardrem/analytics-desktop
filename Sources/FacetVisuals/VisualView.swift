@@ -9,6 +9,14 @@ public struct NavItem: Identifiable, Hashable {
     public init(id: UUID, name: String) { self.id = id; self.name = name }
 }
 
+/// A command the host adds to a visual's context menu.
+public struct VisualMenuAction: Identifiable {
+    public let id: String
+    public var title: String
+    public var perform: () -> Void
+    public init(title: String, perform: @escaping () -> Void) { self.id = title; self.title = title; self.perform = perform }
+}
+
 /// Everything a visual needs from its host besides its spec and data.
 /// Renderers are pure views: they never touch the model, they only call back.
 public struct VisualContext {
@@ -44,6 +52,9 @@ public struct VisualContext {
     /// The report asks every slicer for an Apply button (query reduction); a slicer's own
     /// `format["slicer"]["applyButton"]` still wins.
     public var slicerApplyButtons = false
+    /// Analyze commands the host offers for a data point ("Explain the increase"), listed under
+    /// Analyze in the point's context menu. Empty = no Analyze menu.
+    public var analyzeActions: (DataPointSelection) -> [VisualMenuAction] = { _ in [] }
 
     public init() {}
 
