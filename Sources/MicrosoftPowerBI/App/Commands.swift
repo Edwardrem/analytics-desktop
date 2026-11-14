@@ -127,9 +127,13 @@ enum CoreCommands {
             ("format.distributeV", "Distribute Vertically", .distributeV, "distribute.vertical"),
             ("format.sameWidth", "Match Width", .sameWidth, ""), ("format.sameHeight", "Match Height", .sameHeight, ""), ("format.sameSize", "Match Size", .sameSize, ""),
         ]
+        // Distributing spaces three or more visuals evenly; with fewer there is nothing to do.
+        let canDistribute: @MainActor (DocumentStore) -> Bool = { $0.view == .report && $0.selection.count > 2 }
         for (id, title, a, symbol) in arrangements {
+            let distributes = id == "format.distributeH" || id == "format.distributeV"
             c.append(AppCommand(id: id, title: title, menu: .format, symbol: symbol,
-                                separatorBefore: id == "format.distributeH" || id == "format.sameWidth", isEnabled: hasSelection) { $0.arrange(a) })
+                                separatorBefore: id == "format.distributeH" || id == "format.sameWidth",
+                                isEnabled: distributes ? canDistribute : hasSelection) { $0.arrange(a) })
         }
         c.append(AppCommand(id: "format.front", title: "Bring to Front", menu: .format, shortcut: .init("]", modifiers: [.command, .shift]), separatorBefore: true, isEnabled: hasSelection) { $0.reorder(.front) })
         c.append(AppCommand(id: "format.forward", title: "Bring Forward", menu: .format, shortcut: .init("]"), isEnabled: hasSelection) { $0.reorder(.forward) })
