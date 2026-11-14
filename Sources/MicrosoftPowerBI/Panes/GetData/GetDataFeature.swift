@@ -38,6 +38,8 @@ enum GetDataFeature {
 
 struct EnterDataSheet: View {
     @EnvironmentObject var store: DocumentStore
+    /// Set when opened from the Power Query Editor: the table becomes a pending query there instead of loading.
+    var editor: QueryEditorSession?
     @Environment(\.dismiss) private var dismiss
     @State private var name = "Table"
     @State private var text = "Column1\tColumn2\n"
@@ -68,7 +70,7 @@ struct EnterDataSheet: View {
                 TextField("Table", text: $name).textFieldStyle(.roundedBorder).frame(width: 220)
                 Spacer()
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Load") { load() }
+                Button(editor == nil ? "Load" : "OK") { load() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(parsed == nil)
             }
@@ -80,11 +82,17 @@ struct EnterDataSheet: View {
 
     private func load() {
         guard let parsed, var table = typed else { return }
-        let taken = Set(store.doc.queries.map(\.name)).union(store.doc.data.tables.keys).union(store.doc.model.tables.map(\.name))
+        var taken = Set(store.doc.queries.map(\.name)).union(store.doc.data.tables.keys).union(store.doc.model.tables.map(\.name))
+        if let editor { taken.formUnion(editor.queryNames) }
         let unique = SourcePlanner.uniqueName(name.isEmpty ? "Table" : name, taken: taken)
         table.name = unique
         var definition = QueryDefinition(name: unique, mScript: parsed.script)
         definition.description = "Enter Data"
+        if let editor {
+            editor.addQuery(definition, name: "Enter Data")
+            dismiss()
+            return
+        }
         store.mutate("Enter Data", invalidates: .model) { d in
             d.queries.append(definition)
             d.data[unique] = table
@@ -103,6 +111,8 @@ struct RecentSourcesSheet: View {
     @EnvironmentObject var store: DocumentStore
     @Environment(\.dismiss) private var dismiss
     @State private var sources = QuerySecurity.shared.recentSources
+    /// Where Connect goes; by default Get Data opens over the document window with the source filled in.
+    var onConnect: ((DataConnector, String) -> Void)?
 
     private static let dates: DateFormatter = {
         let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short; return f
@@ -151,6 +161,7 @@ struct RecentSourcesSheet: View {
 
     private func connect(_ source: RecentSource) {
         guard let connector = DataConnector.connector(for: source.kind) else { return }
+        if let onConnect { onConnect(connector, source.location); return }
         let target = store
         dismiss()
         // Present after this sheet is gone, so the new one is not swallowed by the dismissal.

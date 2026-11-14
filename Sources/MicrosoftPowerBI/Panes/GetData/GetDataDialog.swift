@@ -9,8 +9,10 @@ struct GetDataDialog: View {
     @StateObject private var session: GetDataSession
     @Environment(\.dismiss) private var dismiss
 
-    init(store: DocumentStore, connector: DataConnector? = nil, location: String = "") {
+    /// `insideEditor`: opened from the Power Query Editor (New Source), where the navigator only adds queries.
+    init(store: DocumentStore, connector: DataConnector? = nil, location: String = "", insideEditor: Bool = false) {
         let s = GetDataSession(store: store)
+        s.insideEditor = insideEditor
         if let connector { s.choose(connector, location: location) }
         _session = StateObject(wrappedValue: s)
     }
@@ -369,18 +371,30 @@ private struct NavigatorView: View {
             Spacer()
             if session.isWorking { ProgressView().controlSize(.small) }
             if session.request.kind == .folder {
-                Menu("Combine") {
-                    Button("Combine & Load") { Task { await session.finish(.load, combined: true) } }
-                    Button("Combine & Transform Data") { Task { await session.finish(.transform, combined: true) } }
+                if session.insideEditor {
+                    Button("Combine") { Task { await session.finish(.transform, combined: true) } }
+                        .disabled(session.combine == nil || !session.canFinish)
+                        .help(session.combine == nil ? "The folder has no CSV, text, JSON or Excel files to combine" : "Append the \(session.combine?.extension ?? "") files into one table")
+                } else {
+                    Menu("Combine") {
+                        Button("Combine & Load") { Task { await session.finish(.load, combined: true) } }
+                        Button("Combine & Transform Data") { Task { await session.finish(.transform, combined: true) } }
+                    }
+                    .fixedSize()
+                    .disabled(session.combine == nil || !session.canFinish)
+                    .help(session.combine == nil ? "The folder has no CSV, text, JSON or Excel files to combine" : "Append the \(session.combine?.extension ?? "") files into one table")
                 }
-                .fixedSize()
-                .disabled(session.combine == nil || !session.canFinish)
-                .help(session.combine == nil ? "The folder has no CSV, text, JSON or Excel files to combine" : "Append the \(session.combine?.extension ?? "") files into one table")
             }
             Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-            Button("Transform Data") { Task { await session.finish(.transform) } }.disabled(!session.canFinish)
-            Button("Load") { Task { await session.finish(.load) } }
-                .keyboardShortcut(.defaultAction).disabled(!session.canFinish)
+            if session.insideEditor {
+                Button("OK") { Task { await session.finish(.transform) } }
+                    .keyboardShortcut(.defaultAction).disabled(!session.canFinish)
+                    .help("Add the selected objects as queries in the editor")
+            } else {
+                Button("Transform Data") { Task { await session.finish(.transform) } }.disabled(!session.canFinish)
+                Button("Load") { Task { await session.finish(.load) } }
+                    .keyboardShortcut(.defaultAction).disabled(!session.canFinish)
+            }
         }
         .padding(Design.Space.m)
     }

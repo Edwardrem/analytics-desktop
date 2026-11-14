@@ -36,6 +36,20 @@ enum QueryCellText {
         }
     }
 
+    /// Spaces as middle dots, tabs as arrows and line breaks as ¶ (View ▸ Show whitespace).
+    static func visibleWhitespace(_ s: String) -> String {
+        var out = ""
+        for ch in s {
+            switch ch {
+            case " ": out.append("·")
+            case "\t": out.append("→")
+            case "\n", "\r\n", "\r": out.append("¶")
+            default: out.append(ch)
+            }
+        }
+        return out
+    }
+
     static func typeSymbol(_ type: DataType) -> String {
         switch type {
         case .text: return "textformat.abc"
@@ -65,9 +79,15 @@ struct QueryGrid: View {
     var showDistribution = false
     /// Column name, and whether the selection is being extended (⌘ or ⇧).
     var onSelect: ((String, _ extend: Bool, _ range: Bool) -> Void)?
-    var headerMenu: ((String) -> AnyView)?
+    /// The header's drop-down (sort and filter), its context menu (transformations) and the type icon's menu.
+    var headerMenu: ((String) -> NSMenu?)?
+    var contextMenu: ((String) -> NSMenu?)?
+    var typeMenu: ((String) -> NSMenu?)?
     /// A structured cell (Table, List, Record) was clicked.
     var onOpenCell: ((_ row: Int, _ column: Int) -> Void)?
+    var monospaced = false
+    /// Show leading/trailing spaces and line breaks as visible marks.
+    var showWhitespace = false
 
     static let columnWidth: CGFloat = 150
     static let indexWidth: CGFloat = 44
@@ -101,17 +121,21 @@ struct QueryGrid: View {
         let selected = selection.contains(column.name)
         VStack(alignment: .leading, spacing: Design.Space.xxs) {
             HStack(spacing: Design.Space.xs) {
-                Image(systemName: QueryCellText.typeSymbol(column.type))
-                    .font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
-                    .help(column.type.displayName)
-                Text(column.name).font(Design.Typeface.bodyStrong).lineLimit(1)
+                if let typeMenu {
+                    Button { if let m = typeMenu(column.name) { EditorMenus.popUp(m) } } label: { typeGlyph(column) }
+                        .buttonStyle(.plain)
+                        .help("\(column.type.displayName): click to change the type")
+                } else {
+                    typeGlyph(column).help(column.type.displayName)
+                }
+                Text(column.name).font(Design.Typeface.bodyStrong).lineLimit(1).help(column.name)
                 Spacer(minLength: 0)
                 if let headerMenu {
-                    Menu { headerMenu(column.name) } label: {
-                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                    Button { if let m = headerMenu(column.name) { EditorMenus.popUp(m) } } label: {
+                        Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold)).frame(width: 14, height: 14)
                     }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Transform, filter or sort this column")
+                    .buttonStyle(.plain)
+                    .help("Sort or filter this column")
                 }
             }
             if let profile = profiles[safe: index] {
@@ -128,7 +152,12 @@ struct QueryGrid: View {
             let flags = NSEvent.modifierFlags
             onSelect?(column.name, flags.contains(.command), flags.contains(.shift))
         }
-        .contextMenu { if let headerMenu { headerMenu(column.name) } }
+        .overlay { if let contextMenu { ContextMenuCatcher { contextMenu(column.name) } } }
+    }
+
+    private func typeGlyph(_ column: DataColumn) -> some View {
+        Image(systemName: QueryCellText.typeSymbol(column.type))
+            .font(.system(size: 10)).foregroundStyle(.secondary).frame(width: 14)
     }
 
     private func rowView(_ row: Int) -> some View {
@@ -159,10 +188,10 @@ struct QueryGrid: View {
             } else if value.isNull {
                 Text("null").italic().foregroundStyle(.tertiary)
             } else {
-                Text(QueryCellText.text(value, type: column.type))
+                Text(showWhitespace ? QueryCellText.visibleWhitespace(QueryCellText.text(value, type: column.type)) : QueryCellText.text(value, type: column.type))
             }
         }
-        .font(Design.Typeface.body).lineLimit(1)
+        .font(monospaced ? Design.Typeface.mono : Design.Typeface.body).lineLimit(1)
         .padding(.horizontal, Design.Space.s)
         .frame(width: Self.columnWidth, alignment: numeric ? .trailing : .leading)
         .frame(maxHeight: .infinity)

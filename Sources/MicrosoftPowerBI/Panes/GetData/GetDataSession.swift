@@ -34,6 +34,8 @@ final class GetDataSession: ObservableObject {
     @Published var promoteHeaders = false
     /// Set when the run finished and the dialog should close.
     @Published var isDone = false
+    /// Opened from the Power Query Editor: Transform adds the queries there instead of opening the editor.
+    var insideEditor = false
     private var headersDecided = false
     private var scripts: [String: String] = [:]
     private var generation = 0
@@ -57,6 +59,17 @@ final class GetDataSession: ObservableObject {
         request = SourceRequest(kind: kind, location: location)
         reset()
         if kind == .blank { Task { await finish(.transform) } } else { stage = .form }
+    }
+
+    /// Text sample of the first listed file with an extension, for detecting a folder's CSV delimiter.
+    static func sampleText(of wanted: String, in table: DataTable) -> String? {
+        guard let ext = table.column("Extension"), let names = table.column("Name"), let folders = table.column("Folder Path"),
+              let row = ext.values.firstIndex(where: { $0.asString.lowercased() == wanted }),
+              let name = names.values[safe: row]?.asString, let folder = folders.values[safe: row]?.asString else { return nil }
+        let url = URL(fileURLWithPath: folder).appendingPathComponent(name)
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return (try? handle.read(upToCount: 65_536)).map { String(decoding: $0, as: UTF8.self) }
     }
 
     func back() {
@@ -123,15 +136,8 @@ final class GetDataSession: ObservableObject {
     }
 
     private func planCombine() {
-        guard let table = preview?.table, let ext = table.column("Extension"), let names = table.column("Name"), let folders = table.column("Folder Path") else { return }
-        combine = SourcePlanner.combinePlan(extensions: ext.values.map(\.asString)) { wanted in
-            guard let row = ext.values.firstIndex(where: { $0.asString.lowercased() == wanted }),
-                  let name = names.values[safe: row]?.asString, let folder = folders.values[safe: row]?.asString else { return nil }
-            let url = URL(fileURLWithPath: folder).appendingPathComponent(name)
-            guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
-            defer { try? handle.close() }
-            return (try? handle.read(upToCount: 65_536)).map { String(decoding: $0, as: UTF8.self) }
-        }
+        guard let table = preview?.table, let ext = table.column("Extension") else { return }
+        combine = SourcePlanner.combinePlan(extensions: ext.values.map(\.asString)) { Self.sampleText(of: $0, in: table) }
     }
 
     // MARK: Preview and scripts
@@ -248,6 +254,8 @@ final class GetDataSession: ObservableObject {
                 for s in engine.dataSourcesAccessed where !sources.contains(s) { sources.append(s) }
             }
             let directQuery = request.kind == .sqlite && request.directQuery
+            // Routed before the write, so an editor that is already open selects the new query as it appears.
+            if destination == .transform { QueryEditorRouting.select(first.name, in: store) }
             store.mutate(destination == .load ? "Get Data" : "Add Queries", invalidates: .model) { d in
                 d.queries.append(contentsOf: definitions)
                 for table in tables {
@@ -275,8 +283,7 @@ final class GetDataSession: ObservableObject {
                 let what = tables.count == 1 ? first.name : "\(tables.count) tables"
                 store.status = StatusMessage(kind: .success, text: "Loaded \(what) (\(rows) row\(rows == 1 ? "" : "s"))\(directQuery ? " in DirectQuery mode" : "").")
             case .transform:
-                QueryEditorRouting.select(first.name, in: store)
-                NotificationCenter.default.post(name: .facetOpenQueryEditor, object: store)
+                if !insideEditor { NotificationCenter.default.post(name: .facetOpenQueryEditor, object: store) }
             }
             isDone = true
             return true

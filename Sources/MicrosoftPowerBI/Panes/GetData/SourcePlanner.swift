@@ -232,6 +232,52 @@ enum SourcePlanner {
         }
     }
 
+    /// The connection details of a `Source` step written as `sourceExpression` writes it (and as Power BI writes
+    /// the same calls): the inverse used by the Source step's settings gear. Nil for any other expression.
+    static func request(fromSource expression: String) -> SourceRequest? {
+        guard let ast = try? MParser.parse(expression), case .invoke(.identifier(let fn, _), let args) = ast else { return nil }
+        func text(_ e: MExpr?) -> String? { if case .literal(.text(let t))? = e { return t }; return nil }
+        /// `File.Contents("…")` or `Web.Contents("…")`.
+        func contents(_ e: MExpr?) -> (web: Bool, location: String)? {
+            guard case .invoke(.identifier(let inner, _), let a)? = e, let location = text(a.first) else { return nil }
+            switch inner {
+            case "File.Contents": return (false, location)
+            case "Web.Contents": return (true, location)
+            default: return nil
+            }
+        }
+        func make(_ kind: SourceKind, _ location: String) -> SourceRequest { SourceRequest(kind: kind, location: location) }
+        switch fn {
+        case "Folder.Files", "Folder.Contents": return text(args.first).map { make(.folder, $0) }
+        case "Sqlite.Database": return text(args.first).map { make(.sqlite, $0) }
+        case "OData.Feed": return text(args.first).map { make(.odata, $0) }
+        case "Python.Execute": return text(args.first).map { make(.python, $0) }
+        case "R.Execute": return text(args.first).map { make(.r, $0) }
+        case "Csv.Document":
+            guard let c = contents(args.first) else { return nil }
+            var r = make(c.web ? .web : .csv, c.location)
+            r.webContent = .csv
+            if case .record(let fields)? = args[safe: 1] {
+                for (name, value) in fields {
+                    if name == "Delimiter", let d = text(value) { r.delimiter = d }
+                    if name == "Encoding", case .literal(.number(let n)) = value { r.encoding = Int(n) }
+                }
+            } else if let d = text(args[safe: 1]) {
+                r.delimiter = d
+            }
+            return r
+        case "Excel.Workbook", "Json.Document", "Xml.Tables", "Xml.Document", "Web.Page":
+            guard let c = contents(args.first) else { return nil }
+            let file: SourceKind = fn == "Excel.Workbook" ? .excel : fn == "Json.Document" ? .json : .xml
+            if fn == "Web.Page" && !c.web { return nil }
+            var r = make(c.web ? .web : file, c.location)
+            r.webContent = fn == "Excel.Workbook" ? .excel : fn == "Json.Document" ? .json : fn == "Web.Page" ? .html : .xml
+            return r
+        default:
+            return nil
+        }
+    }
+
     // MARK: Names
 
     static func uniqueName(_ base: String, taken: Set<String>) -> String {
