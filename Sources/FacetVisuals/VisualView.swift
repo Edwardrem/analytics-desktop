@@ -70,8 +70,18 @@ public struct VisualView: View {
     public let data: VisualData
     public let context: VisualContext
 
+    /// Draws `spec` with its measure-driven format values (`data.formatOverrides`) in place of the
+    /// stored ones. A change the renderer reports keeps the stored values of the properties it
+    /// left alone, so an evaluated value is never written back as a static one.
     public init(spec: VisualSpec, data: VisualData, context: VisualContext) {
-        self.spec = spec; self.data = data; self.context = context
+        let overrides = spec.boundFormatOverrides(data.formatOverrides)
+        self.data = data
+        guard !overrides.isEmpty else { self.spec = spec; self.context = context; return }
+        self.spec = spec.applyingFormatOverrides(overrides)
+        var c = context
+        let report = context.onSpecChange
+        c.onSpecChange = { edited in report(edited.restoringFormatOverrides(overrides, from: spec)) }
+        self.context = c
     }
 
     public var body: some View {

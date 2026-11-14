@@ -75,12 +75,36 @@ struct FormatTooltipRows: View {
 
 /// The rows of the General tab's Alt text card: read by screen readers instead of the visual's name.
 struct FormatAltTextRows: View {
+    let visualID: UUID
     let altText: String
     let commit: (String) -> Void
 
     var body: some View {
-        CommitTextField("Describe this visual", text: altText, onCommit: commit)
-            .accessibilityLabel("Alt text")
+        HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
+            CommitTextField("Describe this visual", text: altText, onCommit: commit)
+                .accessibilityLabel("Alt text")
+            FormatBindingButton(visualID: visualID, card: FormatBinding.altTextCard, key: "text", name: "alt text", kind: .text)
+        }
         PaneNote("Read by screen readers instead of the visual's name.")
+    }
+}
+
+/// The rows of the General tab's Action card: the text shown when readers hover over the visual.
+struct FormatActionTooltipRows: View {
+    let visualID: UUID
+    let tooltip: String
+    let commit: (String) -> Void
+
+    var body: some View {
+        PropertyRow("Tooltip") {
+            HStack(alignment: .firstTextBaseline, spacing: Design.Space.xs) {
+                CommitTextField("Shown on hover", text: tooltip, onCommit: commit)
+                    .accessibilityLabel("Tooltip")
+                FormatBindingButton(visualID: visualID, card: FormatBinding.actionCard, key: "tooltip",
+                                    name: "action tooltip", kind: .text)
+            }
+        }
+        .controlSize(.small)
+        PaneNote("Shown when readers hover over this visual. Set what it does in the Build pane.")
     }
 }

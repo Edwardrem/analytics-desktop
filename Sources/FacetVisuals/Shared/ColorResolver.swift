@@ -75,7 +75,8 @@ public enum ConditionalFormatEvaluator {
         return lo < 0 ? -Swift.max(0, Swift.min(1, v / lo)) : 0
     }
 
-    static func matchingRule(_ value: Value, range: Range, format: ConditionalFormat) -> ConditionalFormat.Rule? {
+    /// The first rule of `format` that `value` meets (percent thresholds are relative to `range`).
+    public static func matchingRule(_ value: Value, range: Range, format: ConditionalFormat) -> ConditionalFormat.Rule? {
         let v = isText(value) ? nil : value.asDouble
         func threshold(_ x: Double, _ r: ConditionalFormat.Rule) -> Double {
             r.isPercent ? range.min + x / 100 * (range.max - range.min) : x

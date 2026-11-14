@@ -429,7 +429,7 @@ final class DocumentStore: ObservableObject {
     /// Requery visuals on the current page. Results arrive progressively; stale results are dropped.
     func refreshVisuals(_ ids: [UUID]? = nil) {
         let page = currentPage
-        var targets = page.visuals.filter { !$0.type.isPageElement || $0.type == .textBox }
+        var targets = page.visuals.filter(FormatBindings.queriesData)
         if let ids { let set = Set(ids); targets = targets.filter { set.contains($0.id) } }
         guard !targets.isEmpty else { return }
         if visualsPaused {

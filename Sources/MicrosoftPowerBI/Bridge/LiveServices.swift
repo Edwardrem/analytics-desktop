@@ -78,8 +78,18 @@ final class LiveCalculation: CalculationService {
     /// unhighlighted values and `table` the values under the highlight (blank where a group has none).
     func visualData(spec original: VisualSpec, request: VisualRequest) -> VisualData {
         let start = CFAbsoluteTimeGetCurrent()
-        if original.type.isSlicer { return slicerData(original, request) }
-        if original.type == .textBox { return textBoxData(original, request, start: start) }
+        if original.type.isSlicer {
+            var out = slicerData(original, request)
+            out.formatOverrides = formatOverrides(original, filterTables(request))
+            return out
+        }
+        if original.type.isPageElement {
+            // A page element shows no data points: a selection elsewhere filters what it shows.
+            let filters = filterTables(request) + request.highlights.flatMap(crossFilterTables)
+            var out = original.type == .textBox ? textBoxData(original, filters, start: start) : VisualData()
+            out.formatOverrides = formatOverrides(original, filters)
+            return out
+        }
 
         let spec = resolvingFieldParameters(original, filters: filterTables(request))
         let drill = Self.drillPlan(spec)
@@ -101,7 +111,11 @@ final class LiveCalculation: CalculationService {
                 }
             }
         }
-        guard !groups.isEmpty || !values.isEmpty else { return VisualData() }
+        guard !groups.isEmpty || !values.isEmpty else {
+            var out = VisualData()
+            out.formatOverrides = formatOverrides(spec, filterTables(request))
+            return out
+        }
 
         var taken = Set<String>()
         var valueNames: [String] = []
@@ -190,14 +204,22 @@ final class LiveCalculation: CalculationService {
             out.queryMilliseconds = ms
             out.daxQuery = dax
             out.dynamicTitle = DynamicTitles.text(for: spec, filters: filters, model: model) { try engine.query($0).first }
+            out.formatOverrides = formatOverrides(spec, filters)
             return out
         } catch {
             let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
             var out = VisualData(error: (error as? DAXError)?.message ?? error.localizedDescription)
             out.queryMilliseconds = ms
             out.daxQuery = dax
+            out.formatOverrides = formatOverrides(spec, filters)
             return out
         }
+    }
+
+    /// The values of the visual's measure-driven format properties under `filters`.
+    private func formatOverrides(_ spec: VisualSpec, _ filters: [String]) -> FormatBag {
+        guard !(spec.formatBindings ?? []).isEmpty else { return [:] }
+        return FormatBindings.overrides(for: spec, filters: filters, model: model) { try engine.query($0).first }
     }
 
     /// A Tooltips-well field as the value it adds to each data point: measures and summarized
@@ -309,11 +331,9 @@ final class LiveCalculation: CalculationService {
     /// page's filters, slicers and selections, as a one-row table with one column per placeholder,
     /// named after it (what the text box renderer looks up). A placeholder that names no measure, or
     /// whose expression fails, gets no column and stays a quiet token in the text.
-    private func textBoxData(_ spec: VisualSpec, _ request: VisualRequest, start: CFAbsoluteTime) -> VisualData {
+    private func textBoxData(_ spec: VisualSpec, _ filters: [String], start: CFAbsoluteTime) -> VisualData {
         let names = TextBoxPlaceholders.names(in: spec.content)
         guard !names.isEmpty else { return VisualData() }
-        // A text box shows no data points, so a selection elsewhere filters it rather than highlighting.
-        let filters = filterTables(request) + request.highlights.flatMap(crossFilterTables)
         var columns: [DataColumn] = [], formats: [String] = [], queries: [String] = []
         for name in names {
             guard let (expression, format) = textBoxExpression(name, filters: filters) else { continue }
