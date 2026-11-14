@@ -58,7 +58,7 @@ struct SignInSheet: View {
                 progress("Starting…")
             } else {
                 VStack(alignment: .leading, spacing: Design.Space.s) {
-                    Text("Sign in with a work, school or personal Microsoft account to open and save files in OneDrive and SharePoint. Publishing, the OneLake catalog and sensitivity labels need a work or school account.")
+                    Text("Sign in with your work or school Microsoft account to open and save files in OneDrive and SharePoint, publish, use the OneLake catalog and sensitivity labels, and connect to SharePoint, Dataverse, Azure and Fabric data. Each service asks for your consent the first time.")
                         .font(Design.Typeface.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                     HStack {
                         Button("Continue in Browser") { start(deviceCode: false) }.keyboardShortcut(.defaultAction)
@@ -155,15 +155,18 @@ struct RegistrationForm: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.s) {
-            Text("\(AppIdentity.name) ships without a Microsoft application ID. Register a free app in your Entra tenant once and enter its details here; they are stored in your preferences, not in documents.")
-                .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(runtime.hasDefaultRegistration
+                 ? "\(AppIdentity.name) signs in with its own Microsoft app registration, so there is nothing to set up. Enter an application ID only if your organization requires its own registration; leave it empty to use the app's. These are stored in your preferences, not in documents."
+                 : MicrosoftAuthConfiguration.missingRegistration)
+                .font(Design.Typeface.caption).foregroundStyle(runtime.hasDefaultRegistration ? Color.secondary : Design.Palette.caution)
+                .fixedSize(horizontal: false, vertical: true)
             LabeledContent("Application (client) ID") {
-                TextField("", text: $clientID, prompt: Text("00000000-0000-0000-0000-000000000000"))
+                TextField("", text: $clientID, prompt: Text(runtime.hasDefaultRegistration ? "The app's own registration" : "00000000-0000-0000-0000-000000000000"))
                     .font(Design.Typeface.mono).frame(maxWidth: 300)
             }
             LabeledContent("Tenant") {
-                TextField("", text: $tenant, prompt: Text("common")).frame(maxWidth: 300)
-                    .help("“common” accepts any work, school or personal account; use your tenant ID or domain to allow only your organization")
+                TextField("", text: $tenant, prompt: Text(MicrosoftAuthConfiguration.defaultTenant)).frame(maxWidth: 300)
+                    .help("Empty or “organizations” accepts any work or school account; “common” also accepts personal accounts; a tenant ID or domain allows only that organization")
             }
             LabeledContent("Cloud") {
                 Picker("", selection: $cloud) {
@@ -176,7 +179,9 @@ struct RegistrationForm: View {
             }
             HStack {
                 Button("Save Registration") { save() }
-                    .disabled(clientID.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(clientID.trimmingCharacters(in: .whitespaces).isEmpty && !runtime.hasDefaultRegistration)
+                    .help(runtime.hasDefaultRegistration ? "Save the override; an empty application ID uses the app's own registration"
+                                                         : "Enter an application (client) ID first")
                 Button(showSteps ? "Hide Steps" : "How to Register…") { showSteps.toggle() }
                 Spacer()
             }
@@ -186,7 +191,7 @@ struct RegistrationForm: View {
             guard !loaded else { return }
             loaded = true
             let c = runtime.manager.configuration
-            clientID = c.clientID; tenant = c.tenant == "common" ? "" : c.tenant; cloud = c.cloud
+            clientID = c.clientID; tenant = c.tenant == MicrosoftAuthConfiguration.defaultTenant ? "" : c.tenant; cloud = c.cloud
         }
     }
 

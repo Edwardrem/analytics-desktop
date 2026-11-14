@@ -73,6 +73,8 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
     private var tokenCache: [String: CachedToken] = [:]
     private var inflight: [String: Task<String, Error>] = [:]
     private var signInTask: Task<MicrosoftAccount, Error>?
+    /// Interactive consent sign-ins in progress, per scope.
+    private var consentTasks: [String: Task<Void, Error>] = [:]
     /// Waits between device-code polls; replaceable so the self-check does not wait in real time.
     var pollSleeper: (TimeInterval) async throws -> Void = { try await Task.sleep(nanoseconds: UInt64(max(0, $0) * 1_000_000_000)) }
 
@@ -207,7 +209,7 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
     private func completeSignIn(_ response: OAuthTokenResponse, expectedNonce: String?, resource: MicrosoftResource) throws -> MicrosoftAccount {
         guard let idToken = response.idToken else { throw MicrosoftAuthError.invalidResponse("no ID token was returned") }
         let claims = try IDTokenClaims.decode(jwt: idToken)
-        try claims.validate(clientID: configuration.clientID.trimmingCharacters(in: .whitespacesAndNewlines),
+        try claims.validate(clientID: configuration.effectiveClientID,
                             authorityHost: configuration.cloud.authorityHost.host)
         if let expectedNonce {
             guard let nonce = claims.nonce, HTTPHelpers.constantTimeEquals(nonce, expectedNonce) else {
@@ -272,6 +274,67 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
     }
     public func accessToken(resource: String, forceRefresh: Bool) async throws -> String {
         try await accessToken(for: MicrosoftResource.from(resourceString: resource, cloud: configuration.cloud), forceRefresh: forceRefresh)
+    }
+
+    /// A token for a data source: `resource` is a `/.default` scope (`EntraResource` in the query engine) and `host` the
+    /// server it will be sent to. The host must pass `TokenAudiencePolicy` for the resource, otherwise nothing is
+    /// requested and `.hostNotAllowed` is thrown.
+    ///
+    /// Incremental consent: when the account has not consented to the resource yet (or must sign in again, or no account
+    /// is signed in) and `interactive` is true, the browser sign-in opens once for that resource's scope, then the token
+    /// is returned. Concurrent requests for the same scope share that one sign-in.
+    public func accessToken(resource: String, host: String, interactive: Bool = true) async throws -> String {
+        guard TokenAudiencePolicy.allows(resource: resource, host: host, cloud: configuration.cloud) else {
+            throw MicrosoftAuthError.hostNotAllowed(host: host, resource: Self.resourceLabel(resource))
+        }
+        let target = MicrosoftResource.from(resourceString: Self.mapToCloud(resource, configuration.cloud), cloud: configuration.cloud)
+        do {
+            return try await accessToken(for: target)
+        } catch let e as MicrosoftAuthError where interactive && Self.needsInteractiveConsent(e) {
+            let scope = target.scopeString(cloud: configuration.cloud).lowercased()
+            if let running = consentTasks[scope] {
+                try await running.value
+            } else {
+                let hint = activeAccount?.username
+                let task = Task { @MainActor [weak self] () throws -> Void in
+                    guard let self else { throw CancellationError() }
+                    _ = try await self.signIn(loginHint: hint, resource: target)
+                }
+                consentTasks[scope] = task
+                defer { consentTasks[scope] = nil }
+                try await task.value
+            }
+            return try await accessToken(for: target)
+        }
+    }
+
+    static func needsInteractiveConsent(_ e: MicrosoftAuthError) -> Bool {
+        switch e {
+        case .consentRequired, .interactionRequired, .noActiveAccount: return true
+        default: return false
+        }
+    }
+
+    /// The well-known global resources mapped to the configured national cloud (Graph, Power BI).
+    static func mapToCloud(_ resource: String, _ cloud: MicrosoftCloud) -> String {
+        guard cloud != .public else { return resource }
+        let lower = resource.lowercased()
+        if lower.hasPrefix("https://graph.microsoft.com") { return cloud.graphEndpoint.absoluteString + "/.default" }
+        if lower.hasPrefix("https://analysis.windows.net/powerbi/api") { return cloud.powerBIResource + "/.default" }
+        return resource
+    }
+
+    /// A short, readable name for a resource in messages.
+    static func resourceLabel(_ resource: String) -> String {
+        let host = TokenAudiencePolicy.audienceHost(of: resource) ?? resource
+        switch host {
+        case "database.windows.net": return "Azure SQL"
+        case "storage.azure.com": return "Azure Storage"
+        case "ossrdbms-aad.database.windows.net": return "Azure Database for PostgreSQL and MySQL"
+        case "analysis.windows.net": return "Power BI"
+        case "graph.microsoft.com": return "Microsoft Graph"
+        default: return host
+        }
     }
 
     private func redeemRefreshToken(accountID: String, scope: String) async throws -> String {

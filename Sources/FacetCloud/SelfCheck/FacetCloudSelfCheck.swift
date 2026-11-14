@@ -256,7 +256,7 @@ extension FacetCloudSelfCheck {
         let url = b.authorizationURL(redirectURI: "http://localhost:53124", state: "st+ate", nonce: "n-1", pkce: pkce, loginHint: "ana@contoso.com")
         c.equal(url.scheme, "https", "authorize scheme")
         c.equal(url.host, "login.microsoftonline.com", "authorize host")
-        c.equal(url.path, "/common/oauth2/v2.0/authorize", "authorize path")
+        c.equal(url.path, "/organizations/oauth2/v2.0/authorize", "authorize path (multi-tenant work or school)")
         let q = LoopbackRedirectListener.parseQuery(url.absoluteString.replacingOccurrences(of: "%20", with: "+"))
         c.equal(q["client_id"], cfg.clientID, "client_id")
         c.equal(q["response_type"], "code", "response_type")
@@ -273,7 +273,7 @@ extension FacetCloudSelfCheck {
         let gov = MicrosoftAuthConfiguration(clientID: "x", tenant: "contoso.onmicrosoft.us", cloud: .usGovernment)
         c.equal(gov.endpoint("token").absoluteString, "https://login.microsoftonline.us/contoso.onmicrosoft.us/oauth2/v2.0/token", "US Gov token endpoint")
         c.equal(MicrosoftAuthConfiguration(clientID: "x", tenant: "", cloud: .china).endpoint("devicecode").absoluteString,
-                "https://login.chinacloudapi.cn/common/oauth2/v2.0/devicecode", "China device code endpoint, default tenant")
+                "https://login.chinacloudapi.cn/organizations/oauth2/v2.0/devicecode", "China device code endpoint, default tenant")
         c.equal(MicrosoftCloud.usGovernment.graphEndpoint.host, "graph.microsoft.us", "US Gov Graph")
         c.equal(MicrosoftCloud.china.powerBIEndpoint.host, "api.powerbi.cn", "China Power BI")
         c.expect(MicrosoftResource.graph.scopes(cloud: .usGovernment).contains("https://graph.microsoft.us/User.Read"), "national-cloud Graph scopes are qualified")

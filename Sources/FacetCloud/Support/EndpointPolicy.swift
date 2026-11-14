@@ -11,8 +11,10 @@ public struct EndpointPolicy: Sendable, Equatable {
     public private(set) var hostSuffixes: Set<String>
     /// Hosts the system browser may be sent to for sign-in.
     public private(set) var signInHosts: Set<String>
+    public let cloud: MicrosoftCloud
 
     public init(cloud: MicrosoftCloud, extraHosts: [String] = []) {
+        self.cloud = cloud
         var h: Set<String> = []
         for url in [cloud.graphEndpoint, cloud.powerBIEndpoint, cloud.fabricEndpoint, cloud.oneLakeEndpoint] {
             if let host = url?.host?.lowercased() { h.insert(host) }
@@ -30,6 +32,11 @@ public struct EndpointPolicy: Sendable, Equatable {
         guard let url, url.scheme?.lowercased() == "https", let host = url.host?.lowercased(), url.user == nil else { return false }
         if hosts.contains(host) { return true }
         return hostSuffixes.contains { host.hasSuffix($0) && host.count > $0.count }
+    }
+
+    /// Whether a token for `resource` may be sent to `host` (audience-bound rules, `TokenAudiencePolicy`).
+    public func allowsToken(resource: String, host: String) -> Bool {
+        TokenAudiencePolicy.allows(resource: resource, host: host, cloud: cloud)
     }
 
     /// Whether `url` is a Microsoft sign-in page the browser may be opened at (authorize endpoint, device login).

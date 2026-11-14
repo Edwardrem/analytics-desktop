@@ -53,7 +53,7 @@ public struct OAuthRequestBuilder: Sendable {
                                  loginHint: String? = nil, prompt: String? = "select_account", scopes: [String]? = nil) -> URL {
         var comps = URLComponents(url: configuration.endpoint("authorize"), resolvingAgainstBaseURL: false)!
         var items: [(String, String)] = [
-            ("client_id", configuration.clientID),
+            ("client_id", configuration.effectiveClientID),
             ("response_type", "code"),
             ("redirect_uri", redirectURI),
             ("response_mode", "query"),
@@ -81,7 +81,7 @@ public struct OAuthRequestBuilder: Sendable {
     /// Redeems an authorization code (public client: no secret, PKCE verifier instead).
     public func codeExchangeRequest(code: String, redirectURI: String, verifier: String, scopes: [String]? = nil) -> URLRequest {
         formRequest("token", [
-            ("client_id", configuration.clientID),
+            ("client_id", configuration.effectiveClientID),
             ("grant_type", "authorization_code"),
             ("code", code),
             ("redirect_uri", redirectURI),
@@ -95,7 +95,7 @@ public struct OAuthRequestBuilder: Sendable {
         var scopes = scope.split(separator: " ").map(String.init)
         if !scopes.contains("offline_access") { scopes.append("offline_access") }
         return formRequest("token", tenant: tenant, [
-            ("client_id", configuration.clientID),
+            ("client_id", configuration.effectiveClientID),
             ("grant_type", "refresh_token"),
             ("refresh_token", refreshToken),
             ("scope", scopes.joined(separator: " ")),
@@ -105,7 +105,7 @@ public struct OAuthRequestBuilder: Sendable {
     /// Starts the device-code flow.
     public func deviceCodeRequest() -> URLRequest {
         formRequest("devicecode", [
-            ("client_id", configuration.clientID),
+            ("client_id", configuration.effectiveClientID),
             ("scope", signInScopes.joined(separator: " ")),
         ])
     }
@@ -113,7 +113,7 @@ public struct OAuthRequestBuilder: Sendable {
     /// Polls the token endpoint during the device-code flow.
     public func deviceCodePollRequest(deviceCode: String) -> URLRequest {
         formRequest("token", [
-            ("client_id", configuration.clientID),
+            ("client_id", configuration.effectiveClientID),
             ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
             ("device_code", deviceCode),
         ])

@@ -31,7 +31,7 @@ final class AccountSetupTests: XCTestCase {
             XCTAssertFalse(EntraRegistration.isTenant(bad), bad)
         }
         XCTAssertEqual(EntraRegistration.normalizedTenant("  Contoso.OnMicrosoft.com "), "contoso.onmicrosoft.com")
-        XCTAssertEqual(EntraRegistration.normalizedTenant(""), "common")
+        XCTAssertEqual(EntraRegistration.normalizedTenant(""), "organizations")
         XCTAssertEqual(EntraRegistration.problems(clientID: "x", tenant: "contoso").count, 2)
     }
 
@@ -47,6 +47,30 @@ final class AccountSetupTests: XCTestCase {
         // The clients follow the cloud.
         XCTAssertEqual(rt.services.graph.cloud, .usGovernment)
         XCTAssertEqual(rt.services.powerBI.cloud, .usGovernment)
+    }
+
+    func testWithoutAnyClientIDSignInSaysWhatIsMissing() throws {
+        let rt = runtime()
+        XCTAssertFalse(rt.hasDefaultRegistration)
+        let problems = EntraRegistration.problems(clientID: "", tenant: "")
+        XCTAssertEqual(problems.count, 1)
+        XCTAssertTrue(problems[0].contains("AnalyticsEntraClientID"))
+        XCTAssertTrue(problems[0].contains("Settings ▸ Microsoft account"))
+        XCTAssertThrowsError(try rt.updateRegistration(clientID: "", tenant: "", cloud: .public))
+    }
+
+    func testTheAppsOwnRegistrationNeedsNoSetupAndCanBeOverridden() throws {
+        let m = MicrosoftAccountManager(configuration: MicrosoftAuthConfiguration(defaultClientID: "1950a258-227b-4e31-a9cf-717495945fc2"),
+                                        secrets: InMemorySecretStore(), defaults: defaults)
+        let rt = MicrosoftRuntime(manager: m, defaults: defaults)
+        XCTAssertTrue(rt.isConfigured)
+        XCTAssertTrue(rt.hasDefaultRegistration)
+        XCTAssertTrue(EntraRegistration.problems(clientID: "", tenant: "", allowDefault: true).isEmpty)
+        try rt.updateRegistration(clientID: "2950a258-227b-4e31-a9cf-717495945fc2", tenant: "contoso.com", cloud: .public)
+        XCTAssertEqual(m.configuration.effectiveClientID, "2950a258-227b-4e31-a9cf-717495945fc2")
+        try rt.updateRegistration(clientID: "", tenant: "", cloud: .public)
+        XCTAssertEqual(m.configuration.effectiveClientID, "1950a258-227b-4e31-a9cf-717495945fc2", "an empty override goes back to the default")
+        XCTAssertEqual(m.configuration.endpoint("token").path, "/organizations/oauth2/v2.0/token")
     }
 
     func testAnEarlierBuildsClientIDIsMovedOnce() {
