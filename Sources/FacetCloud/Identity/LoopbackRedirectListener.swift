@@ -69,11 +69,18 @@ public final class LoopbackRedirectListener: @unchecked Sendable {
         return bound
     }
 
-    private func makeListener(host: NWEndpoint.Host, port: NWEndpoint.Port) throws -> NWListener {
+    /// Local connections only, on exactly `host`; the port is never shared (each sign-in binds a fresh ephemeral port,
+    /// so nothing needs address reuse).
+    static func parameters(host: NWEndpoint.Host, port: NWEndpoint.Port) -> NWParameters {
         let params = NWParameters.tcp
         params.requiredLocalEndpoint = .hostPort(host: host, port: port)
         params.acceptLocalOnly = true
-        params.allowLocalEndpointReuse = true
+        params.allowLocalEndpointReuse = false
+        return params
+    }
+
+    private func makeListener(host: NWEndpoint.Host, port: NWEndpoint.Port) throws -> NWListener {
+        let params = Self.parameters(host: host, port: port)
         do {
             let l = try NWListener(using: params)
             l.newConnectionHandler = { [weak self] c in self?.accept(c) }

@@ -19,14 +19,9 @@ final class AgentBridge: ObservableObject {
     private var server: MCPServer?
 
     /// Asks the user before a tool changes a document. Replaced in tests.
-    var confirm: (_ message: String, _ detail: String) -> Bool = { message, detail in
+    var confirm: (_ change: AgentTools.MeasureChange) -> Bool = { change in
         NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.informativeText = detail
-        alert.addButton(withTitle: "Allow")
-        alert.addButton(withTitle: "Don't Allow")
-        return alert.runModal() == .alertFirstButtonReturn
+        return AgentTools.approvalAlert(for: change).runModal() == .alertFirstButtonReturn
     }
     /// The documents tools work on. Replaced in tests.
     var documents: () -> [(id: UUID, store: DocumentStore)] = {
@@ -177,15 +172,42 @@ enum AgentTools {
         return lines.joined(separator: "\n")
     }
 
+    /// What an agent asks to change, as the user is shown it before anything happens.
+    struct MeasureChange: Equatable {
+        var document: String
+        var table: String
+        var name: String
+        var expression: String
+        var formatString: String?
+        var replacing: Bool
+    }
+
+    static let maxNameLength = 200
+    static let maxFormatLength = 200
+    static let maxExpressionLength = 32_000
+
+    /// A name or format string from an agent: one line, no control or invisible formatting characters, bounded.
+    static func line(_ value: String, _ key: String, max: Int) throws -> String {
+        guard value.count <= max else { throw ToolError(message: "“\(key)” is longer than \(max) characters.") }
+        let hidden = value.unicodeScalars.contains {
+            CharacterSet.controlCharacters.contains($0) || CharacterSet.newlines.contains($0) || CharacterSet.illegalCharacters.contains($0)
+        }
+        guard !hidden else { throw ToolError(message: "“\(key)” must be one line without control or invisible formatting characters.") }
+        return value
+    }
+
     @MainActor static func setMeasure(_ store: DocumentStore, _ args: JSONValue) async throws -> String {
-        let tableName = try string(args, "table"), name = try string(args, "name"), expression = try string(args, "expression")
-        let format = args["formatString"]?.stringValue
+        let tableName = try string(args, "table"), expression = try string(args, "expression")
+        let name = try line(try string(args, "name"), "name", max: maxNameLength)
+        let format = try args["formatString"]?.stringValue.map { try line($0, "formatString", max: maxFormatLength) }
+        guard expression.count <= maxExpressionLength else { throw ToolError(message: "The expression is longer than \(maxExpressionLength) characters.") }
         guard store.model.table(tableName) != nil else { throw ToolError(message: "“\(store.displayName)” has no table named \(tableName).") }
         let issues = await store.withEngine { $0.check(expression, kind: .measure, homeTable: tableName) }.filter { !$0.isWarning }
         guard issues.isEmpty else { throw ToolError(message: "The expression has errors: " + issues.map(\.message).joined(separator: "; ")) }
         let replacing = store.model.measure(name) != nil
-        guard AgentBridge.shared.confirm("An agent wants to \(replacing ? "change" : "add") the measure “\(name)” in “\(store.displayName)”.",
-                                         "\(tableName)[\(name)] =\n\(expression)") else {
+        let change = MeasureChange(document: store.displayName, table: tableName, name: name, expression: expression,
+                                   formatString: format.flatMap { $0.isEmpty ? nil : $0 }, replacing: replacing)
+        guard AgentBridge.shared.confirm(change) else {
             throw ToolError(message: "The user didn't allow the change.")
         }
         store.updateModel(replacing ? "Change Measure" : "New Measure") { model in
@@ -196,6 +218,66 @@ enum AgentTools {
             model.tables[i].measures.append(m)
         }
         return "\(replacing ? "Changed" : "Added") \(tableName)[\(name)]."
+    }
+
+    // MARK: Approval
+
+    /// The dialog that asks the user. What the agent chose (name, table, format) sits in fixed one-line fields, never
+    /// in the dialog's own sentences, so it can't pose as part of the question.
+    @MainActor static func approvalAlert(for change: MeasureChange) -> NSAlert {
+        let alert = NSAlert()
+        alert.messageText = change.replacing ? "An agent wants to change a measure." : "An agent wants to add a measure."
+        alert.informativeText = "In “\(change.document)”. Allow it only if you asked an agent for this change. You can undo it."
+        var rows: [[NSView]] = [[label("Measure"), fixedField(change.name)], [label("Table"), fixedField(change.table)]]
+        if let format = change.formatString { rows.append([label("Format"), fixedField(format)]) }
+        rows.append([label("Expression"), expressionView(change.expression)])
+        let grid = NSGridView(views: rows)
+        grid.rowSpacing = 6
+        grid.columnSpacing = 8
+        grid.column(at: 0).xPlacement = .trailing
+        grid.rowAlignment = .firstBaseline
+        grid.frame = NSRect(origin: .zero, size: grid.fittingSize)
+        alert.accessoryView = grid
+        alert.addButton(withTitle: "Allow")
+        alert.addButton(withTitle: "Don't Allow")
+        return alert
+    }
+
+    @MainActor private static func label(_ text: String) -> NSTextField {
+        let l = NSTextField(labelWithString: text)
+        l.textColor = .secondaryLabelColor
+        return l
+    }
+
+    /// One line, fixed width, truncated in the middle; the full value is in the tooltip and can be selected.
+    @MainActor static func fixedField(_ value: String) -> NSTextField {
+        let f = NSTextField(labelWithString: value)
+        f.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        f.usesSingleLineMode = true
+        f.maximumNumberOfLines = 1
+        f.lineBreakMode = .byTruncatingMiddle
+        f.cell?.wraps = false
+        f.cell?.isScrollable = false
+        f.isSelectable = true
+        f.toolTip = value
+        f.translatesAutoresizingMaskIntoConstraints = false
+        f.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        return f
+    }
+
+    @MainActor private static func expressionView(_ expression: String) -> NSView {
+        let scroll = NSTextView.scrollableTextView()
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        if let text = scroll.documentView as? NSTextView {
+            text.string = expression
+            text.isEditable = false
+            text.font = .monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        }
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        scroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        return scroll
     }
 }
 

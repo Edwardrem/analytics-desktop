@@ -17,7 +17,8 @@ public enum PBIXPackage {
         var l = ZipArchive.Limits()
         l.maxEntryCount = 20_000
         l.maxTotalUncompressedSize = 8 * 1024 * 1024 * 1024
-        l.maxEntrySize = 512 * 1024 * 1024
+        // The DataModel entry can be most of a large file but is never read; text streams have their own cap below.
+        l.maxEntrySize = l.maxTotalUncompressedSize
         return l
     }()
     /// Largest text stream (layout, schema, queries) read into memory.

@@ -159,6 +159,26 @@ final class CloudDocumentsTests: XCTestCase {
         XCTAssertEqual(DocumentFiles.of(store).importedFrom, local)
     }
 
+    func testCloudNamesNeverBecomePathsOutsideTheWorkingFolder() async throws {
+        let root = CloudDocumentSync.workingRoot.standardizedFileURL.path
+        for name in ["../../../Documents/Sales.facet", "/etc/Sales.facet", "..", "a\\b:c\u{0}.facet", String(repeating: "数", count: 200) + ".facet"] {
+            let url = try CloudDocuments.stagingFile(named: name)
+            addTeardownBlock { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+            XCTAssertTrue(CloudDocumentSync.isWorkingCopy(url), url.path)
+            XCTAssertEqual(url.standardizedFileURL.deletingLastPathComponent().deletingLastPathComponent().path, root, name)
+            XCTAssertFalse(url.lastPathComponent.contains("/") || url.lastPathComponent.hasPrefix("."), url.lastPathComponent)
+            XCTAssertLessThanOrEqual(url.lastPathComponent.utf8.count, 255, "fits in one file name")
+            XCTAssertTrue(FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8)), url.lastPathComponent)
+        }
+
+        // A project opens from the mirror under its own name, so a name that isn't a safe file name is refused first.
+        stub { _, _ in .json("{}", status: 500) }
+        let project = try item(#"{"id":"p","name":"../../Sales.pbip","file":{},"parentReference":{"driveId":"d1","id":"folder","path":"/drive/root:/Reports"}}"#)
+        do { _ = try await CloudDocuments.download(project, sync: CloudDocuments.services().sync); XCTFail("opened") }
+        catch let e as CloudAPIError { XCTAssertTrue(e.message.contains("can't be used as a file name"), e.message) }
+        XCTAssertTrue(seen.value.isEmpty, "nothing was requested")
+    }
+
     func testOtherFilesAreNotOpenedAsDocuments() async throws {
         stub { _, _ in .json("{}", status: 500) }
         let csv = try item(#"{"id":"c","name":"data.csv","file":{},"parentReference":{"driveId":"d1"}}"#)

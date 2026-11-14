@@ -240,6 +240,42 @@ final class PackageFormatTests: XCTestCase {
         XCTAssertTrue(failure(big).contains("too large"))
     }
 
+    /// Data source files and archives are read only from regular files, with a limit: a link to a device, or a pipe,
+    /// is refused at once instead of hanging the app or reading without end.
+    func testPbidsAndArchivesReadOnlyRegularFiles() throws {
+        let dir = Fixtures.tempDir("regular-files")
+        let fm = FileManager.default
+        let valid = dir.appendingPathComponent("real.pbids")
+        try Data(#"{"connections":[{"details":{"protocol":"tds","address":{"server":"sql.contoso.com"}}}]}"#.utf8).write(to: valid)
+        let linkToValid = dir.appendingPathComponent("link.pbids")
+        try fm.createSymbolicLink(at: linkToValid, withDestinationURL: valid)
+        XCTAssertEqual(try PBIDS.read(from: linkToValid).map(\.queryName), ["sql.contoso.com"], "a link to a real file still opens")
+
+        let zero = dir.appendingPathComponent("zero.pbids")
+        try fm.createSymbolicLink(atPath: zero.path, withDestinationPath: "/dev/zero")
+        let zeroZip = dir.appendingPathComponent("zero.pbix")
+        try fm.createSymbolicLink(atPath: zeroZip.path, withDestinationPath: "/dev/zero")
+        let fifo = dir.appendingPathComponent("pipe.pbids")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let fifoZip = dir.appendingPathComponent("pipe.facet")
+        XCTAssertEqual(mkfifo(fifoZip.path, 0o600), 0)
+        let big = dir.appendingPathComponent("big.pbids")
+        try Data(repeating: 0x20, count: PBIDS.maxFileSize + 1).write(to: big)
+
+        @Sendable func check() {
+            XCTAssertThrowsError(try PBIDS.read(from: zero), "a link to /dev/zero")
+            XCTAssertThrowsError(try PBIDS.read(from: fifo), "a pipe")
+            XCTAssertThrowsError(try PBIDS.read(from: big)) { XCTAssertTrue($0.localizedDescription.contains("too large"), $0.localizedDescription) }
+            XCTAssertThrowsError(try ZipArchive(url: zeroZip), "a link to /dev/zero as a .pbix")
+            XCTAssertThrowsError(try ZipArchive(url: fifoZip), "a pipe as a zipped document")
+            XCTAssertFalse(FacetArchive.isArchive(fifoZip), "a pipe is never opened")
+        }
+        // Off the test thread, so a read that blocks fails the test instead of hanging the run.
+        let done = expectation(description: "every read returns")
+        DispatchQueue.global().async { check(); done.fulfill() }
+        wait(for: [done], timeout: 10)
+    }
+
     // MARK: Zipped documents
 
     func testDocumentArchiveRoundTripAndRejections() throws {
