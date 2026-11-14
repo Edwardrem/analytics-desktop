@@ -55,7 +55,7 @@ enum FlowCharts {
                     c.bool("showCenter", "Show centre total", true)]
                 + SharedFormatCards.dataLabels(show: true) + SharedFormatCards.accessibility()
         case .ribbon:
-            return SharedFormatCards.legend()
+            return SharedFormatCards.legend() + SmallMultiplesLayout.formatProperties()
         case .wordCloud:
             let c = FormatCard("wordCloud", "Words")
             return [c.number("maxWords", "Maximum words (0 = all)", 0, 0...Double(WordCloudChart.maxWords)),
