@@ -371,9 +371,9 @@ final class FormatCatalogTests: XCTestCase {
         XCTAssertFalse(ids.contains("totalLabels"))
         // A chart and a table share no Visual-tab card.
         XCTAssertTrue(FormatCatalog.cards(for: [.clusteredColumn, .table], tab: .visual).isEmpty)
-        // General tab: container chrome is common; Properties and Alt text are single-visual cards.
+        // General tab: container chrome and header icons are common; Properties and Alt text are single-visual cards.
         let general = FormatCatalog.cards(for: [.clusteredColumn, .table], tab: .general)
-        XCTAssertEqual(general.map(\.card), ["title", "subtitle", "divider", "background", "border", "shadow", "padding"])
+        XCTAssertEqual(general.map(\.card), ["title", "subtitle", "divider", "background", "border", "shadow", "padding", "visualHeader"])
         // Page elements have no bold / alignment title rows, so a mixed selection drops them.
         let mixed = FormatCatalog.cards(for: [.clusteredColumn, .textBox], tab: .general)
         XCTAssertEqual(mixed.first { $0.card == "title" }?.properties.map(\.key), ["show", "text", "size", "color"])

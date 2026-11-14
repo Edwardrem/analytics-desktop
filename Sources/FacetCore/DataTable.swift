@@ -9,6 +9,23 @@ public struct DataColumn: Codable, Sendable {
     public init(name: String, type: DataType = .any, values: [Value] = []) {
         self.name = name; self.type = type; self.values = values
     }
+
+    private enum CodingKeys: String, CodingKey { case name, type, values }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        type = try c.decode(DataType.self, forKey: .type)
+        let raw = try c.decode([Value].self, forKey: .values)
+        // JSON has one kind of number, so a whole decimal (2399.0) reads back as an integer. A
+        // decimal column gets its numbers back as decimals, the kind it was saved with.
+        switch type {
+        case .decimal, .currency, .duration:
+            values = raw.map { if case .int(let i) = $0 { return .double(Double(i)) } else { return $0 } }
+        default:
+            values = raw
+        }
+    }
 }
 
 /// A columnar in-memory table. The universal exchange format between the query

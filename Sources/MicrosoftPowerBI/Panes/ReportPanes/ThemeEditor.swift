@@ -252,6 +252,7 @@ struct PageSettingsView: View {
                 .buttonStyle(.link).font(Design.Typeface.caption)
             }
         }
+        PageRolesSettings()
     }
 
     @ViewBuilder

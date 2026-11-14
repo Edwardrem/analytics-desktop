@@ -11,7 +11,8 @@ public enum ValueFormatter {
         case .bool(let b): return b ? "True" : "False"
         case .date(let d): return formatDate(d, fmt)
         case .int(let i):
-            if fmt.isEmpty { return grouped(Double(i), decimals: 0) }
+            // General format, as in Power BI: a whole number with no format string has no separators (a year is 2024).
+            if fmt.isEmpty { return String(i) }
             if isDateFormat(fmt) { return formatDate(Value.date(fromSerial: Double(i)), fmt) }
             return formatNumber(Double(i), fmt)
         case .double(let d):

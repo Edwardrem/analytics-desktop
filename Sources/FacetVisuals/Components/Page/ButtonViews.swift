@@ -242,7 +242,7 @@ struct CmpButtonView: View {
         CmpButtonFace(env: env, resolver: CmpButtonResolver(env: env, defaultStyle: "tinted"),
                       title: text, symbol: CmpButtonIcon.symbol(kind), customImage: custom,
                       isSelected: f.bool("button", "selected", false),
-                      isEnabled: f.bool("button", "enabled", true),
+                      isEnabled: f.bool("button", "enabled", true) && env.context.canRunAction(action),
                       help: action.tooltip.isEmpty ? (text.isEmpty ? CmpButtonIcon.defaultName(kind) : text) : action.tooltip,
                       accessibilityName: env.spec.altText.isEmpty ? (text.isEmpty ? CmpButtonIcon.defaultName(kind) : text) : env.spec.altText) {
             env.context.onAction(action)

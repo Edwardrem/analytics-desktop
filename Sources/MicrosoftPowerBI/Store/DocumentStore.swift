@@ -102,6 +102,8 @@ final class DocumentStore: ObservableObject {
     @Published var selection: Set<UUID> = []
     @Published var zoom: Double = 1
     @Published var fitToWindow = true
+    /// With `fitToWindow`: scale the page to the canvas width (scrolling vertically) instead of fitting all of it.
+    @Published var fitToWidth = false
     @Published var showGridlines = false
     @Published var snapToGrid = true
     @Published var lockObjects = false
@@ -245,6 +247,7 @@ final class DocumentStore: ObservableObject {
         undoStack.removeAll(); redoStack.removeAll(); syncUndoNames()
         currentPageID = d.report.landingPageID ?? d.report.pages.first?.id ?? UUID()
         selection = []; pointSelections = [:]; visualData = [:]; drillthroughFilters = [:]; pageHistory = []
+        if let runtime = ReportRuntime.existing(for: self) { runtime.heldFilters = HeldFilters(); runtime.pendingSlicers = [:] }
         validateWorkspace()
         reloadEngine()
     }
@@ -301,13 +304,17 @@ final class DocumentStore: ObservableObject {
     func interaction(from source: UUID, to target: VisualSpec, on page: Page) -> InteractionMode {
         if let m = page.interactions[source]?[target.id] { return m }
         var mode = doc.report.settings.disableCrossHighlightByDefault ? .filter : doc.report.settings.defaultInteraction
-        if mode == .highlight, !Self.highlightable.contains(target.type) { mode = .filter }
+        // Slicers only ever filter, and only some visuals can show a highlight.
+        if mode == .highlight, !Self.highlightable.contains(target.type) || page.visual(source)?.type.isSlicer == true { mode = .filter }
         return mode
     }
 
-    /// All filters that apply to a visual: report, page, drillthrough, and its own.
+    /// All filters that apply to a visual: report, page, drillthrough, and its own (as last applied,
+    /// when the report has an Apply button and edits are waiting).
     func filters(for spec: VisualSpec, on page: Page) -> [FilterSpec] {
-        (doc.report.filters + page.filters + (drillthroughFilters[page.id] ?? []) + spec.filters).filter { !$0.isEmpty }
+        let held = doc.report.settings.filterPaneApplyButton ? ReportRuntime.existing(for: self)?.heldFilters : nil
+        return FilterTools.effective(report: doc.report, page: page, visual: spec,
+                                     drillthrough: drillthroughFilters[page.id] ?? [], held: held)
     }
 
     /// Adds a filter on a field at the given scope, announced in the undo history.
@@ -316,28 +323,22 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let id = selectedVisual?.id else { return }
-            updateVisual(id, name: announce ? "Add Visual Filter" : "Change Visual Filters") {
+            updateVisual(id, name: announce ? "Add Visual Filter" : "Change Visual Filters", invalidates: filterInvalidation(.visuals([id]), holding: .visual(id))) {
                 guard !$0.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.filters.append(filter)
             }
         case .page:
-            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters") {
+            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters", invalidates: filterInvalidation(.visuals(nil), holding: .page(currentPageID))) {
                 guard !$0.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.filters.append(filter)
             }
         case .report:
-            mutate(announce ? "Add Report Filter" : "Change Report Filters") {
+            mutate(announce ? "Add Report Filter" : "Change Report Filters", invalidates: filterInvalidation(.visuals(nil), holding: .report)) {
                 guard !$0.report.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.report.filters.append(filter)
             }
         case .drillthrough:
-            guard field.kind == .column else { return }
-            var f = filter
-            f.drillthroughUsedAsCategory = true
-            var list = drillthroughFilters[currentPageID] ?? []
-            guard !list.contains(where: { $0.field.key == field.key }) else { return }
-            list.append(f)
-            drillthroughFilters[currentPageID] = list
+            addDrillthroughField(field)
         }
     }
 
@@ -346,15 +347,21 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let target = selectedVisual?.id else { return }
-            updateVisual(target, name: "Remove Visual Filter") { $0.filters.removeAll { $0.id == id } }
+            updateVisual(target, name: "Remove Visual Filter", invalidates: filterInvalidation(.visuals([target]), holding: .visual(target))) { $0.filters.removeAll { $0.id == id } }
         case .page:
-            updatePage(name: "Remove Page Filter") { $0.filters.removeAll { $0.id == id } }
+            updatePage(name: "Remove Page Filter", invalidates: filterInvalidation(.visuals(nil), holding: .page(currentPageID))) { $0.filters.removeAll { $0.id == id } }
         case .report:
-            mutate("Remove Report Filter") { $0.report.filters.removeAll { $0.id == id } }
+            mutate("Remove Report Filter", invalidates: filterInvalidation(.visuals(nil), holding: .report)) { $0.report.filters.removeAll { $0.id == id } }
         case .drillthrough:
-            var list = drillthroughFilters[currentPageID] ?? []
-            list.removeAll { $0.id == id }
-            drillthroughFilters[currentPageID] = list
+            // A drillthrough field belongs to the page; a kept filter only to this visit.
+            if currentPage.drillthroughFilters.contains(where: { $0.id == id }) {
+                updatePage(name: "Remove Drillthrough Field", invalidates: .visuals(nil)) { $0.drillthroughFilters.removeAll { $0.id == id } }
+            }
+            if var list = drillthroughFilters[currentPageID] {
+                list.removeAll { $0.id == id }
+                drillthroughFilters[currentPageID] = list.isEmpty ? nil : list
+                refreshVisuals()
+            }
         }
     }
 
@@ -363,22 +370,41 @@ final class DocumentStore: ObservableObject {
         switch scope {
         case .visual:
             guard let target = selectedVisual?.id else { return }
-            updateVisual(target, name: name) {
+            updateVisual(target, name: name, invalidates: filterInvalidation(.visuals([target]), holding: .visual(target))) {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .page:
-            updatePage(name: name) {
+            updatePage(name: name, invalidates: filterInvalidation(.visuals(nil), holding: .page(currentPageID))) {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .report:
-            mutate(name) {
+            mutate(name, invalidates: filterInvalidation(.visuals(nil), holding: .report)) {
                 if let i = $0.report.filters.firstIndex(where: { $0.id == id }) { body(&$0.report.filters[i]) }
             }
         case .drillthrough:
-            var list = drillthroughFilters[currentPageID] ?? []
-            if let i = list.firstIndex(where: { $0.id == id }) { body(&list[i]) }
-            drillthroughFilters[currentPageID] = list
+            // Author controls (lock, hide, name) are saved with the page's drillthrough field; the value
+            // that arrived, and any kept filter, change only for this visit.
+            if currentPage.drillthroughFilters.contains(where: { $0.id == id }) {
+                updatePage(name: name) { p in
+                    guard let i = p.drillthroughFilters.firstIndex(where: { $0.id == id }) else { return }
+                    var edited = p.drillthroughFilters[i]
+                    body(&edited)
+                    p.drillthroughFilters[i].isLocked = edited.isLocked
+                    p.drillthroughFilters[i].isHidden = edited.isHidden
+                    p.drillthroughFilters[i].displayName = edited.displayName
+                }
+            }
+            if var list = drillthroughFilters[currentPageID], let i = list.firstIndex(where: { $0.id == id }) {
+                body(&list[i])
+                drillthroughFilters[currentPageID] = list
+                refreshVisuals()
+            }
         }
+    }
+
+    /// Replaces the filters a drillthrough carried to a page (nil clears them).
+    func setAppliedDrillthrough(_ filters: [FilterSpec]?, for pageID: UUID) {
+        drillthroughFilters[pageID] = filters
     }
 
     func request(for spec: VisualSpec, on page: Page) -> VisualRequest {
@@ -387,7 +413,8 @@ final class DocumentStore: ObservableObject {
         for other in page.visuals where other.id != spec.id && other.type.isSlicer {
             guard let state = other.slicerState, state.isActive else { continue }
             if page.interactions[other.id]?[spec.id] == InteractionMode.none { continue }
-            r.slicers.append(.init(fields: other.fields(.field), state: state, type: other.type))
+            r.slicers.append(.init(fields: other.fields(.field), state: state, type: other.type,
+                                   matchOperator: other.fmtString("slicer", "operator", "contains")))
         }
         for (source, points) in pointSelections where source != spec.id && !points.isEmpty {
             switch interaction(from: source, to: spec, on: page) {
@@ -620,35 +647,38 @@ final class DocumentStore: ObservableObject {
     func arrange(_ a: Arrangement) {
         let sel = selectedVisuals
         guard !sel.isEmpty else { return }
-        let page = currentPage
-        // With one visual selected, align to the page.
-        let bounds = sel.count == 1 ? CGRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
-            : sel.map(\.frame.cgRect).reduce(sel[0].frame.cgRect) { $0.union($1) }
-        var frames = Dictionary(uniqueKeysWithValues: sel.map { ($0.id, $0.frame) })
+        // With one visual selected, align to the page. In the phone layout, arrange the phone frames.
+        let size = canvasSize
+        let rects = sel.map { frame(of: $0).cgRect }
+        let bounds = sel.count == 1 ? CGRect(x: 0, y: 0, width: size.width, height: size.height)
+            : rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+        var frames = Dictionary(uniqueKeysWithValues: sel.map { ($0.id, frame(of: $0)) })
+        func each(_ body: (inout Frame) -> Void) {
+            for k in Array(frames.keys) { if var f = frames[k] { body(&f); frames[k] = f } }
+        }
+        let first = frame(of: sel[0])
         switch a {
-        case .left: for k in frames.keys { frames[k]!.x = bounds.minX }
-        case .right: for k in frames.keys { frames[k]!.x = bounds.maxX - frames[k]!.width }
-        case .centerH: for k in frames.keys { frames[k]!.x = bounds.midX - frames[k]!.width / 2 }
-        case .top: for k in frames.keys { frames[k]!.y = bounds.minY }
-        case .bottom: for k in frames.keys { frames[k]!.y = bounds.maxY - frames[k]!.height }
-        case .centerV: for k in frames.keys { frames[k]!.y = bounds.midY - frames[k]!.height / 2 }
+        case .left: each { $0.x = bounds.minX }
+        case .right: each { $0.x = bounds.maxX - $0.width }
+        case .centerH: each { $0.x = bounds.midX - $0.width / 2 }
+        case .top: each { $0.y = bounds.minY }
+        case .bottom: each { $0.y = bounds.maxY - $0.height }
+        case .centerV: each { $0.y = bounds.midY - $0.height / 2 }
         case .distributeH:
-            let sorted = sel.sorted { $0.frame.x < $1.frame.x }
+            let sorted = sel.map { frame(of: $0) }.enumerated().sorted { $0.element.x < $1.element.x }
             guard sorted.count > 2 else { return }
-            let gap = (bounds.width - sorted.reduce(0) { $0 + $1.frame.width }) / Double(sorted.count - 1)
+            let gap = (bounds.width - sorted.reduce(0) { $0 + $1.element.width }) / Double(sorted.count - 1)
             var x = bounds.minX
-            for v in sorted { frames[v.id]!.x = x; x += v.frame.width + gap }
+            for (i, f) in sorted { frames[sel[i].id]?.x = x; x += f.width + gap }
         case .distributeV:
-            let sorted = sel.sorted { $0.frame.y < $1.frame.y }
+            let sorted = sel.map { frame(of: $0) }.enumerated().sorted { $0.element.y < $1.element.y }
             guard sorted.count > 2 else { return }
-            let gap = (bounds.height - sorted.reduce(0) { $0 + $1.frame.height }) / Double(sorted.count - 1)
+            let gap = (bounds.height - sorted.reduce(0) { $0 + $1.element.height }) / Double(sorted.count - 1)
             var y = bounds.minY
-            for v in sorted { frames[v.id]!.y = y; y += v.frame.height + gap }
-        case .sameWidth: let w = sel[0].frame.width; for k in frames.keys { frames[k]!.width = w }
-        case .sameHeight: let h = sel[0].frame.height; for k in frames.keys { frames[k]!.height = h }
-        case .sameSize:
-            let w = sel[0].frame.width, h = sel[0].frame.height
-            for k in frames.keys { frames[k]!.width = w; frames[k]!.height = h }
+            for (i, f) in sorted { frames[sel[i].id]?.y = y; y += f.height + gap }
+        case .sameWidth: each { $0.width = first.width }
+        case .sameHeight: each { $0.height = first.height }
+        case .sameSize: each { $0.width = first.width; $0.height = first.height }
         }
         setFrames(frames, name: "Arrange")
     }
@@ -719,45 +749,16 @@ final class DocumentStore: ObservableObject {
     /// Change a visual's type, carrying fields over to the closest wells of the new type.
     func changeType(of id: UUID, to type: VisualType) {
         updateVisual(id, name: "Change Visual Type") { v in
-            let old = v.wells
-            let groups = v.type.wells.filter(\.isGrouping).flatMap { old[$0.rawValue] ?? [] }
-            let values = v.type.wells.filter { !$0.isGrouping && $0 != .tooltips }.flatMap { old[$0.rawValue] ?? [] }
-            let tooltips = old[Well.tooltips.rawValue] ?? []
-            v.type = type
-            v.wells = [:]
-            let targetGroups = type.wells.filter(\.isGrouping)
-            let targetValues = type.wells.filter { !$0.isGrouping && $0 != .tooltips }
-            // Preserve same-named wells first, then spill the rest in order.
-            var remainingGroups = groups, remainingValues = values
-            for w in type.wells {
-                if let f = old[w.rawValue], !f.isEmpty {
-                    v.wells[w.rawValue] = f
-                    remainingGroups.removeAll { g in f.contains { $0.id == g.id } }
-                    remainingValues.removeAll { g in f.contains { $0.id == g.id } }
-                }
-            }
-            if let first = targetGroups.first(where: { v.fields($0).isEmpty }), !remainingGroups.isEmpty {
-                v.setFields(first, remainingGroups)
-            } else if let first = targetGroups.first, !remainingGroups.isEmpty {
-                v.setFields(first, v.fields(first) + remainingGroups)
-            }
-            if let first = targetValues.first, !remainingValues.isEmpty {
-                v.setFields(first, v.fields(first) + remainingValues.map { f in
-                    var f = f
-                    if f.kind == .column, f.aggregation == .none, type != .table {
-                        f.aggregation = self.defaultAggregation(for: f)
-                    }
-                    return f
-                })
-            }
-            if type.wells.contains(.tooltips), !tooltips.isEmpty { v.setFields(.tooltips, tooltips) }
-            if v.name == VisualType.allCases.first(where: { $0.displayName == v.name })?.displayName { v.name = type.displayName }
+            VisualRetype.apply(&v, to: type) { self.defaultAggregation(for: $0) }
         }
     }
 
     func defaultAggregation(for field: FieldRef) -> Aggregation {
         guard field.kind == .column, let col = doc.model.table(field.table)?.column(field.name) else { return .none }
         if col.summarizeBy != .none { return col.summarizeBy }
+        // A position is averaged, never added up, and a date summarizes to its earliest value.
+        if col.dataCategory == .latitude || col.dataCategory == .longitude { return .average }
+        if col.dataType.isTemporal { return .min }
         return col.dataType.isNumeric ? .sum : .count
     }
 
@@ -793,6 +794,8 @@ final class DocumentStore: ObservableObject {
         f.id = UUID()
         if !chosen.isGrouping, f.kind == .column, !(spec.type == .table) { f.aggregation = defaultAggregation(for: f) }
         if spec.type == .table, f.kind == .column, isNumeric { f.aggregation = defaultAggregation(for: f) }
+        // An End well takes the latest date where a Start well takes the earliest.
+        if chosen == .end, f.kind == .column, f.aggregation == .min { f.aggregation = .max }
         updateVisual(id, name: "Add Field") { v in v.setFields(chosen, v.fields(chosen) + [f]) }
     }
 
@@ -808,6 +811,12 @@ final class DocumentStore: ObservableObject {
         } else if current.count == 1, points.count == 1, current[0].key == points[0].key { current = [] }
         else { current = points }
         if current.isEmpty { pointSelections[visualID] = nil } else { pointSelections[visualID] = current }
+        refreshVisuals(currentPage.visuals.filter { $0.id != visualID }.map(\.id))
+    }
+    /// Drops one visual's data point selection; the visuals it cross-filtered requery without it.
+    private func clearSelection(of visualID: UUID) {
+        guard pointSelections[visualID] != nil else { return }
+        pointSelections[visualID] = nil
         refreshVisuals(currentPage.visuals.filter { $0.id != visualID }.map(\.id))
     }
     func clearPointSelections() {
@@ -830,11 +839,19 @@ final class DocumentStore: ObservableObject {
             }
         }
     }
+    /// Clear every slicer on this page — and the slicers synced with them on other pages — including
+    /// selections still waiting for "Apply all slicers".
     func clearAllSlicers() {
-        let i = pageIndex
+        let page = currentPage
+        ReportRuntime.existing(for: self)?.dropPendingSlicers(on: page)
+        let ids = Set(page.visuals.filter(\.type.isSlicer).map(\.id))
+        let groups = Set(page.visuals.filter(\.type.isSlicer).compactMap(\.syncGroup))
         mutate("Clear All Slicers") { d in
-            for v in d.report.pages[i].visuals.indices where d.report.pages[i].visuals[v].type.isSlicer {
-                d.report.pages[i].visuals[v].slicerState = nil
+            for p in d.report.pages.indices {
+                for v in d.report.pages[p].visuals.indices where d.report.pages[p].visuals[v].type.isSlicer {
+                    let s = d.report.pages[p].visuals[v]
+                    if ids.contains(s.id) || s.syncGroup.map(groups.contains) == true { d.report.pages[p].visuals[v].slicerState = nil }
+                }
             }
         }
     }
@@ -851,7 +868,7 @@ final class DocumentStore: ObservableObject {
                 v.drillLevel += 1
                 v.expandedAllLevels = false
             }
-            pointSelections[id] = nil
+            clearSelection(of: id)
         case .up:
             updateVisual(id, name: "Drill Up") { v in
                 guard v.drillLevel > 0 else { return }
@@ -859,50 +876,24 @@ final class DocumentStore: ObservableObject {
                 if !v.drillPath.isEmpty { v.drillPath.removeLast() }
                 if v.drillLevel == 0 { v.expandedAllLevels = false }
             }
-            pointSelections[id] = nil
+            clearSelection(of: id)
         case .expandAll:
             updateVisual(id, name: "Expand to Next Level") { v in
                 guard v.drillLevel < max(0, v.fields(.category).count - 1) else { return }
                 v.drillLevel += 1; v.expandedAllLevels = true; v.drillPath = []
             }
         case .drillthrough(let point, let pageID):
-            drillthrough(point, to: pageID)
+            drillthrough(point, to: pageID, from: id)
         case .showAsTable:
             showAsTableID = id
         }
     }
 
-    /// Pages a data point can drill through to: those with a drillthrough filter on one of its fields.
-    func drillthroughTargets(for point: DataPointSelection) -> [Page] {
-        let keys = Set(point.fields.map { "\($0.table)|\($0.name)" })
-        return doc.report.pages.filter { p in
-            p.id != currentPageID && p.drillthroughFilters.contains { keys.contains("\($0.field.table)|\($0.field.name)") }
-        }
-    }
-    func drillthrough(_ point: DataPointSelection, to pageID: UUID?) {
-        guard let target = pageID.flatMap(doc.report.page) ?? drillthroughTargets(for: point).first else {
-            status = StatusMessage(kind: .info, text: "No drillthrough page is set up for this field.")
+    func perform(_ action: ActionSpec, from visualID: UUID? = nil) {
+        if let measure = action.conditionalMeasure, [.bookmark, .pageNavigation, .drillthrough, .webURL].contains(action.kind) {
+            performConditional(action, measure: measure, from: visualID)
             return
         }
-        var filters: [FilterSpec] = []
-        for (field, value) in zip(point.fields, point.values) {
-            var f = FilterSpec(field: FieldRef(kind: .column, table: field.table, name: field.name), kind: .basic)
-            f.values = [value]
-            filters.append(f)
-        }
-        if target.keepAllFiltersOnDrillthrough {
-            filters += currentPage.filters.filter { !$0.isEmpty }
-            for v in currentPage.visuals where v.type.isSlicer {
-                if let s = v.slicerState, !s.selected.isEmpty, let field = v.fields(.field).first {
-                    var f = FilterSpec(field: field, kind: .basic); f.values = s.selected; filters.append(f)
-                }
-            }
-        }
-        drillthroughFilters[target.id] = filters
-        goToPage(target.id)
-    }
-
-    func perform(_ action: ActionSpec, from visualID: UUID? = nil) {
         switch action.kind {
         case .none: break
         case .back: goBack()
@@ -913,11 +904,9 @@ final class DocumentStore: ObservableObject {
                 NSWorkspace.shared.open(url)
             }
         case .clearAllSlicers: clearAllSlicers()
-        case .applyAllSlicers: refreshVisuals()
+        case .applyAllSlicers: applyAllSlicers()
         case .qna: inspector = .assistant; inspectorVisible = true
-        case .drillthrough:
-            if let point = pointSelections.values.first?.first { drillthrough(point, to: action.pageID) }
-            else { status = StatusMessage(kind: .info, text: "Select a data point first, then drill through.") }
+        case .drillthrough: performDrillthroughButton(action)
         case .dataFunction:
             NotificationCenter.default.post(name: .facetRunDataFunction, object: self, userInfo: ["action": action])
         }

@@ -21,10 +21,13 @@ enum FileDownloader {
     /// The `Authorization` header is dropped if the server redirects to a different host
     /// (e.g. Graph's 302 to a pre-authenticated storage URL).
     static func download(_ request: URLRequest, service: String, suggestedName: String, destination: URL? = nil,
-                         configuration: URLSessionConfiguration? = nil,
+                         configuration: URLSessionConfiguration? = nil, maxBytes: Int64 = FileDownloader.defaultMaxBytes,
                          progress: TransferProgressHandler? = nil) async throws -> URL {
+        guard request.url?.scheme?.lowercased() == "https" else {
+            throw CloudAPIError(service: service, kind: .badRequest, statusCode: 0, message: "Refused to download over an insecure connection.")
+        }
         let dest = try destination ?? temporaryDestination(named: suggestedName)
-        let delegate = DownloadDelegate(service: service, destination: dest, progress: progress)
+        let delegate = DownloadDelegate(service: service, destination: dest, maxBytes: maxBytes, progress: progress)
         let cfg = configuration ?? {
             let c = URLSessionConfiguration.ephemeral
             c.timeoutIntervalForRequest = 120
@@ -45,6 +48,9 @@ enum FileDownloader {
         }
     }
 
+    /// Largest download accepted unless the caller says otherwise (8 GB).
+    static let defaultMaxBytes: Int64 = 8 * 1024 * 1024 * 1024
+
     static func temporaryDestination(named name: String) throws -> URL {
         let safe = name.replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: ":", with: "_")
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("FacetDownloads", isDirectory: true)
@@ -62,21 +68,25 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unc
     private var outcome: Result<URL, Error>?
     private let once = OnceFlag()
 
-    init(service: String, destination: URL, progress: TransferProgressHandler?) {
-        self.service = service; self.destination = destination; self.progress = progress
+    let maxBytes: Int64
+    private var tooLarge = false
+
+    init(service: String, destination: URL, maxBytes: Int64, progress: TransferProgressHandler?) {
+        self.service = service; self.destination = destination; self.maxBytes = maxBytes; self.progress = progress
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-        var next = request
-        if request.url?.host?.lowercased() != task.originalRequest?.url?.host?.lowercased() {
-            next.setValue(nil, forHTTPHeaderField: "Authorization")
-        }
-        completionHandler(next)
+        completionHandler(RedirectGuard.nextRequest(original: task.originalRequest, proposed: request, followRedirects: true))
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        if totalBytesWritten > maxBytes || totalBytesExpectedToWrite > maxBytes {
+            tooLarge = true
+            downloadTask.cancel()
+            return
+        }
         progress?(TransferProgress(completedBytes: totalBytesWritten,
                                    totalBytes: totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil))
     }
@@ -104,7 +114,10 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unc
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard once.claim() else { return }
-        if let e = error as? URLError, e.code == .cancelled { continuation?.resume(throwing: CancellationError()) }
+        if tooLarge {
+            continuation?.resume(throwing: CloudAPIError(service: service, kind: .invalidResponse, statusCode: 0,
+                                                         message: "The file is larger than \(maxBytes / (1024 * 1024)) MB and was not downloaded."))
+        } else if let e = error as? URLError, e.code == .cancelled { continuation?.resume(throwing: CancellationError()) }
         else if let error { continuation?.resume(throwing: error) }
         else if let outcome { continuation?.resume(with: outcome) }
         else {

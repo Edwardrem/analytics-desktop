@@ -393,9 +393,13 @@ final class CmpTblTableSource: CmpTblGridSource {
             })
             menu.addItem(.separator())
             let p = point(row)
-            menu.addItem(CmpTblMenuItem("Drill through", enabled: p != nil) { [weak self] in
-                if let p { self?.context.onDrill(.drillthrough(p, pageID: nil)) }
+            let targets = p.map(context.drillthroughTargets) ?? []
+            menu.addItem(CmpTblMenuItem(targets.count == 1 ? "Drill through to \(targets[0].name)" : "Drill through", enabled: !targets.isEmpty) { [weak self] in
+                if let p { self?.context.onDrill(.drillthrough(p, pageID: targets.first?.id)) }
             })
+            if let see = context.onSeeRecords {
+                menu.addItem(CmpTblMenuItem("See records", enabled: p != nil) { if let p { see(p) } })
+            }
             menu.addItem(CmpTblMenuItem("Include", enabled: p != nil) { [weak self] in self?.addFilter(row: row, exclude: false) })
             menu.addItem(CmpTblMenuItem("Exclude", enabled: p != nil) { [weak self] in self?.addFilter(row: row, exclude: true) })
         } else {

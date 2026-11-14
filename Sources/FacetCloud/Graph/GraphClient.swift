@@ -14,6 +14,8 @@ public final class GraphClient {
     public static let simpleUploadLimit: Int64 = 4 * 1024 * 1024
     /// Upload-session chunk size: 10 MiB, a multiple of the 320 KiB Graph requires.
     public static let uploadChunkSize = 32 * 327_680
+    /// Largest file `download` accepts unless told otherwise (8 GB).
+    public static let defaultMaxDownloadBytes: Int64 = 8 * 1024 * 1024 * 1024
 
     /// - Parameters:
     ///   - tokenProvider: usually the app's `MicrosoftAccountManager`.
@@ -21,9 +23,10 @@ public final class GraphClient {
     public init(tokenProvider: AccessTokenProviding, cloud: MicrosoftCloud = .public, sessionConfiguration: URLSessionConfiguration? = nil) {
         self.cloud = cloud
         self.transferConfiguration = sessionConfiguration
-        let session = sessionConfiguration.map { URLSession(configuration: $0) } ?? RESTClient.defaultSession()
+        let policy = EndpointPolicy(cloud: cloud)
+        let session = RESTClient.makeSession(sessionConfiguration)
         self.rest = RESTClient(service: "Microsoft Graph", scope: MicrosoftResource.graph.scopeString(cloud: cloud),
-                               tokenProvider: tokenProvider, session: session)
+                               tokenProvider: tokenProvider, session: session, policy: policy)
     }
 
     private func url(_ pathAndQuery: String) throws -> URL { try rest.url(baseURL, pathAndQuery) }
@@ -162,28 +165,35 @@ public final class GraphClient {
 
     /// Downloads a file to disk. Graph answers with a 302 to a pre-authenticated URL, which is followed
     /// (without forwarding the bearer token); the body is streamed to a file with progress.
-    /// - Parameter destination: target file; defaults to a new file in Facet's temporary downloads folder.
+    /// - Parameters:
+    ///   - destination: target file; defaults to a new file in Facet's temporary downloads folder.
+    ///   - maxBytes: the download is stopped and refused once it grows past this size.
     /// - Returns: the local file URL.
     public func download(_ location: DriveLocation, suggestedName: String? = nil, destination: URL? = nil,
-                         progress: TransferProgressHandler? = nil) async throws -> URL {
+                         maxBytes: Int64 = GraphClient.defaultMaxDownloadBytes, progress: TransferProgressHandler? = nil) async throws -> URL {
         var name = suggestedName
         if name == nil, destination == nil { name = try await item(at: location).name }
-        return try await downloadAttempt(location, name: name ?? "download", destination: destination, progress: progress, retryOn401: true)
+        return try await downloadAttempt(location, name: name ?? "download", destination: destination, maxBytes: maxBytes,
+                                         progress: progress, retryOn401: true)
     }
 
-    private func downloadAttempt(_ location: DriveLocation, name: String, destination: URL?, progress: TransferProgressHandler?,
-                                 retryOn401: Bool) async throws -> URL {
+    private func downloadAttempt(_ location: DriveLocation, name: String, destination: URL?, maxBytes: Int64,
+                                 progress: TransferProgressHandler?, retryOn401: Bool) async throws -> URL {
         var request = URLRequest(url: try url(location.subresource("content")))
+        guard rest.policy.allowsCredentials(for: request.url) else {
+            throw CloudAPIError(service: rest.service, kind: .badRequest, statusCode: 0, message: "Refused to send your sign-in to an address that is not Microsoft Graph.")
+        }
         let token = try await rest.tokenProvider.accessToken(resource: rest.scope)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         do {
             return try await FileDownloader.download(request, service: rest.service, suggestedName: name, destination: destination,
-                                                     configuration: transferConfiguration, progress: progress)
+                                                     configuration: transferConfiguration, maxBytes: maxBytes, progress: progress)
         } catch let e as CloudAPIError where e.kind == .unauthorized && retryOn401 {
             if let r = rest.tokenProvider as? RefreshableAccessTokenProviding {
                 _ = try await r.accessToken(resource: rest.scope, forceRefresh: true)
             }
-            return try await downloadAttempt(location, name: name, destination: destination, progress: progress, retryOn401: false)
+            return try await downloadAttempt(location, name: name, destination: destination, maxBytes: maxBytes,
+                                             progress: progress, retryOn401: false)
         }
     }
 
@@ -202,7 +212,9 @@ public final class GraphClient {
             progress?(TransferProgress(completedBytes: size, totalBytes: size))
             return item
         }
-        return try await uploadLarge(fileURL: fileURL, size: size, to: folder, named: fileName, conflict: conflict, progress: progress)
+        return try await uploadLarge(fileURL: fileURL, size: size, sessionPath: folder.childPath(named: fileName) + "/createUploadSession",
+                                     createBody: ["item": ["@microsoft.graph.conflictBehavior": .string(conflict.rawValue), "name": .string(fileName)]],
+                                     ifMatchETag: nil, progress: progress)
     }
 
     /// Uploads in-memory data (≤ 4 MB) with a single PUT.
@@ -220,6 +232,27 @@ public final class GraphClient {
         return try rest.decode(DriveItem.self, from: body)
     }
 
+    /// Replaces the content of an existing file ("save back"). With `ifMatchETag`, Graph refuses the write with
+    /// HTTP 412 (`CloudAPIError.kind == .preconditionFailed`) when the file changed in the cloud since that eTag was
+    /// read, so someone else's newer version is never silently overwritten.
+    public func replaceContent(of location: DriveLocation, withFileAt fileURL: URL, ifMatchETag: String? = nil,
+                               progress: TransferProgressHandler? = nil) async throws -> DriveItem {
+        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        if size <= Self.simpleUploadLimit {
+            var request = rest.request("PUT", try url(location.subresource("content")))
+            request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            if let ifMatchETag, !ifMatchETag.isEmpty { request.setValue(ifMatchETag, forHTTPHeaderField: "If-Match") }
+            request.httpBody = try Data(contentsOf: fileURL)
+            let (body, _) = try await rest.send(request)
+            progress?(TransferProgress(completedBytes: size, totalBytes: size))
+            return try rest.decode(DriveItem.self, from: body)
+        }
+        return try await uploadLarge(fileURL: fileURL, size: size, sessionPath: location.subresource("createUploadSession"),
+                                     createBody: ["item": ["@microsoft.graph.conflictBehavior": "replace"]],
+                                     ifMatchETag: ifMatchETag, progress: progress)
+    }
+
     struct UploadSession: Decodable {
         let uploadUrl: String
         let nextExpectedRanges: [String]?
@@ -231,11 +264,11 @@ public final class GraphClient {
         return Int64(start)
     }
 
-    private func uploadLarge(fileURL: URL, size: Int64, to folder: DriveLocation, named name: String,
-                             conflict: ConflictBehavior, progress: TransferProgressHandler?) async throws -> DriveItem {
-        let createBody: JSONValue = ["item": ["@microsoft.graph.conflictBehavior": .string(conflict.rawValue), "name": .string(name)]]
-        let session = try await rest.sendJSON(UploadSession.self, "POST",
-                                              try url(folder.childPath(named: name) + "/createUploadSession"), body: createBody)
+    private func uploadLarge(fileURL: URL, size: Int64, sessionPath: String, createBody: JSONValue, ifMatchETag: String?,
+                             progress: TransferProgressHandler?) async throws -> DriveItem {
+        var headers: [String: String] = [:]
+        if let ifMatchETag, !ifMatchETag.isEmpty { headers["If-Match"] = ifMatchETag }
+        let session = try await rest.sendJSON(UploadSession.self, "POST", try url(sessionPath), body: createBody, headers: headers)
         guard let uploadURL = URL(string: session.uploadUrl), uploadURL.scheme == "https" else {
             throw CloudAPIError(service: rest.service, kind: .invalidResponse, statusCode: 0, message: "The upload session did not return a valid URL.")
         }

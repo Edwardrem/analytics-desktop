@@ -69,7 +69,3 @@ enum FlowCharts {
         }
     }
 }
-
-extension ChartGallery {
-    static func flowSamples() -> [Sample] { [] }
-}

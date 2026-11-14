@@ -152,7 +152,8 @@ extension FacetCloudSelfCheck {
                 let form = SelfCheckFixtures.formBody(body)
                 exchanges.update { $0.append(form) }
                 let nonce = behaviour.value == "bad-nonce" ? "someone-elses-nonce" : (seen.value["nonce"] ?? "")
-                let id = SelfCheckFixtures.jwt(["sub": "sub-1", "oid": "OID-1", "tid": "TID-1", "name": "Ana Müller", "preferred_username": "ana@contoso.com", "nonce": .string(nonce)])
+                let id = SelfCheckFixtures.jwt(["sub": "sub-1", "oid": "OID-1", "tid": "TID-1", "name": "Ana Müller", "preferred_username": "ana@contoso.com", "nonce": .string(nonce),
+                                                "aud": "client-1", "iss": "https://login.microsoftonline.com/TID-1/v2.0"])
                 return .json(#"{"token_type":"Bearer","expires_in":3600,"access_token":"AT-signin","refresh_token":"RT-signin","id_token":"\#(id)"}"#)
             }
             if path.hasSuffix("/me/photo/$value") { return SelfCheckURLProtocol.Response(status: 200, headers: ["Content-Type": "image/jpeg"], body: Data([0xFF, 0xD8, 0xFF])) }
@@ -221,7 +222,8 @@ extension FacetCloudSelfCheck {
                 var step = "ok"
                 script.update { if !$0.isEmpty { step = $0.removeFirst() } }
                 if step != "ok" { return .json(#"{"error":"\#(step)","error_description":"\#(step)"}"#, status: 400) }
-                let id = SelfCheckFixtures.jwt(["sub": "SUB-P", "tid": .string(IDTokenClaims.personalTenantID), "name": "Pat", "email": "pat@outlook.com"])
+                let id = SelfCheckFixtures.jwt(["sub": "SUB-P", "tid": .string(IDTokenClaims.personalTenantID), "name": "Pat", "email": "pat@outlook.com",
+                                                "aud": "client-1", "iss": .string("https://login.microsoftonline.com/" + IDTokenClaims.personalTenantID + "/v2.0")])
                 return .json(#"{"expires_in":3600,"access_token":"AT-dc","refresh_token":"RT-dc","id_token":"\#(id)"}"#)
             }
             return .json("{}", status: 404)

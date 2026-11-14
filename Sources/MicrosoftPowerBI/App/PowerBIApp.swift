@@ -19,15 +19,18 @@ final class StoreRegistry {
         var doc = FacetDocument()
         var url: URL?
         var problem: String?
+        var opened = false
         if let u = handle.url {
             do {
                 let result = try FileOperations.read(u)
                 doc = result.document
+                opened = true
                 if u.pathExtension.lowercased() == DocumentPackage.fileExtension { url = u }
                 if !result.warnings.isEmpty { problem = "Opened with notes:\n" + result.warnings.prefix(8).joined(separator: "\n") }
             } catch { problem = "Couldn't open “\(u.lastPathComponent)”. \(error.localizedDescription)" }
         }
         let s = DocumentStore(document: doc, url: url, services: .live())
+        if opened { FileOperations.adopt(handle.url, store: s) }
         if let problem { s.status = StatusMessage(kind: url == nil && handle.url != nil && doc.model.tables.isEmpty ? .error : .warning, text: problem) }
         stores[handle.id] = s
         return s

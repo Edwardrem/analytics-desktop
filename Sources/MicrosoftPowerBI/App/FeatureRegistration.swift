@@ -9,6 +9,7 @@ enum FeatureRegistration {
         SettingsFeature.register()
         FieldPanesFeature.register()
         ReportPanesFeature.register()
+        ReportFeature.register()
         FormatPaneFeature.register()
         ModelingFeature.register()
         DAXQueryFeature.register()
@@ -18,8 +19,8 @@ enum FeatureRegistration {
         AccountFeature.register()
         AIFeature.register()
         AnalyzeFeature.register()
-        #if !FACET_SHELL_ONLY
-        LiveBridge.register()
-        #endif
+        FileFormatsFeature.register()
+        DataExporters.register()
+        AgentBridgeFeature.register()
     }
 }

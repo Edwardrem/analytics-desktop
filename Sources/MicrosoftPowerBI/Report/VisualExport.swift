@@ -30,7 +30,12 @@ enum VisualExport {
             store.status = StatusMessage(kind: .warning, text: "Exporting data is turned off for this report.")
             return
         }
-        guard let data = store.visualData[spec.id], !data.isEmpty else {
+        export(store.visualData[spec.id] ?? VisualData(), named: spec.name, store: store, format: format)
+    }
+
+    /// Save a query result (a visual's data, or the records behind a data point) as a file.
+    static func export(_ data: VisualData, named name: String, store: DocumentStore, format: String) {
+        guard !data.isEmpty else {
             store.status = StatusMessage(kind: .info, text: "This visual has no data to export.")
             return
         }
@@ -40,16 +45,22 @@ enum VisualExport {
         }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: format) ?? .data]
-        panel.nameFieldStringValue = "\(spec.name).\(format)"
+        panel.nameFieldStringValue = "\(name).\(format)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            var table = data.table
-            for i in table.columns.indices { table.columns[i].name = data.fields[safe: i]??.caption ?? table.columns[i].name }
-            try exporter(table, data.formats, url)
-            store.status = StatusMessage(kind: .success, text: "Exported \(table.rowCount) rows to \(url.lastPathComponent).")
+            let rows = try write(data, with: exporter, to: url)
+            store.status = StatusMessage(kind: .success, text: "Exported \(rows) rows to \(url.lastPathComponent).")
         } catch {
             store.status = StatusMessage(kind: .error, text: "Export failed. \(error.localizedDescription)")
         }
+    }
+
+    /// Writes a query result with its fields' captions as column names. Returns the rows written.
+    static func write(_ data: VisualData, with exporter: (DataTable, [String], URL) throws -> Void, to url: URL) throws -> Int {
+        var table = data.table
+        for i in table.columns.indices { table.columns[i].name = data.fields[safe: i]??.caption ?? table.columns[i].name }
+        try exporter(table, data.formats, url)
+        return table.rowCount
     }
 
     static func insertImage(_ store: DocumentStore) {
@@ -89,30 +100,41 @@ enum VisualExport {
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = store.displayName + ".pdf"
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        let count = store.report.pages.filter { !$0.isHidden }.count
+        store.status = StatusMessage(kind: .info, text: "Exporting \(count) page\(count == 1 ? "" : "s")…")
+        Task {
+            do {
+                try await writePDF(store, to: url)
+                store.status = StatusMessage(kind: .success, text: "Exported to \(url.lastPathComponent).")
+            } catch {
+                store.status = StatusMessage(kind: .error, text: "Export failed. \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Draws every visible page, queried, into a PDF at `url`, then returns to the page that was showing.
+    static func writePDF(_ store: DocumentStore, to url: URL) async throws {
         let pages = store.report.pages.filter { !$0.isHidden }
         let original = store.currentPageID
-        store.status = StatusMessage(kind: .info, text: "Exporting \(pages.count) page\(pages.count == 1 ? "" : "s")…")
-        Task {
-            guard let consumer = CGDataConsumer(url: url as CFURL) else { return }
-            var box = CGRect(x: 0, y: 0, width: 1280, height: 720)
-            guard let pdf = CGContext(consumer: consumer, mediaBox: &box, nil) else { return }
-            for page in pages {
-                // Query each page before drawing it.
-                store.goToPage(page.id, recordHistory: false)
-                var waited = 0
-                try? await Task.sleep(nanoseconds: 150_000_000)
-                while !store.loadingVisuals.isEmpty, waited < 200 { try? await Task.sleep(nanoseconds: 50_000_000); waited += 1 }
-                let renderer = ImageRenderer(content: pageView(page, store: store))
-                renderer.render { size, draw in
-                    var media = CGRect(origin: .zero, size: size)
-                    pdf.beginPage(mediaBox: &media)
-                    draw(pdf)
-                    pdf.endPage()
-                }
-            }
-            pdf.closePDF()
-            store.goToPage(original, recordHistory: false)
-            store.status = StatusMessage(kind: .success, text: "Exported to \(url.lastPathComponent).")
+        var box = CGRect(x: 0, y: 0, width: 1280, height: 720)
+        guard let consumer = CGDataConsumer(url: url as CFURL), let pdf = CGContext(consumer: consumer, mediaBox: &box, nil) else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey: "Couldn't create “\(url.lastPathComponent)”."])
         }
+        for page in pages {
+            // Query each page before drawing it.
+            store.goToPage(page.id, recordHistory: false)
+            var waited = 0
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            while !store.loadingVisuals.isEmpty, waited < 200 { try? await Task.sleep(nanoseconds: 50_000_000); waited += 1 }
+            let renderer = ImageRenderer(content: pageView(page, store: store))
+            renderer.render { size, draw in
+                var media = CGRect(origin: .zero, size: size)
+                pdf.beginPage(mediaBox: &media)
+                draw(pdf)
+                pdf.endPage()
+            }
+        }
+        pdf.closePDF()
+        store.goToPage(original, recordHistory: false)
     }
 }

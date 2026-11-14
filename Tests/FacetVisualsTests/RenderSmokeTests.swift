@@ -197,6 +197,49 @@ final class OffscreenRenderTests: XCTestCase {
     }
 }
 
+/// The chart gallery's samples (formatting, analytics, small multiples, patterns, highlight) all draw.
+@MainActor
+final class GallerySampleRenderTests: XCTestCase {
+    func testEveryGallerySampleRenders() {
+        let samples = ChartGallery.samples()
+        XCTAssertFalse(samples.isEmpty)
+        XCTAssertEqual(Set(samples.map(\.spec.name)).count, samples.count, "sample names describe each one")
+        for sample in samples {
+            var context = VisualContext()
+            context.theme = .facet
+            context.isInteractive = false
+            context.overlays = ChartGallery.sampleOverlays(for: sample)
+            XCTAssertNotNil(ChartVisuals.view(spec: sample.spec, data: sample.data, context: context), sample.spec.name)
+            let host = NSHostingView(rootView: VisualView(spec: sample.spec, data: sample.data, context: context).frame(width: 480, height: 320))
+            host.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
+            host.layoutSubtreeIfNeeded()
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { XCTFail("\(sample.spec.name): no bitmap"); continue }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            XCTAssertNotNil(rep.colorAt(x: 10, y: 10), "\(sample.spec.name): rendered an empty surface")
+        }
+    }
+}
+
+/// The calendar heatmap's year block: four rows of months that must stay inside the block.
+final class CalendarGridTests: XCTestCase {
+    func testFourMonthRowsFitInTheirYearBlock() {
+        // A roomy block: cells at their 22-pt maximum under a 12-pt header.
+        let big = HeatmapView.calendarGrid(monthWidth: 400, blockHeight: 1000)
+        XCTAssertEqual(big.cell, CGSize(width: 22, height: 22))
+        XCTAssertEqual(big.header, 12)
+        XCTAssertEqual(big.rowHeight, 7 * 22 + 12 + 6)
+        // 3 years in a 420 × 280 visual leave about 77 pt a year: 19.25 pt a row.
+        for height in [77.0, 40, 120, 233, 500] as [CGFloat] {
+            let g = HeatmapView.calendarGrid(monthWidth: 120, blockHeight: height)
+            XCTAssertLessThanOrEqual(g.rowHeight * 4, height + 1e-9, "rows overflow a \(height)-pt year")
+            XCTAssertLessThanOrEqual(g.header + 7 * g.cell.height, g.rowHeight + 1e-9, "days overflow their row at \(height) pt")
+            XCTAssertGreaterThan(g.cell.height, 0)
+        }
+        XCTAssertEqual(HeatmapView.calendarGrid(monthWidth: 120, blockHeight: 77).rowHeight, 19.25)
+        XCTAssertEqual(HeatmapView.calendarGrid(monthWidth: 82, blockHeight: 400).cell.width, 10)
+    }
+}
+
 /// Waterfall and ribbon charts show a cross-highlight inside the unhighlighted shape.
 @MainActor
 final class HighlightBaselineTests: XCTestCase {

@@ -159,52 +159,104 @@ private struct RibbonTabStrip: View {
 
 // MARK: - Groups
 
+extension RibbonFit {
+    /// The fit in the ribbon's real sizes: design tokens and the caption font.
+    @MainActor static let standard = RibbonFit(
+        metrics: RibbonMetrics(
+            largeWidth: Double(ShellMetrics.ribbonLargeWidth), smallIcon: Double(Design.Space.l),
+            smallPadding: Double(Design.Space.xs), smallSpacing: Double(Design.Space.xs),
+            menuChevron: Double(Design.Space.m), columnSpacing: Double(Design.Space.xxs),
+            groupPadding: Double(Design.Space.s), separator: 1, edgePadding: Double(Design.Space.xs), slack: 2),
+        textWidth: RibbonText.width)
+}
+
+/// Caption widths in the ribbon's caption font (`Design.Typeface.caption`), measured once each.
+@MainActor
+enum RibbonText {
+    private static var cache: [String: Double] = [:]
+    private static let font = NSFont.systemFont(ofSize: 11)
+    static func width(_ text: String) -> Double {
+        if let hit = cache[text] { return hit }
+        let w = Double((text as NSString).size(withAttributes: [.font: font]).width)
+        cache[text] = w
+        return w
+    }
+}
+
 private struct RibbonGroups: View {
     let tab: RibbonTab
     @ObservedObject var shell: ShellState
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(Array(tab.groups.enumerated()), id: \.offset) { index, group in
-                    if index > 0 { Hairline(vertical: true).padding(.vertical, Design.Space.s) }
-                    RibbonGroupView(group: group, shell: shell)
+        GeometryReader { geo in
+            let fits = RibbonFit.standard.fit(tab.groups, available: Double(geo.size.width))
+            // The fit keeps the row inside the window; scrolling is only the fallback below the minimum width.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 0) {
+                    ForEach(Array(tab.groups.enumerated()), id: \.offset) { index, group in
+                        if index > 0 { Hairline(vertical: true).padding(.vertical, Design.Space.s) }
+                        if let fit = fits[safe: index] {
+                            RibbonGroupView(group: group, fit: fit, shell: shell)
+                        }
+                    }
                 }
+                .padding(.horizontal, Design.Space.xs)
+                .id(tab.id)
             }
-            .padding(.horizontal, Design.Space.xs)
-            .id(tab.id)
         }
         .frame(height: ShellMetrics.ribbonControlsHeight + Design.Space.xl)
     }
 }
 
 private struct RibbonGroupView: View {
+    @EnvironmentObject var store: DocumentStore
     let group: RibbonGroup
+    let fit: RibbonGroupFit
     @ObservedObject var shell: ShellState
+    @State private var anchor = AnchorBox()
 
     var body: some View {
+        let inner = CGFloat(fit.width) - Design.Space.s * 2
         VStack(spacing: Design.Space.xxs) {
+            controls
+                .frame(width: inner, height: ShellMetrics.ribbonControlsHeight, alignment: .topLeading)
+            Text(fit.mode == .collapsed ? "" : group.title)
+                .font(Design.Typeface.section).foregroundStyle(.tertiary).lineLimit(1)
+                .frame(width: inner)
+        }
+        .padding(.horizontal, Design.Space.s)
+        .padding(.top, Design.Space.xs)
+        .frame(width: CGFloat(fit.width))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(group.title)
+    }
+
+    @ViewBuilder private var controls: some View {
+        if fit.mode == .collapsed {
+            // The whole group behind one button, as on a narrow Windows ribbon.
+            RibbonButton(label: group.title, symbol: RibbonFit.collapsedSymbol(group), size: .large, showsMenu: true,
+                         help: "\(group.title) — show this group's commands") {
+                RibbonMenu.popUp(RibbonFit.collapsedEntries(group), store: store, anchor: anchor.view) { shell.run($0) }
+            }
+            .background(MenuAnchor(box: anchor))
+        } else {
             HStack(alignment: .top, spacing: Design.Space.xxs) {
-                ForEach(Array(RibbonLayout.columns(group).enumerated()), id: \.offset) { _, column in
+                ForEach(Array(RibbonLayout.columns(group).enumerated()), id: \.offset) { index, column in
+                    let width = CGFloat(fit.columnWidths[safe: index] ?? Double(ShellMetrics.ribbonLargeWidth))
                     switch column {
                     case .large(let item):
                         RibbonControlView(item: item, shell: shell)
                     case .stack(let items):
                         VStack(alignment: .leading, spacing: (ShellMetrics.ribbonControlsHeight - 3 * ShellMetrics.ribbonSmallRowHeight) / 2) {
                             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                                RibbonControlView(item: item, shell: shell)
+                                RibbonControlView(item: item, shell: shell, smallWidth: width, iconOnly: fit.mode == .compact)
                             }
                         }
+                        .frame(width: width, alignment: .leading)
                     }
                 }
             }
-            .frame(height: ShellMetrics.ribbonControlsHeight, alignment: .top)
-            Text(group.title).font(Design.Typeface.section).foregroundStyle(.tertiary).lineLimit(1)
         }
-        .padding(.horizontal, Design.Space.s)
-        .padding(.top, Design.Space.xs)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(group.title)
     }
 }
 
@@ -213,6 +265,9 @@ private struct RibbonControlView: View {
     @EnvironmentObject var store: DocumentStore
     let item: RibbonItem
     @ObservedObject var shell: ShellState
+    /// For a small control: the width of its column, and whether its caption is dropped to fit.
+    var smallWidth: CGFloat?
+    var iconOnly = false
     @State private var anchor = AnchorBox()
     @State private var galleryVisible = false
 
@@ -220,17 +275,19 @@ private struct RibbonControlView: View {
         switch item.control {
         case .button(let ref):
             let command = AppCommands.command(ref.id)
-            RibbonButton(label: ref.label, symbol: ref.symbol, size: item.size,
+            RibbonButton(label: ref.label, symbol: ref.symbol, size: item.size, smallWidth: smallWidth, iconOnly: iconOnly,
                          isOn: command?.isOn?(store) ?? false,
                          enabled: command?.isEnabled(store) ?? false,
                          help: RibbonHelp.text(for: ref, command: command)) { shell.run(ref.id) }
         case .menu(let label, let symbol, let entries):
-            RibbonButton(label: label, symbol: symbol, size: item.size, showsMenu: true, help: label) {
+            RibbonButton(label: label, symbol: symbol, size: item.size, smallWidth: smallWidth, iconOnly: iconOnly,
+                         showsMenu: true, help: label) {
                 RibbonMenu.popUp(entries, store: store, anchor: anchor.view) { shell.run($0) }
             }
             .background(MenuAnchor(box: anchor))
         case .visualGallery(let label, let symbol):
-            RibbonButton(label: label, symbol: symbol, size: item.size, showsMenu: true, help: "Add a visual to the page") {
+            RibbonButton(label: label, symbol: symbol, size: item.size, smallWidth: smallWidth, iconOnly: iconOnly,
+                         showsMenu: true, help: "Add a visual to the page") {
                 galleryVisible.toggle()
             }
             .popover(isPresented: $galleryVisible, arrowEdge: .bottom) {
@@ -262,6 +319,9 @@ private struct RibbonButton: View {
     let label: String
     let symbol: String
     let size: RibbonItem.Size
+    /// Small buttons are drawn at exactly the width `RibbonFit` gave their column.
+    var smallWidth: CGFloat?
+    var iconOnly = false
     var isOn = false
     var enabled = true
     var showsMenu = false
@@ -302,10 +362,11 @@ private struct RibbonButton: View {
                     .font(.system(size: ShellMetrics.ribbonSmallIcon))
                     .foregroundStyle(isOn ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.primary))
                     .frame(width: Design.Space.l)
-                caption.lineLimit(1)
+                if !iconOnly { caption.lineLimit(1).fixedSize() }
             }
             .padding(.horizontal, Design.Space.xs)
-            .frame(height: ShellMetrics.ribbonSmallRowHeight)
+            .frame(width: smallWidth, height: ShellMetrics.ribbonSmallRowHeight, alignment: .leading)
+            .clipped()
             .contentShape(Rectangle())
         }
     }
