@@ -25,8 +25,8 @@ enum NarrativeValues {
     ]
 
     /// Values whose text is shorter than this are not turned into tokens: a lone digit matches too much prose.
-    static let minimumTokenLength = 2
-    static let linkScheme = "narrative-value"
+    nonisolated static let minimumTokenLength = 2
+    nonisolated static let linkScheme = "narrative-value"
 
     // MARK: Stored definitions
 
