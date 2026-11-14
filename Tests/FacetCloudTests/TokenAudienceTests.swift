@@ -13,6 +13,7 @@ final class TokenAudienceTests: XCTestCase {
             (sql, "contoso.database.windows.net"),
             (sql, "abc123.datawarehouse.fabric.microsoft.com"),
             (sql, "ws.sql.azuresynapse.net"),
+            (sql, "abc-123.database.fabric.microsoft.com"),
             (storage, "acct.blob.core.windows.net"),
             (storage, "acct.dfs.core.windows.net"),
             (storage, "onelake.dfs.fabric.microsoft.com"),
@@ -36,6 +37,10 @@ final class TokenAudienceTests: XCTestCase {
             (sql, "contoso.database.windows.net."),                // trailing dot
             (sql, "contoso..database.windows.net"),                // empty label
             (sql, "acct.blob.core.windows.net"),                   // another service's host
+            (sql, "database.fabric.microsoft.com"),
+            (sql, "x.database.fabric.microsoft.com.evil.com"),
+            (sql, "xdatabase.fabric.microsoft.com"),
+            (sql, "x.database.fabric.microsoft.co"),
             (storage, "acct.blob.core.windows.net.attacker.io"),
             (storage, "acctblob.core.windows.net"),
             (storage, "contoso.database.windows.net"),

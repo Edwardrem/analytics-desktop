@@ -32,6 +32,9 @@ struct GetDataDialog: View {
         }
         .frame(minWidth: 780, idealWidth: 860, minHeight: 520, idealHeight: 580)
         .onChange(of: session.isDone) { _, done in if done { dismiss() } }
+        .sheet(item: $session.credentialPrompt) { source in
+            CredentialsSheet(kind: source.kind, location: source.location, onSaved: { Task { await session.retryAfterCredentials() } })
+        }
         .onAppear { if session.isDone { dismiss() } }
         .task { if connectNow, session.stage == .form { await session.connect() } }
     }
@@ -176,8 +179,8 @@ private struct ConnectionForm: View {
             TextField(kind == .web ? "https://example.com/data.csv" : "https://services.odata.org/V4/TripPinService", text: $session.request.location)
                 .textFieldStyle(.roundedBorder)
             Text(kind == .web
-                 ? "CSV, JSON, XML, Excel workbooks and the tables of HTML pages are recognised from the content. The address is read anonymously."
-                 : "The feed is read as JSON (OData v4, or older services that answer JSON), anonymously.")
+                 ? "CSV, JSON, XML, Excel workbooks and the tables of HTML pages are recognised from the content. OneDrive and SharePoint file addresses use your Microsoft account; other addresses are read anonymously until you give credentials, which you're asked for when the site refuses."
+                 : "The feed is read as JSON (OData v4, or older services that answer JSON). You're asked for credentials when the service needs them.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         case .python, .r:
             Text("Script").font(Design.Typeface.captionStrong).foregroundStyle(.secondary)

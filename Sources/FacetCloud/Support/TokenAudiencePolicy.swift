@@ -20,7 +20,7 @@ public enum TokenAudiencePolicy {
         }
     }
 
-    static let sqlSuffixes = [".database.windows.net", ".datawarehouse.fabric.microsoft.com", ".sql.azuresynapse.net"]
+    static let sqlSuffixes = [".database.windows.net", ".datawarehouse.fabric.microsoft.com", ".database.fabric.microsoft.com", ".sql.azuresynapse.net"]
     static let storageSuffixes = [".blob.core.windows.net", ".dfs.core.windows.net", ".dfs.fabric.microsoft.com", ".onelake.fabric.microsoft.com"]
     static let ossSuffixes = [".postgres.database.azure.com", ".mysql.database.azure.com"]
 

@@ -113,6 +113,8 @@ public final class InMemorySecretStore: SecretStoring {
 public struct DataSourceCredential: Codable, Equatable, Sendable {
     public enum Kind: String, Codable, Sendable, CaseIterable {
         case anonymous, usernamePassword, apiKey, accountKey, connectionString
+        /// Azure Storage shared access signature (the query string).
+        case sasToken
         /// Uses a signed-in Microsoft account; `username` holds the account id, there is no secret.
         case microsoftAccount
     }

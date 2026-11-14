@@ -44,6 +44,8 @@ final class GetDataSession: ObservableObject {
     @Published var promoteHeaders = false
     /// Set when the run finished and the dialog should close.
     @Published var isDone = false
+    /// A source refused its credentials (or needs some): the dialog asks for them, then tries again.
+    @Published var credentialPrompt: QueryDataSource?
     /// Opened from the Power Query Editor: Transform adds the queries there instead of opening the editor.
     var insideEditor = false
     private var headersDecided = false
@@ -143,6 +145,21 @@ final class GetDataSession: ObservableObject {
             if request.kind == .folder { planCombine() }
         } catch {
             self.error = MError.wrap(error).description
+            askForCredentials(error)
+        }
+    }
+
+    /// Opens the credentials dialog when an error says a source needs credentials.
+    func askForCredentials(_ error: Error) {
+        if let s = MError.wrap(error).credentialSource { credentialPrompt = QueryDataSource(kind: s.kind, location: s.location) }
+    }
+
+    /// Credentials were saved: run the step that failed again.
+    func retryAfterCredentials() async {
+        credentialPrompt = nil
+        switch stage {
+        case .navigator: await focus(focused)
+        default: await connect()
         }
     }
 
@@ -213,6 +230,7 @@ final class GetDataSession: ObservableObject {
             guard mine == generation else { return }
             preview = nil
             previewError = MError.wrap(error).description
+            askForCredentials(error)
         }
     }
 
@@ -267,7 +285,7 @@ final class GetDataSession: ObservableObject {
                 for definition in definitions {
                     switch results[definition.name] {
                     case .success(var table)?: table.name = definition.name; tables.append(table)
-                    case .failure(let e)?: failures.append("\(definition.name): \(MError.wrap(e).description)")
+                    case .failure(let e)?: failures.append("\(definition.name): \(MError.wrap(e).description)"); askForCredentials(e)
                     case nil: failures.append("\(definition.name): no result.")
                     }
                 }
@@ -333,6 +351,7 @@ final class GetDataSession: ObservableObject {
             return true
         } catch {
             self.error = MError.wrap(error).description
+            askForCredentials(error)
             return false
         }
     }
