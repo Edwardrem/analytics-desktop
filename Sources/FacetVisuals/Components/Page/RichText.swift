@@ -26,6 +26,20 @@ enum CmpRichBlock: Equatable {
     case spacer
 }
 
+/// The dynamic values a text box shows: the bodies of its `{{…}}` placeholders ("Total Sales",
+/// "=SUM(Sales[Amount])"), in order of first use, read exactly as the renderer reads them (escaped
+/// braces are text). The app queries these and supplies one column per name.
+public enum TextBoxPlaceholders {
+    public static func names(in content: String) -> [String] {
+        var names: [String] = []
+        _ = CmpRichText.parse(content) { name in
+            if !name.isEmpty, !names.contains(name) { names.append(name) }
+            return nil
+        }
+        return names
+    }
+}
+
 /// Parser for the text-box Markdown subset:
 /// `# / ## / ###` headings, `**bold**`, `*italic*` / `_italic_`, `<u>underline</u>`, `~~strike~~`,
 /// `[text](url)`, `- ` / `* ` bullets, `1. ` numbered lists (two spaces of indent per level),

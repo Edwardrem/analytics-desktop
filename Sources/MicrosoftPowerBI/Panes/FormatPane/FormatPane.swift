@@ -101,8 +101,13 @@ struct FormatPane: View {
                     FormatPropertyRow(property: property, specs: specs, theme: store.theme) { p, value in
                         write(ids, p, value)
                     }
-                    if specs.count == 1, let spec = specs.first, let target = FormatCatalog.fxTarget(of: property, type: spec.type) {
-                        FormatFxButton(visualID: spec.id, target: target)
+                    if specs.count == 1, let spec = specs.first {
+                        if let target = FormatCatalog.fxTarget(of: property, type: spec.type) {
+                            FormatFxButton(visualID: spec.id, target: target)
+                        } else if let kind = FormatBindings.kind(of: property) {
+                            FormatBindingButton(visualID: spec.id, card: property.card, key: property.key,
+                                                name: FormatBindingButton.name(of: property), kind: kind)
+                        }
                     }
                 }
             }
@@ -128,8 +133,20 @@ struct FormatPane: View {
             if let spec = specs.first { FormatConditionalRows(properties: card.properties, spec: spec) }
         case .altText:
             if let spec = specs.first {
-                FormatAltTextRows(altText: spec.altText) { writeAltText(spec.id, $0) }
+                FormatAltTextRows(visualID: spec.id, altText: spec.altText) { writeAltText(spec.id, $0) }
                 resetButton(card, enabled: !spec.altText.isEmpty) { writeAltText(spec.id, "") }
+            }
+        case .embed:
+            if let spec = specs.first {
+                FormatEmbedRows(spec: spec)
+                resetButton(card, enabled: !spec.content.isEmpty) {
+                    store.updateVisuals([spec.id], name: "Clear Source") { $0.content = "" }
+                }
+            }
+        case .action:
+            if let spec = specs.first {
+                FormatActionTooltipRows(visualID: spec.id, tooltip: spec.action?.tooltip ?? "") { writeActionTooltip(spec.id, $0) }
+                resetButton(card, enabled: FormatCatalog.isOverridden(card, in: spec)) { writeActionTooltip(spec.id, "") }
             }
         }
     }
@@ -236,6 +253,16 @@ struct FormatPane: View {
 
     private func writeAltText(_ id: UUID, _ text: String) {
         store.updateVisuals([id], name: "Change Alt Text") { $0.altText = text }
+    }
+
+    /// The tooltip shown on hover; a visual with no action yet gets one that does nothing else.
+    private func writeActionTooltip(_ id: UUID, _ text: String) {
+        store.updateVisuals([id], name: "Change Tooltip") { spec in
+            if spec.action == nil, text.isEmpty { return }
+            var action = spec.action ?? ActionSpec()
+            action.tooltip = text
+            spec.action = action == ActionSpec() ? nil : action
+        }
     }
 
     private static func key(_ ids: [UUID]) -> String { ids.map(\.uuidString).joined(separator: "+") }

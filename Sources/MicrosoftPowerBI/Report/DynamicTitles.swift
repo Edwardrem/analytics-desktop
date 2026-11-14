@@ -10,8 +10,8 @@ enum DynamicTitles {
     }
 
     /// The query for the title's value: the field, summarized, under the visual's filter tables.
-    static func query(_ field: FieldRef, filters: [String], model: SemanticModel) -> String {
-        let args = filters + [ModelDAX.string("__title"), ModelDAX.aggregate(field, model: model)]
+    static func query(_ field: FieldRef, filters: [String], model: SemanticModel, name: String = "__title") -> String {
+        let args = filters + [ModelDAX.string(name), ModelDAX.aggregate(field, model: model)]
         return "EVALUATE\n    SUMMARIZECOLUMNS(\n" + args.map { "        " + $0 }.joined(separator: ",\n") + "\n    )"
     }
 

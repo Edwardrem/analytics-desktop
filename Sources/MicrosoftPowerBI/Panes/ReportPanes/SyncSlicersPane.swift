@@ -110,27 +110,7 @@ extension DocumentStore {
         mutate(synced ? "Sync Slicer" : "Stop Syncing Slicer", invalidates: .visuals(nil)) { d in
             guard let at = locate(slicerID, in: d), let pi = d.report.pages.firstIndex(where: { $0.id == pageID }) else { return }
             if synced {
-                if SlicerSync.group(d.report.pages[at.page].visuals[at.visual]) == nil {
-                    let source = d.report.pages[at.page].visuals[at.visual]
-                    let base = source.fields(.field).first?.caption ?? source.name
-                    let taken = SlicerSync.groups(in: d.report).filter { g in
-                        g.members.contains { SlicerSync.fieldKey($0.visual) != SlicerSync.fieldKey(source) }
-                    }.map(\.name)
-                    SlicerSync.setGroup(&d.report.pages[at.page].visuals[at.visual], taken.uniqueName(base))
-                }
-                let source = d.report.pages[at.page].visuals[at.visual]
-                guard pi != at.page, let name = SlicerSync.group(source) else { return }
-                if let other = SlicerSync.counterpart(of: source, on: d.report.pages[pi]),
-                   let vi = d.report.pages[pi].visuals.firstIndex(where: { $0.id == other.id }) {
-                    var v = d.report.pages[pi].visuals[vi]
-                    v.setFmt(SlicerSync.card, "filterChanges", source.fmt(SlicerSync.card, "filterChanges"))
-                    v.setFmt(SlicerSync.card, "fieldChanges", source.fmt(SlicerSync.card, "fieldChanges"))
-                    SlicerSync.setGroup(&v, name)
-                    v.slicerState = source.slicerState
-                    d.report.pages[pi].visuals[vi] = v
-                } else {
-                    d.report.pages[pi].visuals.append(Self.slicerCopy(of: source, for: d.report.pages[pi], hidden: true))
-                }
+                Self.sync(&d, source: at, with: pi, visible: nil)
             } else {
                 let source = d.report.pages[at.page].visuals[at.visual]
                 if pi == at.page {
@@ -145,6 +125,59 @@ extension DocumentStore {
                     }
                 }
             }
+        }
+    }
+
+    /// Power BI's "Add and sync with all pages": the slicer is synced with, and shown on, every
+    /// page that isn't a tooltip page, as one undo step.
+    func syncSlicerWithAllPages(_ slicerID: UUID) {
+        mutate("Add and Sync with All Pages", invalidates: .visuals(nil)) { d in
+            guard let at = locate(slicerID, in: d) else { return }
+            for pi in d.report.pages.indices where !d.report.pages[pi].isTooltipPage || pi == at.page {
+                Self.sync(&d, source: at, with: pi, visible: true)
+            }
+        }
+    }
+
+    /// The slicer pages that "Add and sync with all pages" would still change.
+    static func pagesToSync(_ slicer: VisualSpec, in report: Report) -> Int {
+        report.pages.filter { page in
+            guard !page.isTooltipPage else { return false }
+            guard let other = SlicerSync.counterpart(of: slicer, on: page) else { return true }
+            return other.isHidden || !SlicerSync.isSynced(slicer, on: page)
+        }.count
+    }
+
+    /// Syncs the slicer at `at` with page `pi`: names its group if it has none, then brings the
+    /// page's counterpart into the group (with the same options and selection) or adds a copy.
+    /// `visible` shows (true) or hides (false) the counterpart; nil leaves an existing one as it
+    /// is and adds a new copy hidden, as the Sync column does.
+    private static func sync(_ d: inout FacetDocument, source at: (page: Int, visual: Int), with pi: Int, visible: Bool?) {
+        if SlicerSync.group(d.report.pages[at.page].visuals[at.visual]) == nil {
+            let source = d.report.pages[at.page].visuals[at.visual]
+            let base = source.fields(.field).first?.caption ?? source.name
+            let taken = SlicerSync.groups(in: d.report).filter { g in
+                g.members.contains { SlicerSync.fieldKey($0.visual) != SlicerSync.fieldKey(source) }
+            }.map(\.name)
+            SlicerSync.setGroup(&d.report.pages[at.page].visuals[at.visual], taken.uniqueName(base))
+        }
+        let source = d.report.pages[at.page].visuals[at.visual]
+        if pi == at.page {
+            if let visible { d.report.pages[at.page].visuals[at.visual].isHidden = !visible }
+            return
+        }
+        guard let name = SlicerSync.group(source) else { return }
+        if let other = SlicerSync.counterpart(of: source, on: d.report.pages[pi]),
+           let vi = d.report.pages[pi].visuals.firstIndex(where: { $0.id == other.id }) {
+            var v = d.report.pages[pi].visuals[vi]
+            v.setFmt(SlicerSync.card, "filterChanges", source.fmt(SlicerSync.card, "filterChanges"))
+            v.setFmt(SlicerSync.card, "fieldChanges", source.fmt(SlicerSync.card, "fieldChanges"))
+            SlicerSync.setGroup(&v, name)
+            v.slicerState = source.slicerState
+            if let visible { v.isHidden = !visible }
+            d.report.pages[pi].visuals[vi] = v
+        } else {
+            d.report.pages[pi].visuals.append(slicerCopy(of: source, for: d.report.pages[pi], hidden: !(visible ?? false)))
         }
     }
 
@@ -309,6 +342,13 @@ struct SyncSlicersPane: View {
 
     private func pagesTable(_ slicer: VisualSpec) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            let remaining = DocumentStore.pagesToSync(slicer, in: store.report)
+            Button("Add and sync with all pages") { store.syncSlicerWithAllPages(slicer.id) }
+                .buttonStyle(.link).font(Design.Typeface.caption)
+                .disabled(remaining == 0)
+                .help(remaining == 0 ? "This slicer is already synced and visible on every page"
+                      : "Sync this slicer with every page and show it there")
+                .padding(.bottom, Design.Space.xs)
             HStack(spacing: 0) {
                 SectionLabel("Page")
                 Image(systemName: "arrow.triangle.2.circlepath").frame(width: 44)

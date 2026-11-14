@@ -27,17 +27,27 @@ struct RefreshCluster: Identifiable {
     }
 }
 
-extension PerformanceEvent {
-    /// Time spent outside the DAX query: analytics, layout and waiting for other visuals' queries.
-    var otherMilliseconds: Double { max(0, totalMilliseconds - queryMilliseconds) }
+extension DocumentStore {
+    /// The recorded event whose results the visual hasn't been drawn with yet (see `DisplayProbe`).
+    func eventAwaitingDisplay(_ visualID: UUID) -> UUID? {
+        guard performanceRecording, let e = performanceLog.last(where: { $0.visualID == visualID }),
+              e.delivered != nil, e.displayMilliseconds == nil else { return nil }
+        return e.id
+    }
 }
 
-/// Performance log export: `{version, events:[{id, name, visualId, queryMs, totalMs, otherMs, dax, timestamp}]}`.
+extension PerformanceEvent {
+    /// Time spent outside the DAX query and the visual's display: preparing the results and analytics.
+    var otherMilliseconds: Double { max(0, totalMilliseconds - queryMilliseconds - (displayMilliseconds ?? 0)) }
+}
+
+/// Performance log export: `{version, events:[{id, name, visualId, queryMs, displayMs, totalMs, otherMs, dax, timestamp}]}`.
+/// `displayMs` is left out for an event whose visual was never drawn with its results.
 enum PerformanceExport {
     private struct File: Encodable { var version = 1; var events: [Event] }
     private struct Event: Encodable {
         var id: String, name: String, visualId: String
-        var queryMs: Double, totalMs: Double, otherMs: Double
+        var queryMs: Double, displayMs: Double?, totalMs: Double, otherMs: Double
         var dax: String, timestamp: String
     }
 
@@ -46,7 +56,8 @@ enum PerformanceExport {
         iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let file = File(events: log.map {
             Event(id: $0.id.uuidString, name: $0.visualName, visualId: $0.visualID.uuidString,
-                  queryMs: $0.queryMilliseconds, totalMs: $0.totalMilliseconds, otherMs: $0.otherMilliseconds,
+                  queryMs: $0.queryMilliseconds, displayMs: $0.displayMilliseconds, totalMs: $0.totalMilliseconds,
+                  otherMs: $0.otherMilliseconds,
                   dax: $0.dax, timestamp: iso.string(from: $0.timestamp))
         })
         let encoder = JSONEncoder()
@@ -222,7 +233,8 @@ struct PerformancePane: View {
                         Text(e.totalMilliseconds.durationText).font(Design.Typeface.body).monospacedDigit()
                             .foregroundStyle(.secondary)
                     }
-                    DurationBar(query: e.queryMilliseconds, other: e.otherMilliseconds, scale: longest)
+                    DurationBar(query: e.queryMilliseconds, display: e.displayMilliseconds ?? 0, other: e.otherMilliseconds,
+                                scale: longest)
                         .padding(.leading, 14)
                 }
                 .contentShape(Rectangle())
@@ -237,10 +249,15 @@ struct PerformancePane: View {
 
     private func eventDetail(_ e: PerformanceEvent) -> some View {
         VStack(alignment: .leading, spacing: Design.Space.s) {
-            HStack(spacing: Design.Space.l) {
-                legend("DAX query", e.queryMilliseconds, Color.accentColor)
-                legend("Other", e.otherMilliseconds, Color.primary.opacity(0.25))
-                Spacer(minLength: 0)
+            // Stacked, so the three parts fit a narrow pane.
+            VStack(alignment: .leading, spacing: Design.Space.xxs) {
+                legend("DAX query", e.queryMilliseconds.durationText, DurationBar.queryColor)
+                    .help("Running the visual's query on the model")
+                legend("Visual display", e.displayMilliseconds?.durationText ?? "–", DurationBar.displayColor)
+                    .help(e.displayMilliseconds == nil ? "The visual wasn't drawn with these results while recording"
+                          : "From the results arriving to the visual being drawn with them")
+                legend("Other", e.otherMilliseconds.durationText, DurationBar.otherColor)
+                    .help("Preparing the results for the visual, and its analytics")
             }
             if e.dax.isEmpty {
                 PaneNote("This visual didn't send a query.")
@@ -265,11 +282,11 @@ struct PerformancePane: View {
         .padding(.top, Design.Space.xxs).padding(.bottom, Design.Space.s)
     }
 
-    private func legend(_ label: String, _ ms: Double, _ color: Color) -> some View {
+    private func legend(_ label: String, _ value: String, _ color: Color) -> some View {
         HStack(spacing: Design.Space.xs) {
             RoundedRectangle(cornerRadius: 1.5, style: .continuous).fill(color).frame(width: 8, height: 8)
-            Text(label).font(Design.Typeface.caption).foregroundStyle(.secondary)
-            Text(ms.durationText).font(Design.Typeface.caption).monospacedDigit()
+            Text(label).font(Design.Typeface.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(value).font(Design.Typeface.caption).monospacedDigit().lineLimit(1)
         }
         .accessibilityElement(children: .combine)
     }
@@ -372,22 +389,35 @@ struct PerformancePane: View {
     }
 }
 
-/// Thin bar: DAX query time in the accent colour, everything else in a quiet tint, scaled to the slowest event.
+/// Thin bar: DAX query time in the accent colour, visual display in a lighter accent, everything
+/// else in a quiet tint, scaled to the slowest event.
 struct DurationBar: View {
+    static let queryColor = Design.Palette.accent
+    static let displayColor = Design.Palette.accent.opacity(0.45)
+    static let otherColor = Color.primary.opacity(0.25)
+
     let query: Double
+    var display: Double = 0
     let other: Double
     let scale: Double
 
+    /// The widths of the query, display and other segments in a bar `width` wide.
+    static func segments(query: Double, display: Double, other: Double, scale: Double, width: CGFloat) -> [CGFloat] {
+        let parts = [query, display, other].map { max(0, $0) }
+        let total = parts.reduce(0, +)
+        let filled = max(2, width * min(1, total / max(scale, 0.001)))
+        return parts.map { total > 0 ? filled * $0 / total : 0 }
+    }
+
     var body: some View {
         GeometryReader { geo in
-            let total = max(0, query) + max(0, other)
-            let width = max(2, geo.size.width * min(1, total / max(scale, 0.001)))
-            let queryWidth = total > 0 ? width * max(0, query) / total : 0
+            let widths = Self.segments(query: query, display: display, other: other, scale: scale, width: geo.size.width)
             ZStack(alignment: .leading) {
                 Capsule().fill(Design.Palette.fill)
                 HStack(spacing: 0) {
-                    Rectangle().fill(Color.accentColor).frame(width: queryWidth)
-                    Rectangle().fill(Color.primary.opacity(0.25)).frame(width: max(0, width - queryWidth))
+                    Rectangle().fill(Self.queryColor).frame(width: widths[0])
+                    Rectangle().fill(Self.displayColor).frame(width: widths[1])
+                    Rectangle().fill(Self.otherColor).frame(width: widths[2])
                 }
                 .clipShape(Capsule())
             }

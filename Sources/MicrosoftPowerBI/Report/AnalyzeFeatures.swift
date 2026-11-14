@@ -19,8 +19,10 @@ enum AnalyzeFeature {
                 quickInsights(store)
             },
             AppCommand(id: "analyze.explainChange", title: "Explain the Increase/Decrease", menu: .data, symbol: "chart.line.uptrend.xyaxis",
-                       isEnabled: { store in hasData(store) && !(store.pointSelections[store.selectedVisual?.id ?? UUID()] ?? []).isEmpty }) { store in
-                explainChange(store)
+                       help: "Select a point on a line or column chart, then explain how it changed from the point before it.",
+                       isEnabled: { store in explainTarget(store) != nil }) { store in
+                guard let (id, point) = explainTarget(store) else { return }
+                store.explainChange(in: id, point: point)
             },
             AppCommand(id: "analyze.distribution", title: "Find Where This Distribution Differs", menu: .data, symbol: "percent",
                        isEnabled: { store in hasData(store) }) { store in
@@ -93,16 +95,12 @@ enum AnalyzeFeature {
 
     // MARK: Explain the change
 
-    private static func explainChange(_ store: DocumentStore) {
-        guard let spec = store.selectedVisual,
-              let (table, _, valueColumn, dimensions) = analysisTable(store, for: spec) else { return }
-        let points = store.pointSelections[spec.id] ?? []
-        let field = points.first?.fields.first ?? dimensions.first
-        let value = points.first?.values.first
-        store.present {
-            ExplainChangeSheet(table: table, measureName: valueColumn, dimensions: dimensions,
-                               initialField: field, initialValue: value)
-        }
+    /// The selected visual and its selected data point, when Explain the increase/decrease applies to them.
+    static func explainTarget(_ store: DocumentStore) -> (UUID, DataPointSelection)? {
+        guard let spec = store.selectedVisual, let data = store.visualData[spec.id],
+              let point = store.pointSelections[spec.id]?.last,
+              ExplainChange.plan(spec: spec, data: data, point: point) != nil else { return nil }
+        return (spec.id, point)
     }
 
     // MARK: Distribution difference
@@ -231,139 +229,6 @@ private struct InsightPreview: View {
         data = VisualData(table: table, roles: roles,
                           fields: fields, formats: fields.map { _ in "" },
                           totals: (0..<table.columnCount).map { _ in .null })
-    }
-}
-
-// MARK: - Explain the change sheet
-
-struct ExplainChangeSheet: View {
-    let table: DataTable
-    let measureName: String
-    let dimensions: [FieldRef]
-    let initialField: FieldRef?
-    let initialValue: Value?
-
-    @Environment(\.dismiss) private var dismiss
-    @State var field: FieldRef = .column("", "", .none)
-    @State var fromValue: Value?
-    @State var toValue: Value?
-    @State var result: ChangeExplanationResult?
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Explain the \(result?.isIncrease == false ? "decrease" : "increase")").font(Design.Typeface.headline)
-                Spacer()
-                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
-            }
-            .padding()
-            Divider()
-            if let result {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Design.Space.m) {
-                        header(result)
-                        ForEach(result.explanations.indices, id: \.self) { i in
-                            explanation(result.explanations[i])
-                        }
-                    }
-                    .padding()
-                }
-            } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .frame(minWidth: 560, idealWidth: 680, minHeight: 440)
-        .onAppear {
-            if field == nil { field = initialField ?? dimensions.first ?? .column("", "", .none) }
-            let options = Self.distinctValues(of: field.name, in: table)
-            if toValue == nil { toValue = initialValue ?? options.last }
-            if fromValue == nil { fromValue = options.last(where: { $0 != toValue }) ?? options.first }
-            run()
-        }
-        .onChange(of: field) { _, _ in
-            let options = Self.distinctValues(of: field.name, in: table)
-            toValue = options.last
-            fromValue = options.last(where: { $0 != toValue }) ?? options.first
-            run()
-        }
-    }
-
-    private var controls: some View {
-        HStack(spacing: Design.Space.s) {
-            Picker("Break down by", selection: $field) {
-                ForEach(dimensions, id: \.key) { d in Text(d.caption).tag(d) }
-            }
-            .frame(width: 180)
-            Picker("From", selection: $fromValue) {
-                ForEach(Self.distinctValues(of: field.name, in: table), id: \.self) { v in
-                    Text(v.asString.isEmpty ? "(Blank)" : v.asString).tag(Optional(v))
-                }
-            }
-            .frame(width: 140)
-            Picker("To", selection: $toValue) {
-                ForEach(Self.distinctValues(of: field.name, in: table), id: \.self) { v in
-                    Text(v.asString.isEmpty ? "(Blank)" : v.asString).tag(Optional(v))
-                }
-            }
-            .frame(width: 140)
-            Spacer()
-        }
-    }
-
-    private func header(_ r: ChangeExplanationResult) -> some View {
-        VStack(alignment: .leading, spacing: Design.Space.xs) {
-            controls
-            HStack(spacing: Design.Space.m) {
-                LabeledContent("Before", value: Fmt2.number(r.before))
-                Image(systemName: "arrow.right")
-                LabeledContent("After", value: Fmt2.number(r.after))
-                Text(Fmt2.signed(r.delta)).font(Design.Typeface.bodyStrong)
-                    .foregroundStyle(r.isIncrease ? Color.green : Color.red)
-            }
-            .font(Design.Typeface.body)
-        }
-    }
-
-    @ViewBuilder
-    private func explanation(_ e: ChangeExplanation) -> some View {
-        VStack(alignment: .leading, spacing: Design.Space.xs) {
-            HStack {
-                Text("By \(e.dimension.caption)").font(Design.Typeface.bodyStrong)
-                Text(e.sentence).font(Design.Typeface.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
-            ForEach(e.contributions.indices, id: \.self) { i in
-                let c = e.contributions[i]
-                HStack(spacing: Design.Space.s) {
-                    Text(c.member.asString.isEmpty ? "(Blank)" : c.member.asString)
-                        .font(Design.Typeface.caption).frame(width: 120, alignment: .trailing).lineLimit(1)
-                    Capsule().fill(c.change >= 0 ? Color.green.opacity(0.55) : Color.red.opacity(0.55))
-                        .frame(width: max(3, CGFloat(abs(c.shareOfDelta)) * 200), height: 12)
-                    Text(Fmt2.signed(c.change)).font(Design.Typeface.caption).monospacedDigit()
-                    Text(Fmt2.percent(abs(c.shareOfDelta))).font(Design.Typeface.caption).foregroundStyle(.tertiary)
-                    Spacer()
-                }
-            }
-            Hairline()
-        }
-    }
-
-    private func run() {
-        guard let f = fromValue, let t = toValue, f != t else { result = nil; return }
-        var before = FilterSpec(field: field, kind: .basic)
-        before.values = [f]
-        var after = FilterSpec(field: field, kind: .basic)
-        after.values = [t]
-        result = ChangeExplainer.explain(before: [before], after: [after], dimensions: dimensions,
-                                         query: InMemoryQuery.make(table: table, measure: measureName))
-    }
-
-    static func distinctValues(of column: String, in table: DataTable) -> [Value] {
-        guard let col = table.column(column) else { return [] }
-        var seen = Set<Value>(), out: [Value] = []
-        for v in col.values where !v.isNull {
-            if seen.insert(v).inserted { out.append(v) }
-        }
-        return out
     }
 }
 

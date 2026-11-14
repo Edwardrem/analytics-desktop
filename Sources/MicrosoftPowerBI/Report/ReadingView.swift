@@ -113,6 +113,7 @@ private struct ReadingVisual: View {
     /// The store's context, except that a personalised visual never writes its reader-only shape back to the document.
     private func context(for spec: VisualSpec) -> VisualContext {
         var c = store.context(for: spec)
+        c.onSetUp = nil   // readers can't change what an embedded visual shows
         guard runtime.personalization(for: saved.id) != nil else { return c }
         let id = saved.id
         c.onSpecChange = { [weak store] new in

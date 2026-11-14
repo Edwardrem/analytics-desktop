@@ -28,7 +28,7 @@ enum ReportFeature {
             s.removeFromMobileLayout(s.currentPage.visuals.map(\.id))
         })
         c.append(AppCommand(id: "insert.sparkline", title: "Add a Sparkline…", menu: .insert, symbol: "waveform.path.ecg",
-                            separatorBefore: true, help: "A small line or column chart in every row of a table.",
+                            separatorBefore: true, help: "A small line or column chart in every row of a table or matrix.",
                             isEnabled: { $0.sparklineTarget != nil }) { s in
             guard let table = s.sparklineTarget else { return }
             s.present { SparklineSheet(visualID: table.id) }

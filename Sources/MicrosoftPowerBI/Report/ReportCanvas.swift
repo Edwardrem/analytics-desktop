@@ -65,8 +65,20 @@ extension DocumentStore {
         if !spec.type.isPageElement, !spec.type.isSlicer {
             c.onSeeRecords = { [weak self] point in self?.showRecords(for: id, point: point) }
         }
+        if interactive, ExplainChange.supportedTypes.contains(spec.type) {
+            c.analyzeActions = { [weak self] point in
+                guard let self, let data = self.visualData[id],
+                      let plan = ExplainChange.plan(spec: spec, data: data, point: point) else { return [] }
+                return [VisualMenuAction(title: plan.title) { [weak self] in self?.explainChange(in: id, point: point) }]
+            }
+        }
+        if interactive, EmbedSetup.types.contains(spec.type) {
+            c.onSetUp = { [weak self] spec in self?.setUpEmbed(spec.id) }
+            if spec.type == .powerAutomate { c.onRunFlow = { [weak self] spec in self?.runFlow(spec) } }
+        }
         c.extensionView = { [weak self] spec, data, ctx in
             guard let self else { return nil }
+            if let script = ScriptVisuals.view(spec, data, ctx, self) { return script }
             return VisualExtensions.provider?(spec, data, ctx, self)
         }
         return c
@@ -81,6 +93,17 @@ struct ReportCanvas: View {
     @State private var dropTargeted = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            canvas
+            // Power BI opens the script editor under the canvas while a Python or R visual is selected.
+            if !store.mobileLayout, let spec = store.selectedVisual, ScriptVisuals.isScript(spec.type) {
+                Hairline()
+                ScriptEditorPane(spec: spec, runtime: .of(store)).frame(height: 220)
+            }
+        }
+    }
+
+    private var canvas: some View {
         HStack(spacing: 0) {
             if store.mobileLayout {
                 MobileVisualsPanel()
@@ -254,6 +277,13 @@ struct VisualContainer: View {
             VisualView(spec: ReportRuntime.of(store).withPendingSlicer(store.mobileLayout ? MobileLayout.effectiveSpec(spec) : spec),
                        data: data, context: store.context(for: spec))
                 .frame(width: frame.width, height: frame.height)
+                .background {
+                    // While recording, times how long the visual takes to draw its new results.
+                    if let pending = store.eventAwaitingDisplay(spec.id) {
+                        DisplayProbe(token: pending) { [weak store] id, time in store?.visualDisplayed(id, at: time) }
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
                 .rotationEffect(.degrees(frame.rotation))
                 .opacity(store.editInteractionsFor != nil && store.editInteractionsFor != spec.id ? 0.92 : 1)
                 .opacity(spotlight != nil && spotlight != spec.id ? 0.18 : 1)

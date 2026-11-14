@@ -78,15 +78,29 @@ final class LiveCalculation: CalculationService {
     /// unhighlighted values and `table` the values under the highlight (blank where a group has none).
     func visualData(spec original: VisualSpec, request: VisualRequest) -> VisualData {
         let start = CFAbsoluteTimeGetCurrent()
-        if original.type.isSlicer { return slicerData(original, request) }
+        if original.type.isSlicer {
+            var out = slicerData(original, request)
+            out.formatOverrides = formatOverrides(original, filterTables(request))
+            return out
+        }
+        if original.type.isPageElement {
+            // A page element shows no data points: a selection elsewhere filters what it shows.
+            let filters = filterTables(request) + request.highlights.flatMap(crossFilterTables)
+            var out = original.type == .textBox ? textBoxData(original, filters, start: start) : VisualData()
+            out.formatOverrides = formatOverrides(original, filters)
+            return out
+        }
 
         let spec = resolvingFieldParameters(original, filters: filterTables(request))
         let drill = Self.drillPlan(spec)
         var groups: [(well: Well, field: FieldRef)] = []
         var values: [(well: Well, field: FieldRef)] = []
-        for well in spec.type.wells where well != .tooltips {
+        for well in spec.type.wells {
             for f in well == .category ? drill.category : spec.fields(well) {
-                if f.isAggregate {
+                if well == .tooltips {
+                    // Tooltip fields never group the visual: each is a value of the data point it describes.
+                    values.append((well, Self.tooltipValue(f, model: model)))
+                } else if f.isAggregate {
                     values.append((well, f))
                 } else if well.isGrouping {
                     groups.append((well, f))
@@ -97,7 +111,11 @@ final class LiveCalculation: CalculationService {
                 }
             }
         }
-        guard !groups.isEmpty || !values.isEmpty else { return VisualData() }
+        guard !groups.isEmpty || !values.isEmpty else {
+            var out = VisualData()
+            out.formatOverrides = formatOverrides(spec, filterTables(request))
+            return out
+        }
 
         var taken = Set<String>()
         var valueNames: [String] = []
@@ -186,14 +204,34 @@ final class LiveCalculation: CalculationService {
             out.queryMilliseconds = ms
             out.daxQuery = dax
             out.dynamicTitle = DynamicTitles.text(for: spec, filters: filters, model: model) { try engine.query($0).first }
+            out.formatOverrides = formatOverrides(spec, filters)
             return out
         } catch {
             let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
             var out = VisualData(error: (error as? DAXError)?.message ?? error.localizedDescription)
             out.queryMilliseconds = ms
             out.daxQuery = dax
+            out.formatOverrides = formatOverrides(spec, filters)
             return out
         }
+    }
+
+    /// The values of the visual's measure-driven format properties under `filters`.
+    private func formatOverrides(_ spec: VisualSpec, _ filters: [String]) -> FormatBag {
+        guard !(spec.formatBindings ?? []).isEmpty else { return [:] }
+        return FormatBindings.overrides(for: spec, filters: filters, model: model) { try engine.query($0).first }
+    }
+
+    /// A Tooltips-well field as the value it adds to each data point: measures and summarized
+    /// columns as they are; a column left unsummarized takes Power BI's default for the well:
+    /// numbers its default summarization, dates the earliest, anything else the first value.
+    static func tooltipValue(_ f: FieldRef, model: SemanticModel) -> FieldRef {
+        guard !f.isAggregate, f.kind == .column else { return f }
+        let column = model.table(f.table)?.column(f.name)
+        if column?.summarizeBy ?? .none != .none || column?.dataType.isNumeric == true { return f }
+        var out = f
+        out.aggregation = column?.dataType.isTemporal == true ? .min : .first
+        return out
     }
 
     // MARK: Field parameters
@@ -285,6 +323,47 @@ final class LiveCalculation: CalculationService {
             out.daxQuery = dax
             return out
         }
+    }
+
+    // MARK: Text boxes
+
+    /// A text box's dynamic values: each `{{Measure}}` or `{{=DAX}}` placeholder evaluated under the
+    /// page's filters, slicers and selections, as a one-row table with one column per placeholder,
+    /// named after it (what the text box renderer looks up). A placeholder that names no measure, or
+    /// whose expression fails, gets no column and stays a quiet token in the text.
+    private func textBoxData(_ spec: VisualSpec, _ filters: [String], start: CFAbsoluteTime) -> VisualData {
+        let names = TextBoxPlaceholders.names(in: spec.content)
+        guard !names.isEmpty else { return VisualData() }
+        var columns: [DataColumn] = [], formats: [String] = [], queries: [String] = []
+        for name in names {
+            guard let (expression, format) = textBoxExpression(name, filters: filters) else { continue }
+            let dax = "EVALUATE\n    CALCULATETABLE(\n        ROW(\(ModelDAX.string("Value")), \(expression))"
+                + filters.map { ",\n        " + $0 }.joined() + "\n    )"
+            queries.append(dax)
+            guard let table = try? engine.query(dax).first, table.rowCount > 0, table.columnCount > 0 else { continue }
+            columns.append(DataColumn(name: name, type: .any, values: [table[0, 0]]))
+            formats.append(format)
+        }
+        var out = VisualData(table: DataTable(name: spec.name, columns: columns), fields: columns.map { _ in nil },
+                             formats: formats, totals: columns.map { _ in .null })
+        out.daxQuery = queries.joined(separator: "\n\n")
+        out.queryMilliseconds = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        return out
+    }
+
+    /// The DAX and format string of one placeholder: `=expression` as written, otherwise the
+    /// measure of that name (any table, case-insensitive). Nil when no measure has the name.
+    private func textBoxExpression(_ name: String, filters: [String]) -> (String, String)? {
+        if name.hasPrefix("=") {
+            let expression = name.dropFirst().trimmingCharacters(in: .whitespaces)
+            return expression.isEmpty ? nil : (expression, "")
+        }
+        for table in model.tables {
+            if let m = table.measures.first(where: { ModelDAX.same($0.name, name) }) {
+                return (ModelDAX.measure(m.name), formatString(for: .measure(table.name, m.name), filters: filters))
+            }
+        }
+        return nil
     }
 
     /// The format string of a value column. A measure's is the one in effect under the visual's
@@ -463,7 +542,10 @@ final class LiveAnalytics: AnalyticsService {
                                           sensitivity: item.value <= 0 ? 70 : item.value)
                 }
             case .clusters:
-                let numeric = data.table.columns.filter { $0.type.isNumeric }.map(\.name).prefix(4)
+                // Tooltip values describe the points; they are not dimensions to cluster on.
+                let tooltips = Set(data.indices(.tooltips))
+                let numeric = data.table.columns.indices.filter { !tooltips.contains($0) && data.table.columns[$0].type.isNumeric }
+                    .map { data.table.columns[$0].name }.prefix(4)
                 guard !numeric.isEmpty else { break }
                 let k = Int(item.secondaryValue)
                 if let (assignments, _) = try? Clustering.cluster(table: data.table, columns: Array(numeric),

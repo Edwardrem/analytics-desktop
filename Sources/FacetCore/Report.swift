@@ -401,6 +401,8 @@ public struct ConditionalFormat: Codable, Identifiable, Hashable, Sendable {
         public var isPercent = false
         public var color: String = "#34C759"
         public var icon: String?
+        /// The number the rule gives a numeric property (a measure-driven column width).
+        public var number: Double?
         public init() {}
     }
     public var id = UUID()
@@ -495,6 +497,8 @@ public struct VisualSpec: Codable, Identifiable, Hashable, Sendable {
     public var tooltipPageID: UUID?
     /// Formatting that applies only in the phone layout, layered over `format` (card → property → value).
     public var mobileFormat: FormatBag?
+    /// Measure-driven ("fx") format properties; their values arrive in `VisualData.formatOverrides`.
+    public var formatBindings: [FormatBinding]?
 
     public init(type: VisualType, frame: Frame, name: String? = nil) {
         self.type = type; self.frame = frame; self.name = name ?? type.displayName
@@ -537,6 +541,9 @@ public struct VisualData: Sendable {
     public var daxQuery: String = ""
     /// The title a measure supplies (a `.title` conditional format), evaluated under the visual's filters.
     public var dynamicTitle: String?
+    /// The evaluated values of the visual's `formatBindings` (card → key → value), drawn in place
+    /// of the stored format.
+    public var formatOverrides: FormatBag = [:]
 
     public init(table: DataTable = DataTable(), roles: [String: [Int]] = [:], fields: [FieldRef?] = [],
                 formats: [String] = [], totals: [Value] = [], error: String? = nil) {
