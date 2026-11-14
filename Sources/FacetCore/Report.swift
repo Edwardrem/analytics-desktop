@@ -385,6 +385,17 @@ public struct AnalyticsItem: Codable, Identifiable, Hashable, Sendable {
     public var style: String = "dashed"
     public var showLabel = true
     public var seriesKey: String?         // limit to one measure
+    /// Forecast: the season length in points; nil detects it, 1 forecasts without seasonality.
+    public var seasonality: Int?
+    /// Forecast: trailing points left out of the fit and forecast instead ("Ignore the last").
+    public var ignoreLast: Int?
+    /// Anomalies: the fields an anomaly's possible explanations are looked for in ("Explain by");
+    /// nil or empty tries the model's suitable fields.
+    public var explainBy: [FieldRef]?
+    /// Error bars on a scatter chart: the axis they run along.
+    public enum ErrorAxis: String, Codable, CaseIterable, Sendable { case x, y, both }
+    /// Scatter error bars: X, Y or both; nil is Y, as Power BI starts them.
+    public var errorAxis: ErrorAxis?
     public init(kind: Kind) { self.kind = kind }
 }
 
@@ -545,6 +556,9 @@ public struct VisualData: Sendable {
     /// The evaluated values of the visual's `formatBindings` (card → key → value), drawn in place
     /// of the stored format.
     public var formatOverrides: FormatBag = [:]
+    /// Column → the format string of each row, for value columns whose dynamic format string gives
+    /// data points different formats. Columns not listed use `formats` for every row.
+    public var pointFormats: [Int: [String]] = [:]
 
     public init(table: DataTable = DataTable(), roles: [String: [Int]] = [:], fields: [FieldRef?] = [],
                 formats: [String] = [], totals: [Value] = [], error: String? = nil) {
@@ -556,8 +570,12 @@ public struct VisualData: Sendable {
         indices(well)[safe: n].map { table.columns[$0] }
     }
     public var isEmpty: Bool { table.rowCount == 0 }
+    /// The format string of one cell: the row's own when its data point has one.
+    public func format(row: Int, col: Int) -> String {
+        pointFormats[col]?[safe: row] ?? formats[safe: col] ?? ""
+    }
     public func formatted(row: Int, col: Int) -> String {
-        ValueFormatter.format(table[row, col], formats[safe: col] ?? "")
+        ValueFormatter.format(table[row, col], format(row: row, col: col))
     }
 }
 

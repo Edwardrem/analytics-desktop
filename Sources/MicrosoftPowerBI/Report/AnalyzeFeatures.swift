@@ -28,7 +28,19 @@ enum AnalyzeFeature {
                        isEnabled: { store in hasData(store) }) { store in
                 distribution(store)
             },
+            AppCommand(id: "analyze.findClusters", title: "Automatically Find Clusters…", menu: .data, symbol: "circle.hexagongrid",
+                       help: "Select a scatter chart or a table, then group its members into clusters as a new field.",
+                       isEnabled: { store in clusterTarget(store) != nil }) { store in
+                guard let id = clusterTarget(store) else { return }
+                store.findClusters(in: id)
+            },
         ]
+    }
+
+    /// The selected visual, when clusters can be found on it.
+    static func clusterTarget(_ store: DocumentStore) -> UUID? {
+        guard let spec = store.selectedVisual, ClusterFields.plan(spec: spec, model: store.model) != nil else { return nil }
+        return spec.id
     }
 
     private static func hasData(_ store: DocumentStore) -> Bool {

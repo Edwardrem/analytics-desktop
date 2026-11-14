@@ -187,8 +187,16 @@ public struct SeriesModel {
 
     // MARK: Labels
 
-    public func formatted(_ v: Double, series s: Int) -> String {
-        ValueFormatter.format(.double(v), series[safe: s]?.format ?? "")
+    /// The format string of a data point: its own when the measure's dynamic format string gives
+    /// points different formats, otherwise the series'.
+    public func format(series s: Int, category c: Int?) -> String {
+        guard let one = series[safe: s] else { return "" }
+        if let c, !data.pointFormats.isEmpty, let row = one.rows[safe: c] ?? nil { return data.format(row: row, col: one.column) }
+        return one.format
+    }
+
+    public func formatted(_ v: Double, series s: Int, category c: Int? = nil) -> String {
+        ValueFormatter.format(.double(v), format(series: s, category: c))
     }
 
     /// Extra (label, value) pairs from the Tooltips well for the row behind a mark.

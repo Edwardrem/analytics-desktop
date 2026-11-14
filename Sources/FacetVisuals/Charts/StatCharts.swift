@@ -55,12 +55,13 @@ enum StatCharts {
                     c.color("trackColor", "Track colour", .gridline)]
                 + SharedFormatCards.dataLabels(show: true, values: false, toggle: false)
         case .scatter:
-            let c = FormatCard("markers", "Markers")
+            let c = FormatCard("markers", "Markers"), zoom = FormatCard("zoomSlider", "Zoom slider")
             return SharedFormatCards.statAxes()
                 + [c.number("size", "Marker size", 3.5, ScatterChart.markerSizes),
                    c.number("transparency", "Transparency %", 20, 0...100)]
                 + SharedFormatCards.legend()
                 + SharedFormatCards.plotArea()
+                + [zoom.bool("show", "Show zoom sliders", false), zoom.bool("xAxis", "X-axis", true), zoom.bool("yAxis", "Y-axis", true)]
         default:
             return []
         }

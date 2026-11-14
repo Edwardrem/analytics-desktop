@@ -110,6 +110,33 @@ enum ScatterAnalytics {
         let s = style.lowercased()
         return s.hasPrefix("solid") ? [] : (s.hasPrefix("dotted") ? [1.5, 3.5] : [5, 4])
     }
+
+    /// A point's error bars: ± the item's percentage of its value, along X, Y or both (Y when unset).
+    static func errorBars(_ p: ScatterModel.Point, item: AnalyticsItem) -> (x: ClosedRange<Double>?, y: ClosedRange<Double>?) {
+        let k = (FormatNumber.clamped(item.secondaryValue, to: 0...1000) ?? 10) / 100
+        func band(_ v: Double) -> ClosedRange<Double> { let d = abs(v) * k; return (v - d)...(v + d) }
+        let axis = item.errorAxis ?? .y
+        return (axis == .y ? nil : band(p.x), axis == .x ? nil : band(p.y))
+    }
+
+    /// The values each axis must reach: the points and the ends of their error bars.
+    static func extents(_ points: [ScatterModel.Point], errorBars item: AnalyticsItem?) -> (x: [Double], y: [Double]) {
+        var xs = points.map(\.x), ys = points.map(\.y)
+        if let item {
+            for p in points {
+                let e = errorBars(p, item: item)
+                if let b = e.x { xs += [b.lowerBound, b.upperBound] }
+                if let b = e.y { ys += [b.lowerBound, b.upperBound] }
+            }
+        }
+        return (xs, ys)
+    }
+
+    /// Which zoom sliders the chart shows (format card `zoomSlider`): none until it's on, then X and Y.
+    static func zoomSliders(_ format: ResolvedFormat) -> (x: Bool, y: Bool) {
+        guard format.bool("zoomSlider", "show", false) else { return (false, false) }
+        return (format.bool("zoomSlider", "xAxis", true), format.bool("zoomSlider", "yAxis", true))
+    }
 }
 
 // MARK: - View
@@ -125,6 +152,8 @@ struct ScatterChart: View {
     let context: VisualContext
     @State private var frame = 0
     @State private var playing = false
+    @State private var xZoom: ClosedRange<Double> = 0...1
+    @State private var yZoom: ClosedRange<Double> = 0...1
 
     var body: some View {
         let model = ScatterModel(data: data)
@@ -167,16 +196,22 @@ struct ScatterChart: View {
             let i = model.colorIndex(p, clusters: clusters)
             return colors.seriesColor(i, name: names[safe: i] ?? "")
         }
+        let errorItem = spec.analytics.first { $0.kind == .errorBars }
+        let spread = ScatterAnalytics.extents(model.points, errorBars: errorItem)
+        let sliders = ScatterAnalytics.zoomSliders(style.format)
         // Axes span every frame, so they stay still while the points move.
         return StatPlot(spec: spec, context: context, style: style,
-                        xDomain: extent(model.points.map(\.x)),
-                        xTicks: ticks(model.points.map(\.x)),
+                        xDomain: extent(spread.x),
+                        xTicks: ticks(spread.x),
                         xDefaultTitle: caption(.x),
-                        yExtent: extent(model.points.map(\.y)), includeZero: false,
+                        yExtent: extent(spread.y), includeZero: false,
                         yFormat: format(.y), yDefaultTitle: caption(.y),
                         refValues: visible.map(\.y),
                         snapRadius: 8,
                         signature: shown.count &* 31 &+ frame,
+                        xZoom: sliders.x ? $xZoom : nil,
+                        yZoom: sliders.y ? $yZoom : nil,
+                        xFormat: format(.x),
                         hits: { map in
                             shown.map { p in
                                 ChartHit(id: p.id, path: Path(ellipseIn: circle(map.point(p.x, p.y), radius(p, model, base))),
@@ -197,6 +232,7 @@ struct ScatterChart: View {
                             for p in shown {
                                 let dim = (matcher.isActive && !matcher.isSelected(p.selection))
                                     || (!highlighted.isEmpty && !highlighted.contains(model.colorIndex(p, clusters: clusters)))
+                                if let errorItem { drawErrorBars(ctx, map, p, errorItem, style: style, dim: dim) }
                                 ctx.fill(Path(ellipseIn: circle(map.point(p.x, p.y), radius(p, model, base))),
                                          with: .color(color(p).opacity(dim ? 0.25 : fill)))
                             }
@@ -259,6 +295,25 @@ struct ScatterChart: View {
         clipped.clip(to: Path(map.plot))
         clipped.fill(upper, with: .color(itemColor(item, Color(hex: context.theme.accent)).opacity(0.08)))
         clipped.fill(lower, with: .color(style.secondary.opacity(0.07)))
+    }
+
+    /// A point's error bars, with a short cap at each end, drawn under the point.
+    private func drawErrorBars(_ ctx: GraphicsContext, _ map: StatMap, _ p: ScatterModel.Point, _ item: AnalyticsItem,
+                               style: ChartStyle, dim: Bool) {
+        let bars = ScatterAnalytics.errorBars(p, item: item)
+        let cap: CGFloat = 3
+        var path = Path()
+        if let b = bars.x {
+            let a = map.point(b.lowerBound, p.y), z = map.point(b.upperBound, p.y)
+            path.move(to: a); path.addLine(to: z)
+            for e in [a, z] { path.move(to: CGPoint(x: e.x, y: e.y - cap)); path.addLine(to: CGPoint(x: e.x, y: e.y + cap)) }
+        }
+        if let b = bars.y {
+            let a = map.point(p.x, b.lowerBound), z = map.point(p.x, b.upperBound)
+            path.move(to: a); path.addLine(to: z)
+            for e in [a, z] { path.move(to: CGPoint(x: e.x - cap, y: e.y)); path.addLine(to: CGPoint(x: e.x + cap, y: e.y)) }
+        }
+        ctx.stroke(path, with: .color(itemColor(item, style.foreground).opacity(dim ? 0.2 : 0.7)), style: StrokeStyle(lineWidth: 1))
     }
 
     /// Trend and ratio lines over the points shown.

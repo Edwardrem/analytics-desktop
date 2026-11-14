@@ -366,17 +366,43 @@ private struct AnalyticsItemEditor: View {
         case .forecast:
             PropertyRow("Length") {
                 HStack(spacing: Design.Space.xs) {
-                    CommitNumberField(value: item.value, range: 1...1000) { v in edit { $0.value = v.rounded() } }
+                    CommitNumberField(value: item.value, range: 1...Double(AnalyticsSeries.maxForecastLength)) { v in edit { $0.value = v.rounded() } }
                     Text("points").font(Design.Typeface.caption).foregroundStyle(.secondary)
+                }
+            }
+            PropertyRow("Ignore the last") {
+                HStack(spacing: Design.Space.xs) {
+                    CommitNumberField(value: Double(item.ignoreLast ?? 0), range: 0...Double(AnalyticsSeries.maxForecastLength)) { v in
+                        edit { $0.ignoreLast = v >= 1 ? Int(v.rounded()) : nil }
+                    }
+                    Text("points").font(Design.Typeface.caption).foregroundStyle(.secondary)
+                }
+            }
+            PropertyRow("Seasonality") {
+                HStack(spacing: Design.Space.xs) {
+                    OptionalNumberField(value: item.seasonality.map(Double.init)) { v in
+                        edit { $0.seasonality = v.flatMap { $0.isFinite ? Int(min(max($0.rounded(), 1), 1000)) : nil } }
+                    }
+                    Text(ForecastCard.seasonalityHint(item.seasonality)).font(Design.Typeface.caption).foregroundStyle(.tertiary).lineLimit(1)
                 }
             }
             PropertyRow("Confidence") {
                 Picker("Confidence interval", selection: Binding(get: { item.secondaryValue }, set: { v in edit { $0.secondaryValue = v } })) {
-                    ForEach([75.0, 80, 85, 90, 95, 99], id: \.self) { c in Text("\(Int(c))%").tag(c) }
+                    ForEach(ForecastCard.confidenceLevels, id: \.self) { c in Text("\(Int(c))%").tag(c) }
                 }
                 .labelsHidden().controlSize(.small).fixedSize()
             }
         case .errorBars:
+            if spec.type == .scatter {
+                PropertyRow("Axis") {
+                    Picker("Error bar axis", selection: Binding(get: { item.errorAxis ?? .y }, set: { a in edit { $0.errorAxis = a == .y ? nil : a } })) {
+                        Text("Y-axis").tag(AnalyticsItem.ErrorAxis.y)
+                        Text("X-axis").tag(AnalyticsItem.ErrorAxis.x)
+                        Text("Both").tag(AnalyticsItem.ErrorAxis.both)
+                    }
+                    .labelsHidden().controlSize(.small).fixedSize()
+                }
+            }
             PropertyRow("Error") {
                 HStack(spacing: Design.Space.xs) {
                     Text("±").font(Design.Typeface.caption).foregroundStyle(.secondary)
@@ -389,6 +415,28 @@ private struct AnalyticsItemEditor: View {
                 HStack(spacing: Design.Space.xs) {
                     Slider(value: Binding(get: { item.value }, set: { v in edit { $0.value = v.rounded() } }), in: 1...100).controlSize(.small)
                     Text("\(Int(item.value))%").font(Design.Typeface.caption).foregroundStyle(.secondary).monospacedDigit().frame(width: 34, alignment: .trailing)
+                }
+            }
+            PropertyRow("Explain by") {
+                VStack(alignment: .leading, spacing: Design.Space.xs) {
+                    ForEach(item.explainBy ?? [], id: \.key) { f in
+                        HStack(spacing: Design.Space.xs) {
+                            FieldPickerButton(selection: f, allowsMeasures: false, allowsClear: false) { new in
+                                guard let new else { return }
+                                edit { $0.explainBy = AnomalyCard.replacing(f, with: new, in: $0.explainBy) }
+                            }
+                            MiniIconButton("minus", help: "Stop explaining anomalies by \(f.caption)") {
+                                edit { $0.explainBy = AnomalyCard.removing(f, from: $0.explainBy) }
+                            }
+                        }
+                    }
+                    FieldPickerButton(selection: nil, placeholder: "Add a field", allowsMeasures: false, allowsClear: false) { new in
+                        guard let new else { return }
+                        edit { $0.explainBy = AnomalyCard.adding(new, to: $0.explainBy) }
+                    }
+                    if (item.explainBy ?? []).isEmpty {
+                        Text("Leave empty to try the model's fields").font(Design.Typeface.caption).foregroundStyle(.tertiary)
+                    }
                 }
             }
         case .clusters:

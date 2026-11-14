@@ -123,6 +123,9 @@ enum BuildLogic {
         let refLines: [AnalyticsItem.Kind] = [.constantLine, .minLine, .maxLine, .averageLine, .medianLine, .percentileLine]
         let axis = spec.fields(.category).first.flatMap { model.column($0) }
         let continuousAxis = axis.map { $0.dataType.isTemporal || $0.dataType.isNumeric } ?? false
+        // Forecasts and anomaly detection follow one series along the axis, so not with a legend.
+        let oneSeries = spec.fields(.legend).isEmpty
+        let forecast: [AnalyticsItem.Kind] = continuousAxis && oneSeries ? [.forecast] : []
         switch spec.type {
         case .clusteredBar, .clusteredColumn:
             return refLines + [.trendLine, .errorBars]
@@ -131,15 +134,15 @@ enum BuildLogic {
         case .stackedBar100, .stackedColumn100, .stackedArea100:
             return [.constantLine]
         case .line:
-            return refLines + [.trendLine] + (continuousAxis ? [.forecast] : []) + [.errorBars, .anomalies]
+            return refLines + [.trendLine] + forecast + [.errorBars] + (oneSeries ? [.anomalies] : [])
         case .area:
-            return refLines + [.trendLine] + (continuousAxis ? [.forecast] : []) + [.errorBars]
+            return refLines + [.trendLine] + forecast + [.errorBars]
         case .stackedArea:
             return refLines + [.trendLine]
         case .lineStackedColumn, .lineClusteredColumn:
             return refLines + [.trendLine, .errorBars]
         case .scatter:
-            return [.trendLine, .symmetryShading, .ratioLine, .clusters, .minLine, .maxLine, .averageLine, .medianLine]
+            return [.trendLine, .symmetryShading, .ratioLine, .clusters, .errorBars, .minLine, .maxLine, .averageLine, .medianLine]
         default:
             return []
         }
@@ -247,6 +250,46 @@ enum BuildLogic {
     /// Whether the target formats one field of the visual (cells) rather than the visual as a whole.
     static func isPerField(_ t: ConditionalFormat.Target) -> Bool {
         switch t { case .background, .fontColor, .dataBars, .icons, .webURL, .image: return true; default: return false }
+    }
+}
+
+/// The forecast card's choices, as Power BI offers them.
+enum ForecastCard {
+    static let confidenceLevels: [Double] = [75, 80, 85, 90, 95, 99]
+
+    /// What the seasonality field means: empty detects the season, 1 turns it off.
+    static func seasonalityHint(_ points: Int?) -> String {
+        guard let points else { return "Detected" }
+        return points <= 1 ? "None" : "points per season"
+    }
+}
+
+/// The Anomalies card's "Explain by" list: model columns, each once, as plain group-by fields.
+enum AnomalyCard {
+    private static func plain(_ f: FieldRef) -> FieldRef { FieldRef.column(f.table, f.name) }
+    private static func same(_ a: FieldRef, _ b: FieldRef) -> Bool {
+        a.table.caseInsensitiveCompare(b.table) == .orderedSame && a.name.caseInsensitiveCompare(b.name) == .orderedSame
+    }
+
+    static func adding(_ f: FieldRef, to list: [FieldRef]?) -> [FieldRef]? {
+        let list = list ?? []
+        guard f.kind == .column, !list.contains(where: { same($0, f) }) else { return list.isEmpty ? nil : list }
+        return list + [plain(f)]
+    }
+
+    static func removing(_ f: FieldRef, from list: [FieldRef]?) -> [FieldRef]? {
+        let rest = (list ?? []).filter { !same($0, f) }
+        return rest.isEmpty ? nil : rest
+    }
+
+    static func replacing(_ old: FieldRef, with new: FieldRef, in list: [FieldRef]?) -> [FieldRef]? {
+        guard new.kind == .column else { return list }
+        var out: [FieldRef] = []
+        for f in list ?? [] {
+            let next = same(f, old) ? plain(new) : f
+            if !out.contains(where: { same($0, next) }) { out.append(next) }
+        }
+        return out.isEmpty ? nil : out
     }
 }
 

@@ -109,15 +109,16 @@ struct RibbonChart: View {
         for s in model.series.indices {
             L.bands[s].series = s
         }
-        // Rank order per category: value descending, series order as tie-break.
+        // Rank order per category: value descending, series order as tie-break. As in Power BI the
+        // top-ranked band sits at the top of the stack, so the stack is built up from the last rank.
         for c in 0..<n {
             let order = model.series.indices.sorted { a, b in
                 let va = full(a, c), vb = full(b, c)
                 return va == vb ? a < b : va > vb
             }
+            for (place, s) in order.enumerated() { L.bands[s].rank[c] = place + 1 }
             var cum = 0.0
-            for (place, s) in order.enumerated() {
-                L.bands[s].rank[c] = place + 1
+            for s in order.reversed() {
                 let v = full(s, c)
                 L.bands[s].lo[c] = cum
                 L.bands[s].hi[c] = cum + v
@@ -282,7 +283,7 @@ struct SankeyChart: View {
             destTotals[l.t]! += l.v
         }
         L.sourceCount = sourceOrder.count
-        let pad: CGFloat = 12, nodeWidth: CGFloat = 10, gap: CGFloat = 8
+        let pad: CGFloat = 12, gap: CGFloat = 8
         let usable = max(20, size.height - pad * 2)
         let leftTotal = max(sourceTotals.values.max() ?? 0, 1e-9)
         let rightTotal = max(destTotals.values.max() ?? 0, 1e-9)

@@ -145,6 +145,9 @@ struct VisualContextMenu: View {
             Button(store.editInteractionsFor == spec.id ? "Done Editing Interactions" : "Edit Interactions") {
                 store.editInteractionsFor = store.editInteractionsFor == spec.id ? nil : spec.id
             }
+            if ClusterFields.plan(spec: spec, model: store.model) != nil {
+                Button("Automatically Find Clusters…") { store.findClusters(in: spec.id) }
+            }
             Divider()
         }
         Button("Format Painter") { store.formatPainterSource = spec.id }

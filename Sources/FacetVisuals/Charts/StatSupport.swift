@@ -115,6 +115,26 @@ enum StatSupport {
     }
 }
 
+/// The zoom sliders of a statistical plot: each slider's fraction (0…1) picks the part of its
+/// axis's full range the plot shows.
+enum StatZoom {
+    /// The part of `full` a slider at `fraction` shows; all of it without a slider.
+    static func window(_ full: ClosedRange<Double>, _ fraction: ClosedRange<Double>?) -> ClosedRange<Double> {
+        guard let f = fraction else { return full }
+        let lo = Swift.min(Swift.max(f.lowerBound, 0), 1), hi = Swift.min(Swift.max(f.upperBound, 0), 1)
+        guard hi > lo, lo > 0 || hi < 1 else { return full }
+        let span = full.upperBound - full.lowerBound
+        return (full.lowerBound + lo * span)...(full.lowerBound + hi * span)
+    }
+
+    /// An axis over exactly `window`, with round ticks inside it.
+    static func scale(_ window: ClosedRange<Double>, targetTicks: Int) -> AxisScale {
+        let nice = AxisFormatter.niceScale(dataMin: window.lowerBound, dataMax: window.upperBound, includeZero: false,
+                                           fixedMin: window.lowerBound, fixedMax: window.upperBound, targetTicks: targetTicks)
+        return AxisScale(lower: window.lowerBound, upper: window.upperBound, ticks: nice.ticks.filter { window.contains($0) })
+    }
+}
+
 /// Sequential colour scale for heat-style charts: theme minimum → maximum (optionally through the
 /// theme centre), with per-visual overrides `<card>.minColor` / `<card>.maxColor`.
 struct StatColorScale {
@@ -161,6 +181,11 @@ struct StatPlot<Marks: ChartContent>: View {
     var allowsLasso = true
     var snapRadius: CGFloat = 0
     var signature = 0
+    /// Zoom sliders along X (under the plot) and Y (beside it); nil = no slider on that axis.
+    var xZoom: Binding<ClosedRange<Double>>?
+    var yZoom: Binding<ClosedRange<Double>>?
+    /// Format of the X labels when zooming re-ticks the axis.
+    var xFormat = ""
     let hits: (StatMap) -> [ChartHit]
     var draw: ((GraphicsContext, StatMap) -> Void)?
     @ChartContentBuilder let marks: () -> Marks
@@ -173,10 +198,15 @@ struct StatPlot<Marks: ChartContent>: View {
             let refs = StatSupport.refLines(spec: spec, values: refValues, format: yFormat, style: style)
             let lo = min(yExtent.lowerBound, refs.map(\.value).min() ?? yExtent.lowerBound)
             let hi = max(yExtent.upperBound, refs.map(\.value).max() ?? yExtent.upperBound)
-            let scale = AxisFormatter.niceScale(dataMin: lo, dataMax: hi, includeZero: includeZero, fixedMin: yo.min, fixedMax: yo.max,
-                                                targetTicks: ChartSizeClass.tickCount(geo.size.height - 36))
+            let full = AxisFormatter.niceScale(dataMin: lo, dataMax: hi, includeZero: includeZero, fixedMin: yo.min, fixedMax: yo.max,
+                                               targetTicks: ChartSizeClass.tickCount(geo.size.height - 36))
+            let yWindow = StatZoom.window(full.lower...full.upper, yZoom?.wrappedValue)
+            let scale = yWindow == full.lower...full.upper ? full : StatZoom.scale(yWindow, targetTicks: ChartSizeClass.tickCount(geo.size.height - 36))
+            let x = StatZoom.window(xDomain, xZoom?.wrappedValue)
+            let xAll = x == xDomain ? xTicks
+                : StatZoom.scale(x, targetTicks: 5).ticks.map { StatTick(pos: $0, label: AxisFormatter.label($0, format: xFormat)) }
             let showX = sc.showAxisLabels && xo.show, showY = sc.showAxisLabels && yo.show
-            let ticks = showX ? StatSupport.thin(xTicks, domain: xDomain, width: geo.size.width - (showY ? 44 : 4), fontSize: xo.size) : []
+            let ticks = showX ? StatSupport.thin(xAll, domain: x, width: geo.size.width - (showY ? 44 : 4), fontSize: xo.size) : []
             let xTitle = sc.showAxisTitles ? xo.title.map { $0.isEmpty ? xDefaultTitle : $0 } : nil
             let yTitle = sc.showAxisTitles ? yo.title.map { $0.isEmpty ? yDefaultTitle : $0 } : nil
             VStack(spacing: 4) {
@@ -185,14 +215,26 @@ struct StatPlot<Marks: ChartContent>: View {
                         Text(t).font(style.font()).foregroundStyle(style.secondary).lineLimit(1).fixedSize()
                             .rotationEffect(.degrees(-90)).frame(width: style.labelSize + 4).frame(maxHeight: .infinity)
                     }
-                    chart(scale: scale, refs: refs, ticks: ticks, xo: xo, yo: yo, showY: showY)
+                    chart(x: x, scale: scale, refs: refs.filter { scale.lower...scale.upper ~= $0.value }, ticks: ticks,
+                          xo: xo, yo: yo, showY: showY, zoomed: x != xDomain || scale.lower != full.lower || scale.upper != full.upper)
+                    if let yZoom {
+                        ZoomSlider(range: yZoom, theme: context.theme, minimumSpan: 0.05, axis: .vertical, label: "Zoom the Y axis")
+                            .padding(.top, 4).padding(.bottom, showX ? 22 : 4)
+                            .allowsHitTesting(context.isInteractive)
+                    }
                 }
                 if let t = xTitle, !t.isEmpty { Text(t).font(style.font()).foregroundStyle(style.secondary).lineLimit(1) }
+                if let xZoom {
+                    ZoomSlider(range: xZoom, theme: context.theme, minimumSpan: 0.05, label: "Zoom the X axis")
+                        .padding(.leading, showY ? 44 : 4).padding(.trailing, yZoom == nil ? 4 : 20)
+                        .allowsHitTesting(context.isInteractive)
+                }
             }
         }
     }
 
-    private func chart(scale: AxisScale, refs: [StatRefLine], ticks: [StatTick], xo: StatAxisOptions, yo: StatAxisOptions, showY: Bool) -> some View {
+    private func chart(x: ClosedRange<Double>, scale: AxisScale, refs: [StatRefLine], ticks: [StatTick], xo: StatAxisOptions,
+                       yo: StatAxisOptions, showY: Bool, zoomed: Bool) -> some View {
         let plotBG = style.format.color("plotArea", "background", "#00000000")
         return Chart {
             marks()
@@ -209,7 +251,7 @@ struct StatPlot<Marks: ChartContent>: View {
             }
         }
         .chartLegend(.hidden)
-        .chartXScale(domain: [xDomain.lowerBound, xDomain.upperBound])
+        .chartXScale(domain: [x.lowerBound, x.upperBound])
         .chartYScale(domain: [scale.lower, scale.upper])
         .chartXAxis {
             AxisMarks(position: .bottom, values: ticks.map(\.pos)) { v in
@@ -236,13 +278,21 @@ struct StatPlot<Marks: ChartContent>: View {
         .chartOverlay { proxy in
             GeometryReader { geo in
                 if let anchor = proxy.plotFrame {
-                    let map = StatMap(proxy: proxy, plot: geo[anchor], x: xDomain, y: scale.lower...scale.upper)
+                    let map = StatMap(proxy: proxy, plot: geo[anchor], x: x, y: scale.lower...scale.upper)
                     ZStack(alignment: .topLeading) {
                         if let draw {
-                            Canvas { ctx, _ in draw(ctx, map) }.allowsHitTesting(false).accessibilityHidden(true)
+                            Canvas { ctx, _ in
+                                // Zoomed in, what falls outside the plot is cut off at its edge.
+                                var c = ctx
+                                if zoomed { c.clip(to: Path(map.plot)) }
+                                draw(c, map)
+                            }
+                            .allowsHitTesting(false).accessibilityHidden(true)
                         }
                         if context.isInteractive {
-                            ChartInteractionLayer(hits: hits(map), spec: spec, context: context, allowsLasso: allowsLasso, snapRadius: snapRadius)
+                            let all = hits(map)
+                            ChartInteractionLayer(hits: zoomed ? all.filter { map.plot.insetBy(dx: -1, dy: -1).contains($0.anchor) } : all,
+                                                  spec: spec, context: context, allowsLasso: allowsLasso, snapRadius: snapRadius)
                         }
                     }
                 }

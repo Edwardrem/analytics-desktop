@@ -61,6 +61,9 @@ public struct VisualContext {
     /// Runs the Power Automate flow a visual is connected to, with the visual's data. Nil = the
     /// flow can't run from here.
     public var onRunFlow: ((VisualSpec) -> Void)?
+    /// Opens the possible explanations of an anomaly the Analytics pane flagged, when it's clicked.
+    /// Nil = anomalies are only marked (reading view, thumbnails).
+    public var onExplainAnomaly: ((AnalyticsOverlays.Anomaly) -> Void)?
 
     public init() {}
 

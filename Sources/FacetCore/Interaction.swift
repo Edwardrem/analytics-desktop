@@ -29,9 +29,16 @@ public struct AnalyticsOverlays: Sendable {
         public var values: [Double]
         public var lower: [Double]
         public var upper: [Double]
+        /// The table row of the last point the forecast was fitted to, when known; the line starts there.
+        public var anchorRow: Int?
+        /// Table rows of the trailing points left out of the fit ("Ignore the last"), in axis order.
+        /// The first `ignoredRows.count` labels and values re-forecast them; the rest are future points.
+        public var ignoredRows: [Int] = []
         public init(seriesColumn: Int, labels: [Value], values: [Double], lower: [Double], upper: [Double]) {
             self.seriesColumn = seriesColumn; self.labels = labels; self.values = values; self.lower = lower; self.upper = upper
         }
+        /// Labels of the periods past the end of the series.
+        public var futureLabels: [Value] { Array(labels.dropFirst(ignoredRows.count)) }
     }
     public struct Anomaly: Sendable {
         public var seriesColumn: Int

@@ -152,7 +152,8 @@ struct CartesianLayout {
         let positions = (o.continuous ?? !kind.drawsBars) && !kind.drawsBars && !kind.drawsDots ? model.continuousPositions : nil
         isContinuous = positions != nil
         var maxForecast = 0
-        for fc in forecasts { maxForecast = max(maxForecast, fc.labels.count) }
+        // Re-forecast trailing points ("Ignore the last") sit on categories the axis already has.
+        for fc in forecasts { maxForecast = max(maxForecast, fc.futureLabels.count) }
         if let p = positions, let lo = p.min(), var hi = p.max() {
             catPos = p
             for fc in forecasts { for l in fc.labels { if let d = l.asDouble { hi = max(hi, d) } } }
@@ -166,9 +167,9 @@ struct CartesianLayout {
             // Bars need the full band; lines breathe a little; areas run edge to edge.
             let edge = kind.drawsBars || kind.drawsDots ? 0.5 + o.outerPadding : (kind.drawsArea ? 0.04 : 0.3)
             catDomain = (-edge)...(Double(max(count, 1)) - 1 + edge)
-            if let fc = forecasts.max(by: { $0.labels.count < $1.labels.count }) {
+            if let fc = forecasts.max(by: { $0.futureLabels.count < $1.futureLabels.count }) {
                 let fmt = model.categoryColumns.first.flatMap { model.data.formats[safe: $0] } ?? ""
-                forecastLabels = fc.labels.map { ValueFormatter.format($0, fmt) }
+                forecastLabels = fc.futureLabels.map { ValueFormatter.format($0, fmt) }
             }
         }
 
