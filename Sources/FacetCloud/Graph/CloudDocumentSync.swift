@@ -161,7 +161,10 @@ public final class CloudDocumentSync {
         s = s.trimmingCharacters(in: .whitespaces)
         while s.hasPrefix(".") { s.removeFirst() }
         if s.isEmpty { s = "download" }
-        return String(s.prefix(200))
+        // At most 200 characters, and well inside the 255-byte limit on a file name.
+        var out = String(s.prefix(200))
+        while out.utf8.count > 240 { out.removeLast() }
+        return out
     }
 
     /// Where working copies of cloud documents are made.
