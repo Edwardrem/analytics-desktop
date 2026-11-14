@@ -19,5 +19,6 @@ enum FeatureRegistration {
         AIFeature.register()
         AnalyzeFeature.register()
         FileFormatsFeature.register()
+        AgentBridgeFeature.register()
     }
 }
