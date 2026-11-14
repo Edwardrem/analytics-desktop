@@ -34,28 +34,50 @@ struct CmpScriptVisualView: View {
 
 // MARK: - Embedded content
 
+/// The address an embedded visual shows or posts to.
+public enum EmbedAddress {
+    /// `content` as an https URL with a host; nil for anything else (http, file, javascript…).
+    public static func httpsURL(from content: String) -> URL? {
+        let s = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: s), url.scheme?.lowercased() == "https", let host = url.host, !host.isEmpty else { return nil }
+        return url
+    }
+}
+
+/// Paginated reports, Power Apps and scorecards show their service page in a web view (readers sign
+/// in to the service inside it); a Power Automate visual shows a button that sends the visual's
+/// data to its flow. Without a source the visual says exactly what it needs, with a way to set it up.
 struct CmpEmbedView: View {
     let env: CmpEnv
 
-    /// Only http(s) URLs are ever loaded.
-    static func url(from content: String) -> URL? {
-        let s = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: s), let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http", url.host != nil else { return nil }
-        return url
-    }
+    /// Only https URLs are ever loaded or posted to.
+    static func url(from content: String) -> URL? { EmbedAddress.httpsURL(from: content) }
 
-    private var info: (icon: String, title: String, hint: String) {
-        switch env.spec.type {
-        case .paginatedReport: return ("doc.richtext", "Paginated report", "Enter the report's URL to show a pixel-perfect paginated report here.")
-        case .powerApps: return ("app.badge", "App", "Enter the web address of an app to run it inside this page.")
-        case .powerAutomate: return ("bolt.horizontal", "Flow", "Enter a flow's web address, or assign a data-function action to show a run button.")
-        default: return ("target", "Metrics", "Enter the web address of a scorecard to track goals here.")
+    /// The icon, the name, and what the visual needs before it can show anything.
+    static func info(for type: VisualType) -> (icon: String, title: String, need: String) {
+        switch type {
+        case .paginatedReport:
+            return ("doc.richtext", "Paginated report",
+                    "Connect a paginated report published to the Power BI service: enter its report ID or https:// address in Format › Source. Readers sign in to the service inside the visual.")
+        case .powerApps:
+            return ("app.badge", "Power Apps",
+                    "Connect an app from Power Apps: enter its app ID or web link in Format › Source. Readers sign in to Power Apps inside the visual.")
+        case .powerAutomate:
+            return ("bolt.horizontal", "Power Automate",
+                    "Connect a flow that starts with “When an HTTP request is received”: paste its HTTP POST URL in Format › Source. The button then sends this visual's data to the flow.")
+        default:
+            return ("target", "Metrics",
+                    "Connect a scorecard from the Power BI service: enter its workspace and scorecard IDs, or its https:// address, in Format › Source.")
         }
     }
 
     var body: some View {
-        let info = self.info
-        if let url = Self.url(from: env.spec.content) {
+        let info = Self.info(for: env.spec.type)
+        let content = env.spec.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let url = Self.url(from: content), env.spec.type == .powerAutomate {
+            runButton(label: env.f.string("text", "text", "Run flow"), help: "Send this visual's data to the flow at \(url.host ?? "")",
+                      enabled: env.context.onRunFlow != nil) { env.context.onRunFlow?(env.spec) }
+        } else if let url = Self.url(from: content) {
             if env.isInteractive {
                 CmpWebContainer(url: url, theme: env.theme)
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
@@ -63,20 +85,30 @@ struct CmpEmbedView: View {
             } else {
                 CmpPlaceholder(systemImage: info.icon, title: url.host ?? info.title, message: url.absoluteString, theme: env.theme)
             }
-        } else if env.spec.type == .powerAutomate, let action = env.spec.action, action.kind != .none {
+        } else if env.spec.type == .powerAutomate, content.isEmpty, let action = env.spec.action, action.kind != .none {
             let label = env.f.string("text", "text", action.functionName.isEmpty ? "Run flow" : "Run \(action.functionName)")
-            GeometryReader { geo in
-                CmpButtonFace(env: env, resolver: CmpButtonResolver(env: env, defaultStyle: "filled"), title: label,
-                              symbol: "bolt.fill", help: action.tooltip.isEmpty ? label : action.tooltip, accessibilityName: label) {
-                    env.context.onAction(action)
+            runButton(label: label, help: action.tooltip.isEmpty ? label : action.tooltip, enabled: true) { env.context.onAction(action) }
+        } else {
+            let message = content.isEmpty ? info.need
+                : "Only full https:// addresses are shown. Change the address in Format › Source."
+            VStack(spacing: 8) {
+                CmpPlaceholder(systemImage: info.icon, title: info.title, message: message, theme: env.theme)
+                if env.isInteractive, let setUp = env.context.onSetUp {
+                    Button("Set up…") { setUp(env.spec) }
+                        .controlSize(.small)
+                        .help("Choose what this \(info.title) visual shows")
+                        .padding(.bottom, 8)
                 }
+            }
+        }
+    }
+
+    private func runButton(label: String, help: String, enabled: Bool, run: @escaping () -> Void) -> some View {
+        GeometryReader { geo in
+            CmpButtonFace(env: env, resolver: CmpButtonResolver(env: env, defaultStyle: "filled"), title: label,
+                          symbol: "bolt.fill", isEnabled: enabled, help: help, accessibilityName: label, action: run)
                 .frame(width: min(geo.size.width, 220), height: min(geo.size.height, 40))
                 .frame(width: geo.size.width, height: geo.size.height)
-            }
-        } else {
-            let bad = !env.spec.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            CmpPlaceholder(systemImage: info.icon, title: info.title,
-                           message: bad ? "That address can't be opened. Use a full https:// URL." : info.hint, theme: env.theme)
         }
     }
 }

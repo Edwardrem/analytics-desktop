@@ -72,6 +72,10 @@ extension DocumentStore {
                 return [VisualMenuAction(title: plan.title) { [weak self] in self?.explainChange(in: id, point: point) }]
             }
         }
+        if interactive, EmbedSetup.types.contains(spec.type) {
+            c.onSetUp = { [weak self] spec in self?.setUpEmbed(spec.id) }
+            if spec.type == .powerAutomate { c.onRunFlow = { [weak self] spec in self?.runFlow(spec) } }
+        }
         c.extensionView = { [weak self] spec, data, ctx in
             guard let self else { return nil }
             return VisualExtensions.provider?(spec, data, ctx, self)

@@ -20,6 +20,8 @@ struct FormatCardModel: Identifiable, Hashable {
         case conditional
         /// The tooltip of the visual's action (buttons, shapes, images).
         case action
+        /// What an embedded visual shows: the address of a report, app, scorecard or flow.
+        case embed
     }
 
     /// The format-bag card, e.g. "columnHeaders" ("position" / "altText" for the other roles).
@@ -203,6 +205,14 @@ enum FormatCatalog {
         ], role: .presets)
     }
 
+    /// The Source card of a visual that shows content from a service.
+    static func embedCard(for type: VisualType) -> FormatCardModel? {
+        guard EmbedSetup.types.contains(type) else { return nil }
+        return FormatCardModel(card: EmbedSetup.card, label: "Source", properties: [
+            FormatProperty(card: EmbedSetup.card, cardLabel: "Source", key: "address", label: EmbedSetup.entryLabel(type), kind: .string),
+        ], role: .embed)
+    }
+
     /// Conditional formatting entry points: one row per target `type` supports. The dynamic title
     /// has its fx button on the Title card instead.
     static func conditionalTargets(for type: VisualType) -> [ConditionalFormat.Target] {
@@ -222,8 +232,8 @@ enum FormatCatalog {
         property.id == "title.text" && BuildLogic.conditionalTargets(for: type).contains(.title) ? .title : nil
     }
 
-    /// Cards for a selection. One visual gets all of its cards: on the Visual tab its style
-    /// presets, format cards and conditional formatting; on the General tab Properties, the
+    /// Cards for a selection. One visual gets all of its cards: on the Visual tab its source (an
+    /// embedded visual), style presets, format cards and conditional formatting; on the General tab Properties, the
     /// container chrome and Alt text. Several visuals get the format cards and properties every
     /// one of them has (same id and control), plus style presets when they are all of one type.
     static func cards(for types: [VisualType], tab: Tab) -> [FormatCardModel] {
@@ -232,7 +242,8 @@ enum FormatCatalog {
         let sameType = Set(types).count == 1
         let presets = tab == .visual && sameType ? [presetsCard(for: first)].compactMap { $0 } : []
         guard types.count > 1 else {
-            return presets + base + (tab == .visual ? [conditionalCard(for: first)].compactMap { $0 } : [])
+            let source = tab == .visual ? [embedCard(for: first)].compactMap { $0 } : []
+            return source + presets + base + (tab == .visual ? [conditionalCard(for: first)].compactMap { $0 } : [])
         }
         let others = Set(types.dropFirst()).map { type in
             Dictionary(cards(for: type, tab: tab).flatMap(\.properties).map { ($0.id, $0.kind) }, uniquingKeysWith: { a, _ in a })
@@ -298,6 +309,7 @@ enum FormatCatalog {
         case .altText: return !spec.altText.isEmpty
         case .tooltip: return spec.tooltipPageID != nil
         case .action: return !(spec.action?.tooltip.isEmpty ?? true)
+        case .embed: return !spec.content.isEmpty
         case .position, .presets, .conditional: return false
         }
     }

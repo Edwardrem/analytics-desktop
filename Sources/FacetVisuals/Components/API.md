@@ -304,11 +304,14 @@ Strips that don't fit scroll. Bookmark groups are not shown separately (the host
 
 - `pythonVisual`, `rVisual`: if `spec.imageData` holds a rendered plot it is shown (aspect fit); otherwise a placeholder
   explains script visuals. This module never executes scripts — the app runs them and stores the output image in `imageData`.
-- `paginatedReport`, `powerApps`, `powerAutomate`, `metrics`: when `spec.content` is an http(s) URL and the context is
-  interactive, a `WKWebView` shows it (loading bar, readable failure state); non-interactive contexts show a static card with
-  the host name. Other URL schemes are refused. Without a URL a configuration placeholder is shown. `powerAutomate` with a
-  `spec.action` (kind ≠ none) and no URL shows a "Run flow" button (`text.text` overrides the label) that calls `onAction`.
-  Sign-in to the embedded services happens inside the web view; nothing is integrated beyond showing the page.
+- `paginatedReport`, `powerApps`, `metrics`: when `spec.content` is an https URL (`EmbedAddress.httpsURL`) and the
+  context is interactive, a `WKWebView` shows it (loading bar, readable failure state); non-interactive contexts show a
+  static card with the host name. Any other scheme, http included, is refused. Without a source the placeholder says what
+  the visual needs, with a "Set up…" button when the host sets `VisualContext.onSetUp`. Sign-in to the services happens
+  inside the web view.
+- `powerAutomate`: with an https flow URL in `spec.content` a "Run flow" button (`text.text` overrides the label) calls
+  `VisualContext.onRunFlow` (disabled when nil); the host posts the visual's data. With no URL and a `spec.action`
+  (kind ≠ none) the button calls `onAction` instead.
 - `keyInfluencers`, `decompositionTree`, `narrative`, `qna`: `ComponentVisuals.view` returns nil (app-supplied).
 
 ## Slicers

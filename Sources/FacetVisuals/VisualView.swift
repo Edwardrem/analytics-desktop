@@ -55,6 +55,12 @@ public struct VisualContext {
     /// Analyze commands the host offers for a data point ("Explain the increase"), listed under
     /// Analyze in the point's context menu. Empty = no Analyze menu.
     public var analyzeActions: (DataPointSelection) -> [VisualMenuAction] = { _ in [] }
+    /// Opens the host's setup for a visual that needs one (the address of embedded content).
+    /// Nil = no setup offered here (reading view, thumbnails).
+    public var onSetUp: ((VisualSpec) -> Void)?
+    /// Runs the Power Automate flow a visual is connected to, with the visual's data. Nil = the
+    /// flow can't run from here.
+    public var onRunFlow: ((VisualSpec) -> Void)?
 
     public init() {}
 

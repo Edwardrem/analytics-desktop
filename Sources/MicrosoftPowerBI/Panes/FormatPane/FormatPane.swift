@@ -136,6 +136,13 @@ struct FormatPane: View {
                 FormatAltTextRows(visualID: spec.id, altText: spec.altText) { writeAltText(spec.id, $0) }
                 resetButton(card, enabled: !spec.altText.isEmpty) { writeAltText(spec.id, "") }
             }
+        case .embed:
+            if let spec = specs.first {
+                FormatEmbedRows(spec: spec)
+                resetButton(card, enabled: !spec.content.isEmpty) {
+                    store.updateVisuals([spec.id], name: "Clear Source") { $0.content = "" }
+                }
+            }
         case .action:
             if let spec = specs.first {
                 FormatActionTooltipRows(visualID: spec.id, tooltip: spec.action?.tooltip ?? "") { writeActionTooltip(spec.id, $0) }
