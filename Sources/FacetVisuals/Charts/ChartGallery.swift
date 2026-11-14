@@ -1,16 +1,14 @@
 import Foundation
 import FacetCore
 
-/// Realistic sample specs and data for every chart type, used by the app's visual gallery, previews
-/// and snapshot checks. The data is synthetic but deterministic.
+/// Sample specs and data for the bar, column, line, area and combo charts, with variants that
+/// exercise formatting, analytics, small multiples, patterns, conditional colour and cross-highlighting.
+/// The render tests draw every one of them. The data is synthetic but deterministic.
 public enum ChartGallery {
     public typealias Sample = (spec: VisualSpec, data: VisualData)
 
-    /// At least one sample per supported chart type, plus variants that exercise formatting,
-    /// analytics, small multiples and cross-highlighting. `spec.name` describes each sample.
-    public static func samples() -> [Sample] {
-        cartesianSamples() + partToWholeSamples() + scatterSamples() + flowSamples() + statisticalSamples() + gridSamples()
-    }
+    /// Every sample; `spec.name` describes each one.
+    public static func samples() -> [Sample] { cartesianSamples() }
 
     /// The first sample for a given type.
     public static func sample(for type: VisualType) -> Sample? { samples().first { $0.spec.type == type } }

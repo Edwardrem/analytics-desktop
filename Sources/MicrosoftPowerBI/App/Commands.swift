@@ -138,7 +138,7 @@ enum CoreCommands {
         c.append(AppCommand(id: "format.group", title: "Group", menu: .format, shortcut: .init("g"), separatorBefore: true, isEnabled: { $0.selection.count > 1 }) { $0.groupSelection() })
         c.append(AppCommand(id: "format.ungroup", title: "Ungroup", menu: .format, shortcut: .init("g", modifiers: [.command, .shift]), isEnabled: { $0.selectedVisuals.contains { $0.groupID != nil } }) { $0.ungroupSelection() })
         c.append(AppCommand(id: "format.editInteractions", title: "Edit Interactions", menu: .format, symbol: "arrow.left.arrow.right", separatorBefore: true,
-                            isEnabled: { $0.selectedVisual != nil || $0.editInteractionsFor != nil }, isOn: { $0.editInteractionsFor != nil }) {
+                            isEnabled: { InteractionRules.canEdit($0.selectedVisual) || $0.editInteractionsFor != nil }, isOn: { $0.editInteractionsFor != nil }) {
             $0.editInteractionsFor = $0.editInteractionsFor == nil ? $0.selectedVisual?.id : nil
         })
 
@@ -160,8 +160,9 @@ enum CoreCommands {
                                 isEnabled: { ShellState.of($0).isAvailable(p) },
                                 isOn: { ShellState.of($0).isShowing(p) }) { ShellState.of($0).toggle(p) })
         }
-        c.append(AppCommand(id: "view.fit", title: "Fit to Page", menu: .view, shortcut: .init("0"), separatorBefore: true, isOn: { $0.fitToWindow }) { $0.fitToWindow = true })
-        c.append(AppCommand(id: "view.actualSize", title: "Actual Size", menu: .view, shortcut: .init("0", modifiers: [.command, .option])) { $0.fitToWindow = false; $0.zoom = 1 })
+        c.append(AppCommand(id: "view.fit", title: "Fit to Page", menu: .view, shortcut: .init("0"), separatorBefore: true, isOn: { $0.fitToWindow && !$0.fitToWidth }) { $0.fitToWidth = false; $0.fitToWindow = true })
+        c.append(AppCommand(id: "view.actualSize", title: "Actual Size", menu: .view, shortcut: .init("0", modifiers: [.command, .option]),
+                            isOn: { !$0.fitToWindow && $0.zoom == 1 }) { $0.fitToWindow = false; $0.zoom = 1 })
         c.append(AppCommand(id: "view.zoomIn", title: "Zoom In", menu: .view, shortcut: .init("+")) { $0.fitToWindow = false; $0.zoom = min(4, $0.zoom * 1.2) })
         c.append(AppCommand(id: "view.zoomOut", title: "Zoom Out", menu: .view, shortcut: .init("-")) { $0.fitToWindow = false; $0.zoom = max(0.1, $0.zoom / 1.2) })
         c.append(AppCommand(id: "view.gridlines", title: "Gridlines", menu: .view, symbol: "grid", separatorBefore: true, isOn: { $0.showGridlines }) { $0.showGridlines.toggle() })

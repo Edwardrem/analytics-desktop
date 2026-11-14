@@ -139,7 +139,7 @@ public struct ChartInteractionLayer: View {
                     surface(geo.size)
                     decorations.allowsHitTesting(false)
                     if let hit = activeHit, dragRect == nil {
-                        TooltipCard(content: hit.tooltip, theme: context.theme, actions: actions(for: hit))
+                        tooltip(for: hit)
                             .onGeometryChange(for: CGSize.self) { $0.size } action: { cardSize = $0 }
                             .onHover { inside in overCard = inside; if !inside { scheduleClear() } }
                             .offset(tooltipOffset(in: geo.size, hit: hit))
@@ -285,24 +285,58 @@ public struct ChartInteractionLayer: View {
 
     // MARK: Actions
 
+    /// The report page tooltip bound to this visual when there is one, otherwise the themed card.
+    @ViewBuilder private func tooltip(for hit: ChartHit) -> some View {
+        if let sel = hit.selection, !sel.fields.isEmpty, let page = context.pageTooltip?(sel) {
+            page
+        } else {
+            TooltipCard(content: hit.tooltip, theme: context.theme, actions: actions(for: hit))
+        }
+    }
+
     private func actions(for hit: ChartHit) -> [TooltipAction] {
-        guard let sel = hit.selection, !sel.fields.isEmpty else { return [] }
-        return [
-            TooltipAction(title: "Drill down", systemImage: "arrow.down.to.line") { context.onDrill(.down(sel)) },
-            TooltipAction(title: "Drill through", systemImage: "arrow.up.right.square") { context.onDrill(.drillthrough(sel, pageID: nil)) },
-        ]
+        let sel = hit.selection.flatMap { $0.fields.isEmpty ? nil : $0 }
+        let targets = sel.map(context.drillthroughTargets) ?? []
+        return TooltipActions.kinds(spec: spec, hasSelection: sel != nil, drillthroughTargets: targets.count,
+                                    modern: context.modernTooltips).compactMap { kind in
+            switch kind {
+            case .drillDown:
+                guard let sel else { return nil }
+                return TooltipAction(title: "Drill down", systemImage: "arrow.down.to.line") { context.onDrill(.down(sel)) }
+            case .drillUp:
+                return TooltipAction(title: "Drill up", systemImage: "arrow.up") { context.onDrill(.up) }
+            case .drillThrough:
+                guard let sel else { return nil }
+                // One destination goes straight there; several open the first and the context menu lists them all.
+                return TooltipAction(title: targets.count == 1 ? "Drill through to \(targets[0].name)" : "Drill through",
+                                     systemImage: "arrow.up.right.square") {
+                    context.onDrill(.drillthrough(sel, pageID: targets.first?.id))
+                }
+            }
+        }
     }
 
     @ViewBuilder private var menu: some View {
         let hit = activeHit
         let sel = hit?.selection.flatMap { $0.fields.isEmpty ? nil : $0 }
-        if let sel {
+        let levels = TooltipActions.drillLevels(spec)
+        if let sel, spec.drillLevel < levels - 1 {
             Button("Drill down") { context.onDrill(.down(sel)) }
         }
-        Button("Drill up") { context.onDrill(.up) }
-        Button("Expand to next level") { context.onDrill(.expandAll) }
+        if levels > 1 {
+            Button("Drill up") { context.onDrill(.up) }.disabled(spec.drillLevel == 0)
+            Button("Expand to next level") { context.onDrill(.expandAll) }.disabled(spec.drillLevel >= levels - 1)
+        }
         if let sel {
-            Button("Drill through") { context.onDrill(.drillthrough(sel, pageID: nil)) }
+            let targets = context.drillthroughTargets(sel)
+            if targets.isEmpty {
+                Button("Drill through") {}.disabled(true)
+            } else {
+                Menu("Drill through") {
+                    ForEach(targets) { t in Button(t.name) { context.onDrill(.drillthrough(sel, pageID: t.id)) } }
+                }
+            }
+            if let see = context.onSeeRecords { Button("See records") { see(sel) } }
         }
         Divider()
         Button("Show as a table") { context.onDrill(.showAsTable) }
@@ -312,6 +346,28 @@ public struct ChartInteractionLayer: View {
                 NSPasteboard.general.setString(hit.copyText, forType: .string)
             }
         }
+    }
+}
+
+/// Which actions the modern tooltip footer offers for a mark.
+public enum TooltipActions {
+    public enum Kind: Equatable { case drillDown, drillUp, drillThrough }
+
+    /// Levels of the hierarchy a visual can drill through: its axis fields, or a matrix's row fields.
+    public static func drillLevels(_ spec: VisualSpec) -> Int {
+        spec.type == .matrix ? spec.fields(.rows).count : spec.fields(.category).count
+    }
+
+    /// Drill down needs a data point and a deeper level; drill up needs to be below the top level;
+    /// drill through needs a data point with at least one destination page. Classic tooltips have no footer.
+    public static func kinds(spec: VisualSpec, hasSelection: Bool, drillthroughTargets: Int, modern: Bool) -> [Kind] {
+        guard modern else { return [] }
+        let levels = drillLevels(spec)
+        var out: [Kind] = []
+        if hasSelection, spec.drillLevel < levels - 1 { out.append(.drillDown) }
+        if spec.drillLevel > 0, levels > 1 { out.append(.drillUp) }
+        if hasSelection, drillthroughTargets > 0 { out.append(.drillThrough) }
+        return out
     }
 }
 

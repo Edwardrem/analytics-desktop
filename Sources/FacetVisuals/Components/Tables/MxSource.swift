@@ -559,8 +559,9 @@ final class CmpMxSource: CmpTblGridSource {
         })
         if row != nil {
             menu.addItem(.separator())
-            menu.addItem(CmpTblMenuItem("Drill through", enabled: point != nil) { [weak self] in
-                if let point { self?.context.onDrill(.drillthrough(point, pageID: nil)) }
+            let targets = point.map(context.drillthroughTargets) ?? []
+            menu.addItem(CmpTblMenuItem(targets.count == 1 ? "Drill through to \(targets[0].name)" : "Drill through", enabled: !targets.isEmpty) { [weak self] in
+                if let point { self?.context.onDrill(.drillthrough(point, pageID: targets.first?.id)) }
             })
             menu.addItem(CmpTblMenuItem("Include", enabled: point != nil) { [weak self] in self?.addFilter(point, exclude: false) })
             menu.addItem(CmpTblMenuItem("Exclude", enabled: point != nil) { [weak self] in self?.addFilter(point, exclude: true) })

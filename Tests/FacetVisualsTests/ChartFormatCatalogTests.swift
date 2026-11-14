@@ -92,8 +92,10 @@ final class ChartFormatCatalogTests: XCTestCase {
         let column = property(.clusteredColumn, "legend", "show")
         XCTAssertEqual(column?.defaultValue, .null)
         XCTAssertEqual(column?.automatic, .multipleSeries)
+        // The scatter chart's scaffold (StatScatter.swift) also leaves it to the series count.
+        XCTAssertEqual(property(.scatter, "legend", "show")?.automatic, .multipleSeries)
         // Charts without a scaffold have no legend card.
-        for type in [VisualType.funnel, .treemap, .scatter, .candlestick, .heatmap] {
+        for type in [VisualType.funnel, .treemap, .candlestick, .heatmap] {
             XCTAssertNil(property(type, "legend", "show"), type.rawValue)
         }
     }

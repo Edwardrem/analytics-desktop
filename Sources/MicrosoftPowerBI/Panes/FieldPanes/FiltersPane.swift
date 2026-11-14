@@ -8,25 +8,20 @@ struct FiltersPane: View {
     @EnvironmentObject var store: DocumentStore
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if let visual = store.selectedVisual {
-                    FiltersSection(visual: visual, scope: .visual, title: "Filters on this visual", filters: visual.filters)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let visual = store.selectedVisual {
+                        FiltersSection(visual: visual, scope: .visual, title: "Filters on this visual", filters: visual.filters)
+                    }
+                    FiltersSection(scope: .page, title: "Filters on this page", filters: store.currentPage.filters)
+                    FiltersSection(scope: .report, title: "Filters on all pages", filters: store.doc.report.filters)
+                    FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughDisplay)
                 }
-                FiltersSection(scope: .page, title: "Filters on this page", filters: store.currentPage.filters)
-                FiltersSection(scope: .report, title: "Filters on all pages", filters: store.doc.report.filters)
-                FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughFilters[store.currentPageID] ?? [])
             }
+            Hairline()
+            FilterPaneFooter(runtime: ReportRuntime.of(store))
         }
-    }
-
-    /// Every filter that would apply, except the one being edited (so the value list shows the
-    /// options that remain under the other conditions).
-    func otherFilters(excluding id: UUID) -> [FilterSpec] {
-        var all = store.doc.report.filters + store.currentPage.filters
-        if let visual = store.selectedVisual { all += visual.filters }
-        all += store.drillthroughFilters[store.currentPageID] ?? []
-        return all.filter { $0.id != id && !$0.isEmpty }
     }
 }
 
@@ -52,8 +47,8 @@ private struct FiltersSection: View {
                 Text(hint).font(Design.Typeface.caption).foregroundStyle(.tertiary)
                     .padding(.bottom, Design.Space.m)
             } else {
-                ForEach(filters) { f in
-                    FilterRow(filter: f, scope: scope)
+                ForEach(Array(filters.enumerated()), id: \.element.id) { i, f in
+                    FilterRow(filter: f, scope: scope, position: i, count: filters.count)
                 }
                 .padding(.bottom, Design.Space.s)
             }
@@ -67,7 +62,7 @@ private struct FiltersSection: View {
         case .visual: return "Select a visual, then add a filter from the Data pane's field menu."
         case .page: return "Add a page filter from the Data pane's field menu."
         case .report: return "Add a filter that applies to every page from the Data pane."
-        case .drillthrough: return "Drillthrough filters arrive when a visual is drilled into."
+        case .drillthrough: return "Add a column from the Data pane’s field menu to make this page a drillthrough destination."
         }
     }
 }
@@ -77,25 +72,37 @@ private struct FiltersSection: View {
 private struct FilterRow: View {
     let filter: FilterSpec
     let scope: FilterSpec.Scope
+    let position: Int
+    let count: Int
     @EnvironmentObject var store: DocumentStore
     @State private var expanded = false
+    @State private var renaming = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.xs) {
             HStack(spacing: Design.Space.xs) {
-                Button { withAnimation(Design.Motion.quick) { expanded.toggle() } } label: {
-                    HStack(spacing: Design.Space.xs) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                            .foregroundStyle(.tertiary).frame(width: 10)
-                        Text(filter.field.caption).font(Design.Typeface.bodyStrong).lineLimit(1)
-                        Text(typeName).font(Design.Typeface.caption).foregroundStyle(.secondary)
-                        Spacer(minLength: 0)
+                if renaming {
+                    InlineRename(text: filter.displayName ?? filter.field.caption, isEditing: $renaming, font: Design.Typeface.bodyStrong) { name in
+                        store.renameFilter(id: filter.id, scope: scope, to: name)
                     }
-                    .contentShape(Rectangle())
+                    .padding(.leading, 14)
+                    Spacer(minLength: 0)
+                } else {
+                    Button { withAnimation(Design.Motion.quick) { expanded.toggle() } } label: {
+                        HStack(spacing: Design.Space.xs) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .rotationEffect(.degrees(expanded ? 90 : 0))
+                                .foregroundStyle(.tertiary).frame(width: 10)
+                            Text(filter.displayName ?? filter.field.caption).font(Design.Typeface.bodyStrong).lineLimit(1)
+                            Text(typeName).font(Design.Typeface.caption).foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
                 }
-                .buttonStyle(.plain)
                 if filter.isLocked {
                     Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
@@ -103,22 +110,32 @@ private struct FilterRow: View {
                     Image(systemName: "eye.slash").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
                 Menu {
+                    Button("Rename") { renaming = true }
+                    if filter.displayName != nil {
+                        Button("Use the Field's Name") { store.renameFilter(id: filter.id, scope: scope, to: "") }
+                    }
+                    Button("Move Up") { store.moveFilter(id: filter.id, scope: scope, by: -1) }.disabled(position == 0)
+                    Button("Move Down") { store.moveFilter(id: filter.id, scope: scope, by: 1) }.disabled(position >= count - 1)
+                    Divider()
                     Button(filter.isLocked ? "Unlock" : "Lock") { toggle { $0.isLocked.toggle() } }
                     Button(filter.isHidden ? "Show" : "Hide") { toggle { $0.isHidden.toggle() } }
                     if filter.kind == .basic {
+                        Button(filter.requireSingleSelection ? "Allow multiple selections" : "Require single selection") {
+                            toggle { $0 = FilterTools.requiringSingleSelection($0, !$0.requireSingleSelection) }
+                        }
                         Button(filter.isInverted ? "Keep selected values" : "Exclude selected values") { toggle { $0.isInverted.toggle() } }
                     }
                     if filter.kind == .advanced {
                         Button(filter.conditionsUseOr ? "Match all conditions" : "Match any condition") { toggle { $0.conditionsUseOr.toggle() } }
                     }
-                    Button("Clear filter") { toggle { f in clear(&f) } }
+                    Button("Clear filter") { toggle { $0 = FilterTools.cleared($0) } }
                     Button("Remove", role: .destructive) { store.removeFilter(id: filter.id, scope: scope) }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 22, height: 20).contentShape(Rectangle())
                 }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Filter options")
             }
-            Text(summary).font(Design.Typeface.caption).foregroundStyle(.secondary)
+            Text(FilterTools.summary(filter)).font(Design.Typeface.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 14)
             if expanded {
@@ -140,52 +157,8 @@ private struct FilterRow: View {
         }
     }
 
-    private var summary: String {
-        if filter.isEmpty && filter.kind != .relativeDate && filter.kind != .relativeTime { return "No condition." }
-        switch filter.kind {
-        case .basic:
-            let values = filter.values.prefix(6).map(\.asString).joined(separator: ", ")
-            let more = filter.values.count > 6 ? ", …" : ""
-            return filter.isInverted ? "is not \(values)\(more)" : "is \(values)\(more)"
-        case .advanced:
-            return filter.conditions.map { "\($0.op.displayName) \($0.value.asString)" }
-                .joined(separator: filter.conditionsUseOr ? " or " : " and ")
-        case .topN:
-            let direction = filter.topN.isBottom ? "Bottom" : "Top"
-            let by = filter.topN.by.map { " by \($0.caption)" } ?? ""
-            return "\(direction) \(filter.topN.count)\(by)"
-        case .relativeDate, .relativeTime:
-            let unit = relativeUnitName
-            switch filter.relative.direction {
-            case .this: return "This \(unit)"
-            case .last: return "Last \(filter.relative.count) \(unit)\(filter.relative.includeToday ? " including today" : "")"
-            case .next: return "Next \(filter.relative.count) \(unit)\(filter.relative.includeToday ? " including today" : "")"
-            }
-        }
-    }
-
-    private var relativeUnitName: String {
-        switch filter.relative.unit {
-        case .minutes: return "minutes"
-        case .hours: return "hours"
-        case .days: return "days"
-        case .weeks, .calendarWeeks: return "weeks"
-        case .months, .calendarMonths: return "months"
-        case .years, .calendarYears: return "years"
-        }
-    }
-
     private func toggle(_ body: (inout FilterSpec) -> Void) {
         store.updateFilter(id: filter.id, scope: scope, body)
-    }
-
-    private func clear(_ f: inout FilterSpec) {
-        switch f.kind {
-        case .basic: f.values = []
-        case .advanced: f.conditions = []
-        case .topN: f.topN = TopNFilter()
-        case .relativeDate, .relativeTime: break
-        }
     }
 }
 
@@ -272,10 +245,7 @@ private struct BasicValuesEditor: View {
     }
 
     private func toggleValue(_ value: Value) {
-        store.updateFilter(id: filter.id, scope: scope, name: "Change Filter") { f in
-            if let i = f.values.firstIndex(where: { $0 == value }) { f.values.remove(at: i) }
-            else { f.values.append(value) }
-        }
+        store.updateFilter(id: filter.id, scope: scope, name: "Change Filter") { $0 = FilterTools.toggling($0, value) }
     }
 
     private func load() async {

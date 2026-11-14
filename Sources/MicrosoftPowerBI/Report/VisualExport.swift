@@ -30,7 +30,12 @@ enum VisualExport {
             store.status = StatusMessage(kind: .warning, text: "Exporting data is turned off for this report.")
             return
         }
-        guard let data = store.visualData[spec.id], !data.isEmpty else {
+        export(store.visualData[spec.id] ?? VisualData(), named: spec.name, store: store, format: format)
+    }
+
+    /// Save a query result (a visual's data, or the records behind a data point) as a file.
+    static func export(_ data: VisualData, named name: String, store: DocumentStore, format: String) {
+        guard !data.isEmpty else {
             store.status = StatusMessage(kind: .info, text: "This visual has no data to export.")
             return
         }
@@ -40,7 +45,7 @@ enum VisualExport {
         }
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: format) ?? .data]
-        panel.nameFieldStringValue = "\(spec.name).\(format)"
+        panel.nameFieldStringValue = "\(name).\(format)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
             var table = data.table

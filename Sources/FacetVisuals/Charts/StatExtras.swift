@@ -86,7 +86,6 @@ struct HeatmapView: View {
         let availableH = max(10, size.height - L.origin.y - 4)
         L.cellWidth = availableW / CGFloat(colOrder.count)
         L.cellHeight = availableH / CGFloat(rowOrder.count)
-        let radius = CGFloat(style.format.double("heatmap", "radius", 2))
         let values = raw.map(\.v)
         L.scale = StatColorScale(style: style, card: "heatmap", values: values)
         L.caption = valueCaption
@@ -208,7 +207,6 @@ struct HeatmapView: View {
         for (d, v) in raw { byDay[calendar.startOfDay(for: d)] = v }
 
         // One year per row of blocks; months flow three across, 7 weekday rows tall.
-        let fs = env.labelSize
         let years = Array(Set(raw.map { calendar.component(.year, from: $0.date) })).sorted()
         let perRow = max(1, min(years.count, Int(size.width / 200)))
         let blockW = size.width / CGFloat(perRow)
@@ -262,7 +260,6 @@ struct HeatmapView: View {
     }
 
     private func dayHits(_ L: CalendarLayout) -> [ChartHit] {
-        let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return L.days.enumerated().map { i, d -> ChartHit in
@@ -491,132 +488,5 @@ struct BulletView: View {
             return ChartHit(id: b.id, path: Path(b.trackRect), selection: b.selection, tooltip: tooltip,
                             copyText: env.full(b.value, format: L.format))
         }
-    }
-}
-
-// MARK: - Scatter
-
-/// Scatter chart: one point per row at (X, Y), sized by the Size well, colored by legend value.
-struct ScatterChart: View {
-    /// Bounds of `markers.size` (the radius of a point without a Size value).
-    static let markerSizes: ClosedRange<Double> = 1...40
-    let spec: VisualSpec
-    let data: VisualData
-    let context: VisualContext
-
-    private struct Point: Identifiable {
-        let id: Int
-        let x: Double, y: Double
-        let size: Double?
-        let color: Color
-        let series: Int
-        let label: String
-        let selection: DataPointSelection?
-        let row: Int
-    }
-
-    var body: some View {
-        let style = ChartStyle(spec: spec, theme: context.theme)
-        let points = model()
-        let base = CGFloat(FormatNumber.clamped(style.format.double("markers", "size", 3.5), to: ScatterChart.markerSizes) ?? 3.5)
-        StatPlot(spec: spec, context: context, style: style,
-                 xDomain: axisExtent(points.map(\.x)),
-                 xTicks: axisTicks(points.map(\.x), style: style),
-                 xDefaultTitle: caption(well: .x),
-                 yExtent: axisExtent(points.map(\.y)), includeZero: false,
-                 yFormat: format(well: .y), yDefaultTitle: caption(well: .y),
-                 refValues: points.map(\.y),
-                 snapRadius: 8,
-                 signature: points.count,
-                 hits: { map in
-                     points.enumerated().map { i, p in
-                         ChartHit(id: i, path: Path(circle(around: map.point(p.x, p.y), radius: radius(p, map: map, base: base))),
-                                  selection: p.selection,
-                                  tooltip: TooltipContent(title: p.label, rows: [
-                                      .init(color: p.color, label: caption(well: .x), value: fmt(p.x, well: .x)),
-                                      .init(color: p.color, label: caption(well: .y), value: fmt(p.y, well: .y), isEmphasized: true),
-                                  ] + (p.size.map { [.init(label: caption(well: .size), value: fmt($0, well: .size))] } ?? [])
-                                    + SeriesModel.tooltipFields(data: data, row: p.row).map { .init(label: $0.label, value: $0.value) }))
-                     }
-                 },
-                 draw: { ctx, map in
-                     let fill = 1 - (FormatNumber.clamped(style.format.double("markers", "transparency", 20), to: 0...100) ?? 20) / 100
-                     for p in points.prefix(4_000) {
-                         let c = map.point(p.x, p.y)
-                         let r = radius(p, map: map, base: base)
-                         let dim = p.selection.map { env.matcher.isActive && !env.matcher.isSelected($0) } ?? false
-                         ctx.fill(Path(ellipseIn: CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)),
-                                  with: .color(p.color.opacity(dim ? 0.25 : fill)))
-                     }
-                 },
-                 marks: { })
-                .accessibilityElement(children: .contain)
-                .accessibilityLabel("Scatter chart, \(points.count) points.")
-    }
-
-    private var env: FlowEnv { FlowEnv(spec: spec, data: data, context: context) }
-
-    private func circle(around c: CGPoint, radius r: CGFloat) -> CGRect {
-        CGRect(x: c.x - r, y: c.y - r, width: r * 2, height: r * 2)
-    }
-
-    private func radius(_ p: Point, map: StatMap, base: CGFloat) -> CGFloat {
-        guard let s = p.size, s > 0, map.plot.width > 0 else { return base }
-        return base + CGFloat((s / maxSize).squareRoot()) * 7
-    }
-
-    private var maxSize: Double { model().map { $0.size ?? 0 }.max() ?? 0 }
-
-    private func caption(well: Well) -> String {
-        data.indices(well).first.flatMap { (data.fields[safe: $0] ?? nil)?.caption ?? data.table.columns[safe: $0]?.name } ?? well.displayName
-    }
-    private func format(well: Well) -> String {
-        data.formats[safe: data.indices(well).first ?? 0] ?? ""
-    }
-    private func fmt(_ v: Double, well: Well) -> String {
-        ValueFormatter.format(.double(v), format(well: well))
-    }
-
-    private func axisExtent(_ values: [Double]) -> ClosedRange<Double> {
-        let vs = values.filter { $0.isFinite }
-        guard !vs.isEmpty else { return 0...1 }
-        return (vs.min() ?? 0)...(vs.max() ?? 1)
-    }
-    private func axisTicks(_ values: [Double], style: ChartStyle) -> [StatTick] {
-        let lo = values.min() ?? 0, hi = values.max() ?? 1
-        let scale = AxisFormatter.niceScale(dataMin: lo, dataMax: hi, includeZero: false, targetTicks: 5)
-        return scale.ticks.map { StatTick(pos: $0, label: AxisFormatter.label($0, format: "")) }
-    }
-
-    private func model() -> [Point] {
-        let t = data.table
-        guard let xc = data.indices(.x).first, let yc = data.indices(.y).first, xc < t.columnCount, yc < t.columnCount else { return [] }
-        let sizeCol = data.indices(.size).first
-        let legCol = data.indices(.legend).first
-        let catCols = data.indices(.category)
-        var legendOrder: [Value] = []
-        var legendIndex: [Value: Int] = [:]
-        if let lc = legCol {
-            for r in 0..<t.rowCount where !t[r, lc].isNull {
-                let v = t[r, lc]
-                if legendIndex[v] == nil { legendIndex[v] = legendOrder.count; legendOrder.append(v) }
-            }
-        }
-        let colors = ColorResolver(spec: spec, data: data, theme: context.theme)
-        var out: [Point] = []
-        for r in 0..<t.rowCount {
-            guard let x = t[r, xc].asDouble, x.isFinite, let y = t[r, yc].asDouble, y.isFinite else { continue }
-            let legendValue = legCol.map { t[r, $0] }
-            let series = legendValue.flatMap { legendIndex[$0] } ?? 0
-            let seriesName = legendValue.map { $0.isNull ? "(Blank)" : ValueFormatter.format($0, legCol.flatMap { data.formats[safe: $0] } ?? "") }
-            let color = colors.seriesColor(series, name: seriesName ?? "")
-            let label = catCols.isEmpty ? "\(r + 1)" : StatSupport.label(data: data, row: r, columns: catCols)
-            out.append(Point(id: out.count, x: x, y: y,
-                             size: sizeCol.flatMap { t[r, $0].asDouble },
-                             color: color, series: series, label: label,
-                             selection: SeriesModel.selection(data: data, row: r, columns: catCols + (legCol.map { [$0] } ?? [])),
-                             row: r))
-        }
-        return out
     }
 }

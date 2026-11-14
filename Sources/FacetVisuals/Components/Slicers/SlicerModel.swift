@@ -34,7 +34,7 @@ struct CmpSlConfig {
         selectAll = f.bool("slicer", "selectAll", false)
         search = f.bool("slicer", "search", s == "dropdown")
         commandMulti = f.bool("slicer", "multiSelectWithCommand", false)
-        applyButton = f.bool("slicer", "applyButton", false)
+        applyButton = f.bool("slicer", "applyButton", env.context.slicerApplyButtons)
         forceSelection = f.bool("slicer", "forceSelection", false)
         clearMode = f.string("slicer", "showClear", "hover")
         fontSize = f.double("slicer", "fontSize", env.theme.label.size + 1)

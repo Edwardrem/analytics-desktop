@@ -197,6 +197,29 @@ final class OffscreenRenderTests: XCTestCase {
     }
 }
 
+/// The chart gallery's samples (formatting, analytics, small multiples, patterns, highlight) all draw.
+@MainActor
+final class GallerySampleRenderTests: XCTestCase {
+    func testEveryGallerySampleRenders() {
+        let samples = ChartGallery.samples()
+        XCTAssertFalse(samples.isEmpty)
+        XCTAssertEqual(Set(samples.map(\.spec.name)).count, samples.count, "sample names describe each one")
+        for sample in samples {
+            var context = VisualContext()
+            context.theme = .facet
+            context.isInteractive = false
+            context.overlays = ChartGallery.sampleOverlays(for: sample)
+            XCTAssertNotNil(ChartVisuals.view(spec: sample.spec, data: sample.data, context: context), sample.spec.name)
+            let host = NSHostingView(rootView: VisualView(spec: sample.spec, data: sample.data, context: context).frame(width: 480, height: 320))
+            host.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
+            host.layoutSubtreeIfNeeded()
+            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { XCTFail("\(sample.spec.name): no bitmap"); continue }
+            host.cacheDisplay(in: host.bounds, to: rep)
+            XCTAssertNotNil(rep.colorAt(x: 10, y: 10), "\(sample.spec.name): rendered an empty surface")
+        }
+    }
+}
+
 /// Waterfall and ribbon charts show a cross-highlight inside the unhighlighted shape.
 @MainActor
 final class HighlightBaselineTests: XCTestCase {
