@@ -11,6 +11,9 @@ import FacetCore
 /// predates `alternateOf` (keep the annotation's entry) from one where the `alternateOf` was removed
 /// (drop it), and the `alternateOf` wins over the annotation wherever both exist.
 enum TMDLAggregations {
+    /// The model annotation (after `Facet_`) that lists every mapping.
+    static let annotationName = "aggregations"
+
     /// The Tabular summarization, or nil where Tabular has none (Facet's average, median and the like).
     static func summarization(_ m: AggregationMapping) -> String? {
         guard !m.detailTable.isEmpty else { return nil }
@@ -67,7 +70,20 @@ enum TMDLAggregations {
 
     /// Reads a column's `alternateOf`; the message explains one that can't be used.
     static func parse(_ node: TMDLNode, table: String, column: String) -> (AggregationMapping?, problem: String?) {
-        let s = node.prop("summarization")?.lowercased() ?? ""
+        var base: (table: String, column: String)?
+        if let b = node.prop("baseColumn") {
+            let parts = TMDLName.splitQualified(b)
+            guard parts.count == 2 else { return (nil, "Ignored alternateOf on \(table)[\(column)]: baseColumn must be Table.Column.") }
+            base = (parts[0], parts[1])
+        }
+        return mapping(summarization: node.prop("summarization"), baseColumn: base, baseTable: node.prop("baseTable").map(TMDLName.unquote),
+                       table: table, column: column)
+    }
+
+    /// The mapping an `alternateOf` describes, however it was written (TMDL properties or TMSL JSON).
+    static func mapping(summarization name: String?, baseColumn: (table: String, column: String)?, baseTable: String?,
+                        table: String, column: String) -> (AggregationMapping?, problem: String?) {
+        let s = name?.lowercased() ?? ""
         let summarization: Aggregation
         switch s {
         case "groupby": summarization = .none
@@ -77,13 +93,11 @@ enum TMDLAggregations {
         case "count": summarization = .count
         default: return (nil, "Ignored alternateOf on \(table)[\(column)]: summarization “\(s)” isn't supported.")
         }
-        if let base = node.prop("baseColumn") {
-            let parts = TMDLName.splitQualified(base)
-            guard parts.count == 2 else { return (nil, "Ignored alternateOf on \(table)[\(column)]: baseColumn must be Table.Column.") }
-            return (AggregationMapping(aggTable: table, aggColumn: column, summarization: summarization, detailTable: parts[0], detailColumn: parts[1]), nil)
+        if let base = baseColumn {
+            return (AggregationMapping(aggTable: table, aggColumn: column, summarization: summarization, detailTable: base.table, detailColumn: base.column), nil)
         }
-        if let base = node.prop("baseTable"), summarization == .count {
-            return (AggregationMapping(aggTable: table, aggColumn: column, summarization: .count, detailTable: TMDLName.unquote(base), detailColumn: ""), nil)
+        if let base = baseTable, summarization == .count {
+            return (AggregationMapping(aggTable: table, aggColumn: column, summarization: .count, detailTable: base, detailColumn: ""), nil)
         }
         return (nil, "Ignored alternateOf on \(table)[\(column)]: it needs a baseColumn, or a baseTable to count rows.")
     }
@@ -186,22 +200,29 @@ enum TMDLRefreshPolicy {
 
     /// Reads a `refreshPolicy`. `partitionSource` is the table's partition M; `annotatedDateColumn` the Facet annotation.
     static func parse(_ node: TMDLNode, partitionSource: String?, annotatedDateColumn: String?) -> (IncrementalRefreshPolicy, problems: [String]) {
+        parse(property: node.prop, expression: node.expr, partitionSource: partitionSource, annotatedDateColumn: annotatedDateColumn)
+    }
+
+    /// Reads a refresh policy from its properties (`property`) and M expressions (`expression`), by name, so the
+    /// TMDL and TMSL readers agree on what every value means.
+    static func parse(property: (String) -> String?, expression: (String) -> String?, partitionSource: String?,
+                      annotatedDateColumn: String?) -> (IncrementalRefreshPolicy, problems: [String]) {
         var problems: [String] = []
-        let source = node.expr("sourceExpression") ?? partitionSource
+        let source = expression("sourceExpression") ?? partitionSource
         let date = annotatedDateColumn ?? source.flatMap(dateColumn(filteredIn:))
         if date == nil { problems.append("The refresh policy's source doesn't filter a column with RangeStart; choose the date column again.") }
         var p = IncrementalRefreshPolicy(dateColumn: date ?? "")
-        if let v = node.prop("rollingWindowGranularity") { p.archiveUnit = v.lowercased() }
-        if let v = node.prop("rollingWindowPeriods").flatMap({ Int($0) }) { p.archiveCount = v }
-        if let v = node.prop("incrementalGranularity") { p.refreshUnit = v.lowercased() }
-        if let v = node.prop("incrementalPeriods").flatMap({ Int($0) }) { p.refreshCount = v }
-        p.onlyCompletePeriods = (node.prop("incrementalPeriodsOffset").flatMap { Int($0) } ?? 0) < 0
-        p.realTimeDirectQuery = node.prop("mode")?.lowercased() == "hybrid"
-        if let polling = node.expr("pollingExpression") {
+        if let v = property("rollingWindowGranularity") { p.archiveUnit = v.lowercased() }
+        if let v = property("rollingWindowPeriods").flatMap({ Int($0) }) { p.archiveCount = v }
+        if let v = property("incrementalGranularity") { p.refreshUnit = v.lowercased() }
+        if let v = property("incrementalPeriods").flatMap({ Int($0) }) { p.refreshCount = v }
+        p.onlyCompletePeriods = (property("incrementalPeriodsOffset").flatMap { Int($0) } ?? 0) < 0
+        p.realTimeDirectQuery = property("mode")?.lowercased() == "hybrid"
+        if let polling = expression("pollingExpression") {
             if let c = maxColumn(in: polling) { p.detectChangesColumn = c }
             else { problems.append("The refresh policy's polling expression isn't List.Max of a column; detect data changes is off.") }
         }
-        if let t = node.prop("policyType"), t.lowercased() != "basic" { problems.append("Refresh policy type “\(t)” isn't supported; read as basic.") }
+        if let t = property("policyType"), t.lowercased() != "basic" { problems.append("Refresh policy type “\(t)” isn't supported; read as basic.") }
         return (p, problems)
     }
 

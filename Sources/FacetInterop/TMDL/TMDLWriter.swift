@@ -229,7 +229,7 @@ struct TMDLWriter {
         if !model.whatIfParameters.isEmpty { e.facet(l + 1, "whatIfParameters", encoding: model.whatIfParameters) }
         if !model.aggregations.isEmpty,
            let v = TMDLAggregations.annotation(model.aggregations, native: Set(nativeAggregations.values.map(\.id))) {
-            e.facet(l + 1, "aggregations", v)
+            e.facet(l + 1, TMDLAggregations.annotationName, v)
         }
         e.facet(l + 1, "layouts", encoding: model.layouts)
         if model.aiExcludedFields != defaults.aiExcludedFields { e.facet(l + 1, "aiExcludedFields", encoding: model.aiExcludedFields) }
