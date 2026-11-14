@@ -300,14 +300,18 @@ final class HighlightBaselineTests: XCTestCase {
         XCTAssertTrue(model.hasBaseline)
         let layout = RibbonChart(env: env).layout(model, size: CGSize(width: 480, height: 320))
         XCTAssertEqual(layout.bands.count, 2)
-        // Sales is the larger series everywhere, so its band sits at the bottom: 0 … sales.
-        XCTAssertEqual(layout.bands[0].lo, [0, 0, 0, 0, 0])
-        XCTAssertEqual(layout.bands[0].hi, sales)
-        XCTAssertEqual(layout.bands[0].lit, sales.map { $0 / 2 })
-        // Cost stacks on top with its full size and nothing highlighted.
-        XCTAssertEqual(layout.bands[1].lo, sales)
-        for (hi, s) in zip(layout.bands[1].hi, sales) { XCTAssertEqual(hi, s * 1.6, accuracy: 1e-9) }
-        XCTAssertEqual(layout.bands[1].lit, sales)
+        // Power BI's ribbon chart puts the top-ranked (largest) band at the top of each column.
+        // Sales is the larger series everywhere, so Cost (0.6 × sales) is the bottom band, 0 … cost,
+        // with nothing of it highlighted…
+        XCTAssertEqual(layout.bands[1].lo, [0, 0, 0, 0, 0])
+        for (hi, s) in zip(layout.bands[1].hi, sales) { XCTAssertEqual(hi, s * 0.6, accuracy: 1e-9) }
+        XCTAssertEqual(layout.bands[1].lit, [0, 0, 0, 0, 0])
+        XCTAssertEqual(layout.bands[1].rank, [2, 2, 2, 2, 2])
+        // …and Sales sits on it, cost … 1.6 × sales, its highlighted half running from its own lower edge.
+        for (lo, s) in zip(layout.bands[0].lo, sales) { XCTAssertEqual(lo, s * 0.6, accuracy: 1e-9) }
+        for (hi, s) in zip(layout.bands[0].hi, sales) { XCTAssertEqual(hi, s * 1.6, accuracy: 1e-9) }
+        for (lit, s) in zip(layout.bands[0].lit, sales) { XCTAssertEqual(lit, s * 0.6 + s / 2, accuracy: 1e-9) }
+        XCTAssertEqual(layout.bands[0].rank, [1, 1, 1, 1, 1])
         XCTAssertEqual(layout.maxTotal, 57 * 1.6, accuracy: 1e-9)
         render(spec, data)
         // Without a baseline the bands carry no highlighted part.
@@ -315,6 +319,6 @@ final class HighlightBaselineTests: XCTestCase {
         let plainModel = SeriesModel(spec: plainSpec, data: plain, categoryWell: .category, valueWells: [.values], legendWell: .legend)
         let plainLayout = RibbonChart(env: FlowEnv(spec: plainSpec, data: plain, context: VisualContext())).layout(plainModel, size: CGSize(width: 480, height: 320))
         XCTAssertEqual(plainLayout.bands.map(\.lit), [[], []])
-        XCTAssertEqual(plainLayout.bands[0].hi, sales)
+        for (hi, s) in zip(plainLayout.bands[0].hi, sales) { XCTAssertEqual(hi, s * 1.6, accuracy: 1e-9) }
     }
 }

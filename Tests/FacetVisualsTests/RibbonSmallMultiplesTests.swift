@@ -52,9 +52,11 @@ final class RibbonSmallMultiplesTests: XCTestCase {
         XCTAssertEqual(chart.sharedMax(parts), 70)
 
         let north = chart.layout(parts[0], size: CGSize(width: 200, height: 100), sharedMax: 70)
-        // Jan: A 30, B 20, C 10 stack in rank order; Feb: B 40, C 20, A 10.
-        XCTAssertEqual(north.bands.map { $0.lo }, [[0, 60], [30, 0], [50, 40]])
-        XCTAssertEqual(north.bands.map { $0.hi }, [[30, 70], [50, 40], [60, 60]])
+        // Jan: A 30, B 20, C 10; Feb: B 40, C 20, A 10. As in Power BI the top-ranked band is at the
+        // top, so each column stacks up from its smallest band: Jan C 0…10, B 10…30, A 30…60;
+        // Feb A 0…10, C 10…30, B 30…70.
+        XCTAssertEqual(north.bands.map { $0.lo }, [[30, 0], [10, 30], [0, 10]])
+        XCTAssertEqual(north.bands.map { $0.hi }, [[60, 10], [30, 70], [10, 30]])
         XCTAssertEqual(north.bands.map { $0.rank }, [[1, 3], [2, 1], [3, 2]])
 
         let south = chart.layout(parts[1], size: CGSize(width: 200, height: 100), sharedMax: 70)
@@ -79,16 +81,20 @@ final class RibbonSmallMultiplesTests: XCTestCase {
         XCTAssertEqual((0..<6).map(rank), ["1 of 3", "2 of 3", "3 of 3", "3 of 3", "1 of 3", "2 of 3"])
 
         // The plot is 100 points tall less 6 at the top and bottom: 0 sits at y 94 and 70 at y 6.
-        // Jan's A band, 0…30, runs from y 94 up to 94 − 30/70 × 88 ≈ 56.29, across the first slice (x 6…100).
+        // Jan's A band, 30…60, runs from y 94 − 30/70 × 88 ≈ 56.29 up to 94 − 60/70 × 88 ≈ 18.57,
+        // across the first slice (x 6…100).
         let janA = hits[0].path.boundingRect
         XCTAssertEqual(janA.minX, 6, accuracy: 1e-9)
         XCTAssertEqual(janA.maxX, 100, accuracy: 1e-9)
-        XCTAssertEqual(janA.minY, 94 - 30.0 / 70 * 88, accuracy: 1e-9)
-        XCTAssertEqual(janA.maxY, 94, accuracy: 1e-9)
-        XCTAssertTrue(hits[0].path.contains(CGPoint(x: 50, y: 80)))
-        // Feb's B band, 0…40, is the bottom of the second slice.
-        XCTAssertTrue(hits[4].path.contains(CGPoint(x: 150, y: 80)))
-        XCTAssertFalse(hits[3].path.contains(CGPoint(x: 150, y: 80)))
+        XCTAssertEqual(janA.minY, 94 - 60.0 / 70 * 88, accuracy: 1e-9)
+        XCTAssertEqual(janA.maxY, 94 - 30.0 / 70 * 88, accuracy: 1e-9)
+        XCTAssertTrue(hits[0].path.contains(CGPoint(x: 50, y: 40)))
+        XCTAssertFalse(hits[0].path.contains(CGPoint(x: 50, y: 80)), "the bottom of January is C, 0…10")
+        XCTAssertTrue(hits[2].path.contains(CGPoint(x: 50, y: 90)))
+        // Feb's B band, 30…70, is the top of the second slice; its A band, 0…10, the bottom.
+        XCTAssertTrue(hits[4].path.contains(CGPoint(x: 150, y: 20)))
+        XCTAssertFalse(hits[3].path.contains(CGPoint(x: 150, y: 20)))
+        XCTAssertTrue(hits[3].path.contains(CGPoint(x: 150, y: 90)))
         XCTAssertEqual(hits[0].selection?.values, [.string("Jan"), .string("A"), .string("North")])
     }
 
