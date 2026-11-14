@@ -141,7 +141,8 @@ public final class MCPServer: @unchecked Sendable {
         catch { throw InteropError.io("The MCP server couldn't start: \(error.localizedDescription)") }
         l.newConnectionHandler = { [weak self] c in self?.accept(c) }
         let bound: UInt16 = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<UInt16, Error>) in
-            var resumed = false
+            // Read and written only by the state handler, which runs on the serial `queue`.
+            nonisolated(unsafe) var resumed = false
             l.stateUpdateHandler = { state in
                 guard !resumed else { return }
                 switch state {

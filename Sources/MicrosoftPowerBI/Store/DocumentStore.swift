@@ -308,7 +308,8 @@ final class DocumentStore: ObservableObject {
         let gen = engineGeneration
         let model = doc.model
         let roles = viewAsRoles, user = viewAsUser
-        let engine = services.makeCalculation()
+        // The engine is used only on the serial calculation queue until it is handed back to the main actor.
+        nonisolated(unsafe) let engine = services.makeCalculation()
         DirectQuerySession.of(self).data(for: doc, baseDirectory: fileURL?.deletingLastPathComponent()) { [weak self] data, problems in
             guard let self, gen == self.engineGeneration else { return }
             if !problems.isEmpty { self.status = StatusMessage(kind: .error, text: problems.joined(separator: "\n")) }
@@ -477,7 +478,7 @@ final class DocumentStore: ObservableObject {
         let gen = generation
         let jobs = targets.map { ($0, request(for: $0, on: page)) }
         loadingVisuals.formUnion(targets.map(\.id))
-        let engine = calculation, analytics = services.analytics
+        nonisolated(unsafe) let engine = calculation, analytics = services.analytics
         let recording = performanceRecording
         calcQueue.async { [weak self] in
             for (spec, request) in jobs {
@@ -518,7 +519,7 @@ final class DocumentStore: ObservableObject {
 
     /// Run work against the engine off the main thread.
     func withEngine<T>(_ work: @escaping (CalculationService) -> T) async -> T {
-        let engine = calculation
+        nonisolated(unsafe) let engine = calculation
         return await withCheckedContinuation { cont in
             calcQueue.async { cont.resume(returning: work(engine)) }
         }

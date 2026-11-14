@@ -274,7 +274,6 @@ public enum KeyInfluencers {
             case .categorical(let values):
                 let levels = Array(Set(values.filter { !$0.isNull })).sorted { Fmt.label($0) < Fmt.label($1) }
                 guard levels.count >= 2 else { continue }
-                let reference = levels[0]
                 for level in levels.dropFirst() {
                     columns.append(values.map { $0 == level ? 1 : 0 })
                     plan.append((fi, level))
@@ -306,7 +305,7 @@ public enum KeyInfluencers {
             case .categorical(let values):
                 var groups: [Value: [Int]] = [:]
                 for (i, v) in values.enumerated() where !v.isNull { groups[v, default: []].append(i) }
-                guard groups.count >= 2, var dummies = dummyCoefficient[f.name] else { continue }
+                guard groups.count >= 2, let dummies = dummyCoefficient[f.name] else { continue }
                 let keys = groups.keys.sorted { Fmt.label($0) < Fmt.label($1) }
                 guard let reference = keys.first else { continue }
                 let stats: [(key: Value, n: Int, mean: Double)] = keys.map { k in

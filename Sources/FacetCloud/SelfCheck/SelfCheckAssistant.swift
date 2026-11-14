@@ -166,7 +166,7 @@ extension FacetCloudSelfCheck {
     static func checkAssistantHistory(_ c: Checker) {
         let short = AssistantMessage.user("Short")
         c.expect(HistoryTrimmer.estimateTokens(short) > 0, "token estimate is positive")
-        var long = AssistantMessage(role: .assistant, content: [["type": "thinking", "thinking": .string(String(repeating: "x", count: 4000))],
+        let long = AssistantMessage(role: .assistant, content: [["type": "thinking", "thinking": .string(String(repeating: "x", count: 4000))],
                                                                 ["type": "text", "text": .string("Answer")]])
         _ = long
         var messages: [AssistantMessage] = [.user(String(repeating: "q", count: 3000)), long]
@@ -229,13 +229,13 @@ extension FacetCloudSelfCheck {
         try client.setAPIKey("sk-test")
 
         let calls = Recorder<[[String: String]]>([])
-        var round = 0
+        let rounds = Recorder(0)
         SelfCheckURLProtocol.handler = { req, _ in
             let path = req.url?.path ?? ""
             guard path.hasSuffix("/v1/messages") else { return .json("{}", status: 404) }
-            round += 1
+            rounds.update { $0 += 1 }
             calls.update { $0.append(["body": String(decoding: requestBody(req), as: UTF8.self)]) }
-            if round == 1 {
+            if rounds.value == 1 {
                 return sseResponse("""
                 event: message_start
                 data: {"type":"message_start","message":{"id":"msg_1","model":"claude-sonnet-5-5","usage":{"input_tokens":9}}}
