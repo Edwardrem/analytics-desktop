@@ -3,6 +3,7 @@ import FacetCore
 import FacetAnalytics
 import FacetCloud
 import FacetQuery
+import FacetDesign
 
 /// Wires the AI features into the shell: the four AI visuals (Key influencers, Decomposition tree,
 /// Narrative, Q&A), the Assistant pane and its settings tab, the assistant in DAX query view, and the
@@ -19,6 +20,7 @@ enum AIFeature {
         DAXAssistant.install()
         AIInsights.provider = OnDeviceAIInsights()
         AppCommands.register(commands)
+        installVisualHeaderButton()
         if !SettingsSections.extra.contains(where: { $0.title == "Assistant" }) {
             SettingsSections.extra.append(SettingsSections.Section(
                 title: "Assistant", symbol: "sparkles",
@@ -49,6 +51,22 @@ enum AIFeature {
         ]
     }
 
+    private static var headerInstalled = false
+
+    /// Adds Summarize to the header of every visual with data, after the controls already there.
+    private static func installVisualHeaderButton() {
+        guard !headerInstalled else { return }
+        headerInstalled = true
+        let existing = Features.visualHeaderAccessory
+        Features.visualHeaderAccessory = { spec, store in
+            let summarizable = !spec.type.isPageElement && !spec.type.isSlicer && spec.type != .narrative && spec.type != .qna
+            return AnyView(HStack(spacing: 2) {
+                if let existing { existing(spec, store) }
+                if summarizable { SummarizeVisualButton(visual: spec.id, store: store) }
+            })
+        }
+    }
+
     /// Brings the Assistant pane forward; without a key it shows how to set one up.
     static func showPane(_ store: DocumentStore) {
         ShellState.of(store).show(.assistant)
@@ -57,4 +75,17 @@ enum AIFeature {
 
 extension Notification.Name {
     static let assistantConfigurationChanged = Notification.Name("assistantConfigurationChanged")
+}
+
+/// The visual header's Summarize button: opens the Assistant pane with a summary of this visual.
+struct SummarizeVisualButton: View {
+    let visual: UUID
+    let store: DocumentStore
+
+    var body: some View {
+        IconButton("sparkles", help: "Summarize this visual with the assistant") {
+            AIFeature.showPane(store)
+            AssistantPaneModel.of(store).summarizeVisual(visual)
+        }
+    }
 }

@@ -128,6 +128,22 @@ final class AssistantPaneModel: ObservableObject {
         }
     }
 
+    /// Asks what one visual shows, with its current values attached (the visual header's Summarize button).
+    func summarizeVisual(_ id: UUID) {
+        guard let store, !isStreaming, let v = store.report.pages.lazy.compactMap({ $0.visual(id) }).first else { return }
+        submit(display: "Summarize “\(AssistantContext.title(v))”", matchVerified: false) {
+            let description = await AssistantContext.visual(id, store: store) ?? "The visual is no longer in the report."
+            return """
+            Summarize this visual for a business reader: what it shows, the largest and smallest values, and \
+            anything that stands out. Use only what the visual shows.
+
+            <visual>
+            \(description)
+            </visual>
+            """
+        }
+    }
+
     private func submit(display: String, matchVerified: Bool, prompt: @escaping @MainActor () async -> String) {
         guard let store else { return }
         hasKey = client.isConfigured

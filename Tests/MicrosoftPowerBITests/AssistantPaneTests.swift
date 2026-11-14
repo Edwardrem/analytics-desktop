@@ -153,4 +153,17 @@ final class AssistantPaneTests: XCTestCase {
         await finish(model)
         XCTAssertEqual(model.transcript.last?.text, "Summary.")
     }
+
+    func testTheVisualHeaderSummarizesOneVisual() async throws {
+        let (store, chart) = await store()
+        XCTAssertNotNil(Features.visualHeaderAccessory, "the header gets a Summarize button")
+        AssistantStub.install(replies: ["South is highest."])
+        let model = AssistantPaneModel.of(store)
+        model.summarizeVisual(chart.id)
+        await finish(model)
+        XCTAssertEqual(model.transcript.first?.text, "Summarize “Amount by region”")
+        let sent = AssistantStub.messageTexts(try XCTUnwrap(AssistantStubProtocol.seen.first)).joined(separator: "\n")
+        XCTAssertTrue(sent.contains("<visual>\nOn page \"Page 1\":"), sent)
+        XCTAssertTrue(sent.contains("South | 70"))
+    }
 }
