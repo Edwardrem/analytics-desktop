@@ -14,6 +14,7 @@ enum AIFeature {
         Features.paneBuilders[.assistant] = { store in
             AnyView(AssistantPane(store: store))
         }
+        DAXAssistant.install()
         if !SettingsSections.extra.contains(where: { $0.title == "Assistant" }) {
             SettingsSections.extra.append(SettingsSections.Section(
                 title: "Assistant", symbol: "sparkles",

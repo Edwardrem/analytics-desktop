@@ -8,8 +8,10 @@ public enum ModelDescriber {
     ///   - excluding: identifiers hidden from AI ("Table", "Table[Column]", "Table[Measure]"); defaults to `model.aiExcludedFields`.
     ///   - includeHidden: include hidden tables / columns / measures (marked "hidden").
     ///   - maxExpressionLength: measure and calculated-column expressions are truncated to this many characters.
+    ///   - answerVisuals: for verified answers tied to a visual, a short description of that visual by its id
+    ///     (for example `"Sales by region" on page "Overview"`).
     public static func schemaSummary(model: SemanticModel, excluding: [String]? = nil, includeHidden: Bool = false,
-                                     maxExpressionLength: Int = 240) -> String {
+                                     maxExpressionLength: Int = 240, answerVisuals: [UUID: String] = [:]) -> String {
         let excluded = Set((excluding ?? model.aiExcludedFields).map(normalise))
         func isExcluded(_ table: String, _ field: String? = nil) -> Bool {
             if excluded.contains(normalise(table)) { return true }
@@ -77,7 +79,12 @@ public enum ModelDescriber {
         let answers = model.verifiedAnswers.filter { !$0.question.isEmpty }
         if !answers.isEmpty {
             lines.append("Verified answers:")
-            for a in answers { lines.append("  Q: \(oneLine(a.question))" + (a.answer.isEmpty ? "" : " → A: \(oneLine(a.answer))")) }
+            for a in answers {
+                var line = "  Q: \(oneLine(a.question))"
+                if !a.answer.isEmpty { line += " → A: \(oneLine(a.answer))" }
+                if let id = a.visualID, let visual = answerVisuals[id] { line += " (answered by the visual \(visual))" }
+                lines.append(line)
+            }
         }
         return lines.joined(separator: "\n")
     }
@@ -101,57 +108,73 @@ public enum ReportDescriber {
             if a.frame.x != b.frame.x { return a.frame.x < b.frame.x }
             return a.name < b.name
         }
-        for v in visuals {
-            let title = v.fmtString("title", "text", v.name)
-            var line = "- [\(v.type.displayName)] \(title)"
-            switch v.type {
-            case .textBox:
-                let text = v.content.split(whereSeparator: \.isNewline).joined(separator: " ")
-                if text.isEmpty { continue }
-                lines.append(line + ": " + (text.count > 200 ? String(text.prefix(200)) + "…" : text))
-                continue
-            case .image, .shape, .button, .pageNavigator, .bookmarkNavigator: continue
-            default: break
-            }
-            let wells = v.type.wells.compactMap { w -> String? in
-                let f = v.fields(w)
-                return f.isEmpty ? nil : "\(w.displayName)=\(f.map(\.caption).joined(separator: ", "))"
-            }
-            if !wells.isEmpty { line += " | " + wells.joined(separator: "; ") }
-            let active = v.filters.filter { !$0.isEmpty }
-            if !active.isEmpty { line += " | filters: " + active.map(describe).joined(separator: "; ") }
-            if let s = v.slicerState, s.isActive {
-                if !s.selected.isEmpty { line += " | selected: " + s.selected.prefix(8).map { Fmt.label($0) }.joined(separator: ", ") }
-                if !s.rangeLow.isNull || !s.rangeHigh.isNull { line += " | range: \(Fmt.label(s.rangeLow))…\(Fmt.label(s.rangeHigh))" }
-            }
-            lines.append(line)
-            guard let data = visualData[v.id] else { continue }
-            if let err = data.error { lines.append("  error: \(err)"); continue }
-            let t = data.table
-            guard t.rowCount > 0, t.columnCount > 0 else { lines.append("  (no data)"); continue }
-            let names = (0..<t.columnCount).map { data.fields[safe: $0].flatMap { $0 }?.caption ?? t.columns[$0].name }
-            if t.rowCount == 1 {
-                lines.append("  " + (0..<t.columnCount).map { "\(names[$0])=\(data.formatted(row: 0, col: $0))" }.joined(separator: ", "))
-                continue
-            }
-            // Order rows by the first numeric column, largest first, unless the first column is a time axis.
-            let measure = (0..<t.columnCount).first { c in
-                (data.fields[safe: c].flatMap { $0 }?.isAggregate ?? t.columns[c].type.isNumeric) && t.columns[c].values.contains { $0.isNumber }
-            }
-            var order = Array(0..<t.rowCount)
-            let timeAxis = SmartNarrative.isTimeAxis(t.columns[0])
-            if let m = measure, !timeAxis { order.sort { (t[$0, m].asDouble ?? -.infinity) > (t[$1, m].asDouble ?? -.infinity) } }
-            lines.append("  " + names.joined(separator: " | "))
-            let shown = timeAxis && order.count > maxRows ? Array(order.suffix(maxRows)) : Array(order.prefix(maxRows))
-            for r in shown { lines.append("  " + (0..<t.columnCount).map { data.formatted(row: r, col: $0) }.joined(separator: " | ")) }
-            if t.rowCount > shown.count { lines.append("  … \(t.rowCount) rows in total" + (timeAxis ? " (latest shown)" : " (top shown)")) }
-            let totals = (0..<t.columnCount).compactMap { c -> String? in
-                guard let v = data.totals[safe: c], !v.isNull else { return nil }
-                return "\(names[c])=\(ValueFormatter.format(v, data.formats[safe: c] ?? ""))"
-            }
-            if !totals.isEmpty { lines.append("  totals: " + totals.joined(separator: ", ")) }
-        }
+        for v in visuals { lines += describe(visual: v, data: visualData[v.id], maxRows: maxRows) }
         return lines.joined(separator: "\n")
+    }
+
+    /// A digest of every page a reader can open (hidden and tooltip pages are left out), in page order.
+    /// - Parameter visualData: query results for the visuals of every described page, by visual id.
+    public static func describe(report: Report, visualData: [UUID: VisualData], maxRows: Int = 3) -> String {
+        let pages = report.pages.filter { !$0.isHidden && !$0.isTooltipPage }
+        var lines = ["Report: \(pages.count) \(pages.count == 1 ? "page" : "pages")"]
+        let filters = report.filters.filter { !$0.isEmpty }
+        if !filters.isEmpty { lines.append("Report filters: " + filters.map(describe).joined(separator: "; ")) }
+        for p in pages { lines.append(""); lines.append(describe(page: p, visualData: visualData, maxRows: maxRows)) }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The lines describing one visual: a header with its type, title and fields, then its top data rows.
+    /// Images, shapes, buttons and navigators (and empty text boxes) produce no lines.
+    public static func describe(visual v: VisualSpec, data: VisualData?, maxRows: Int = 5) -> [String] {
+        let title = v.fmtString("title", "text", v.name)
+        var line = "- [\(v.type.displayName)] \(title)"
+        switch v.type {
+        case .textBox:
+            let text = v.content.split(whereSeparator: \.isNewline).joined(separator: " ")
+            if text.isEmpty { return [] }
+            return [line + ": " + (text.count > 200 ? String(text.prefix(200)) + "…" : text)]
+        case .image, .shape, .button, .pageNavigator, .bookmarkNavigator: return []
+        default: break
+        }
+        var lines: [String] = []
+        let wells = v.type.wells.compactMap { w -> String? in
+            let f = v.fields(w)
+            return f.isEmpty ? nil : "\(w.displayName)=\(f.map(\.caption).joined(separator: ", "))"
+        }
+        if !wells.isEmpty { line += " | " + wells.joined(separator: "; ") }
+        let active = v.filters.filter { !$0.isEmpty }
+        if !active.isEmpty { line += " | filters: " + active.map(describe).joined(separator: "; ") }
+        if let s = v.slicerState, s.isActive {
+            if !s.selected.isEmpty { line += " | selected: " + s.selected.prefix(8).map { Fmt.label($0) }.joined(separator: ", ") }
+            if !s.rangeLow.isNull || !s.rangeHigh.isNull { line += " | range: \(Fmt.label(s.rangeLow))…\(Fmt.label(s.rangeHigh))" }
+        }
+        lines.append(line)
+        guard let data else { return lines }
+        if let err = data.error { lines.append("  error: \(err)"); return lines }
+        let t = data.table
+        guard t.rowCount > 0, t.columnCount > 0 else { lines.append("  (no data)"); return lines }
+        let names = (0..<t.columnCount).map { data.fields[safe: $0].flatMap { $0 }?.caption ?? t.columns[$0].name }
+        if t.rowCount == 1 {
+            lines.append("  " + (0..<t.columnCount).map { "\(names[$0])=\(data.formatted(row: 0, col: $0))" }.joined(separator: ", "))
+            return lines
+        }
+        // Order rows by the first numeric column, largest first, unless the first column is a time axis.
+        let measure = (0..<t.columnCount).first { c in
+            (data.fields[safe: c].flatMap { $0 }?.isAggregate ?? t.columns[c].type.isNumeric) && t.columns[c].values.contains { $0.isNumber }
+        }
+        var order = Array(0..<t.rowCount)
+        let timeAxis = SmartNarrative.isTimeAxis(t.columns[0])
+        if let m = measure, !timeAxis { order.sort { (t[$0, m].asDouble ?? -.infinity) > (t[$1, m].asDouble ?? -.infinity) } }
+        lines.append("  " + names.joined(separator: " | "))
+        let shown = timeAxis && order.count > maxRows ? Array(order.suffix(maxRows)) : Array(order.prefix(maxRows))
+        for r in shown { lines.append("  " + (0..<t.columnCount).map { data.formatted(row: r, col: $0) }.joined(separator: " | ")) }
+        if t.rowCount > shown.count { lines.append("  … \(t.rowCount) rows in total" + (timeAxis ? " (latest shown)" : " (top shown)")) }
+        let totals = (0..<t.columnCount).compactMap { c -> String? in
+            guard let v = data.totals[safe: c], !v.isNull else { return nil }
+            return "\(names[c])=\(ValueFormatter.format(v, data.formats[safe: c] ?? ""))"
+        }
+        if !totals.isEmpty { lines.append("  totals: " + totals.joined(separator: ", ")) }
+        return lines
     }
 
     /// One-line description of a filter.

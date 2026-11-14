@@ -93,6 +93,8 @@ public enum AssistantError: LocalizedError, Equatable {
     case invalidResponse(String)
     /// The model kept calling tools past `maxToolRounds`.
     case toolRoundLimit(Int)
+    /// The model or a safety classifier declined the request; the explanation, when the API gave one.
+    case declined(String?)
 
     public var errorDescription: String? {
         func rid(_ id: String?) -> String { id.map { " Request ID: \($0)." } ?? "" }
@@ -119,6 +121,8 @@ public enum AssistantError: LocalizedError, Equatable {
             return "The assistant service sent a response \(AppIdentity.name) could not read (\(m))."
         case .toolRoundLimit(let n):
             return "The assistant stopped after \(n) rounds of tool use without finishing. Ask it to continue if needed."
+        case .declined(let why):
+            return "The assistant declined this request." + (why.map { " \($0)" } ?? " Try rephrasing it.")
         }
     }
 
