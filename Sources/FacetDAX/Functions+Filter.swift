@@ -22,7 +22,6 @@ extension DAXEngine {
         let t = db.tables[c.table]
         let col = t.columns[c.col]
         if let dc = t.model?.dateColumn, dc.daxKey == col.name.daxKey { return true }
-        if autoDateTables.contains(c.table), col.name == "Date" { return true }
         // A relationship on a date column gives its table the same behaviour as a marked date table.
         if col.type.isTemporal, db.rels.contains(where: { $0.oneT == c.table && $0.oneC == c.col }) { return true }
         return false

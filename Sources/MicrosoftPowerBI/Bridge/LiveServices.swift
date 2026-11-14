@@ -135,7 +135,7 @@ final class LiveCalculation: CalculationService {
             for (i, g) in groups.enumerated() {
                 roles[g.well.rawValue, default: []].append(i)
                 fields.append(g.field)
-                formats.append(model.table(g.field.table)?.column(g.field.name)?.formatString ?? "")
+                formats.append(g.field.dateLevel == nil ? model.table(g.field.table)?.column(g.field.name)?.formatString ?? "" : "")
             }
             for (k, v) in values.enumerated() {
                 let i = groups.count + k

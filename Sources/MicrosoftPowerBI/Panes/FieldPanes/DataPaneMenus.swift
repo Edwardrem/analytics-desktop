@@ -25,6 +25,12 @@ extension DataPane {
             columnMenu(c, table: node.table)
         case .measure(let m): measureMenu(m, table: node.table)
         case .hierarchy(let h): hierarchyMenu(h, table: node.table)
+        case .dateHierarchy, .dateLevel:
+            Button("Add to visual") { addToVisual(node) }
+            Divider()
+            Button("Turn off auto date/time for this file") {
+                store.updateModel("Turn Off Auto Date/Time") { $0.autoDateTime = false }
+            }
         case .folder:
             Button("Expand") { setExpanded(node.id, true) }
             Button("Collapse") { setExpanded(node.id, false) }
@@ -261,7 +267,7 @@ extension DataPane {
             let wasOpen = expanded.contains(node.id)
             store.mutate("Rename Hierarchy", invalidates: .model) { ModelRefactor.renameHierarchy(&$0, table: table, from: old, to: new) }
             if wasOpen { setExpanded(node.id, false); setExpanded("h|\(table)|\(new)", true) }
-        case .folder: break
+        case .folder, .dateHierarchy, .dateLevel: break
         }
     }
 

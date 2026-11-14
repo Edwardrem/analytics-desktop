@@ -986,9 +986,11 @@ final class DocumentStore: ObservableObject {
 
     // MARK: - Data
 
-    /// Install freshly loaded tables and make sure the model has matching table metadata.
+    /// Install freshly loaded tables and make sure the model has matching table metadata. Tables new to the
+    /// model get the relationships autodetect finds, in the same undo step, when the option is on.
     func installTables(_ tables: [DataTable], sourceQueries: [String: String] = [:], actionName: String = "Load Data") {
         mutate(actionName, invalidates: .model) { d in
+            var added = Set<String>()
             for t in tables {
                 d.data[t.name] = t
                 if let i = d.model.tableIndex(t.name) {
@@ -1006,7 +1008,11 @@ final class DocumentStore: ObservableObject {
                     var mt = ModelTable(name: t.name, columns: t.columns.map(Self.modelColumn))
                     mt.sourceQuery = sourceQueries[t.name]
                     d.model.tables.append(mt)
+                    added.insert(t.name)
                 }
+            }
+            if DataLoadOptions.autodetectRelationships(for: d) {
+                d.model.relationships += DataLoadOptions.relationships(afterLoading: added, in: d)
             }
         }
     }

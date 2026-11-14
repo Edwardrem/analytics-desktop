@@ -391,6 +391,8 @@ public struct SemanticModel: Codable, Sendable {
     public var aggregations: [AggregationMapping] = []
     public var layouts: [ModelLayout] = [ModelLayout(name: "All tables", showsAllTables: true)]
     public var autoDateTime = false
+    /// Current file ▸ Data load ▸ "Autodetect new relationships after data is loaded"; nil follows the global option.
+    public var autodetectRelationships: Bool?
     /// AI data schema: identifiers excluded from Copilot, plus free-form instructions and verified answers.
     public var aiExcludedFields: [String] = []
     public var aiInstructions: String = ""

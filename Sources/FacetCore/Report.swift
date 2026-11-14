@@ -17,6 +17,8 @@ public struct FieldRef: Codable, Hashable, Identifiable, Sendable {
     public var isHidden = false
     /// "Show value as": "", "percentOfGrandTotal", "percentOfColumnTotal", "percentOfRowTotal".
     public var showAs: String = ""
+    /// A level of the column's auto date/time hierarchy ("Year", "Quarter", "Month", "Day"); nil for the column itself.
+    public var dateLevel: String?
 
     public init(kind: Kind, table: String, name: String, aggregation: Aggregation = .none) {
         self.kind = kind; self.table = table; self.name = name; self.aggregation = aggregation
@@ -27,17 +29,27 @@ public struct FieldRef: Codable, Hashable, Identifiable, Sendable {
     public static func measure(_ table: String, _ name: String) -> FieldRef {
         FieldRef(kind: .measure, table: table, name: name)
     }
+    /// A level of a date column's auto date/time hierarchy: `'Table'[Column].[Level]` in DAX.
+    public static func dateLevel(_ table: String, _ column: String, _ level: String) -> FieldRef {
+        var f = FieldRef(kind: .column, table: table, name: column)
+        f.dateLevel = level
+        return f
+    }
     /// True when this field produces a number per group (a measure or an aggregated column).
     public var isAggregate: Bool { kind == .measure || aggregation != .none }
     public var caption: String {
         if let d = displayName, !d.isEmpty { return d }
-        if kind == .column, aggregation != .none { return "\(aggregation.displayName) of \(name)" }
-        return name
+        let base = dateLevel ?? name
+        if kind == .column, aggregation != .none { return "\(aggregation.displayName) of \(base)" }
+        return base
     }
-    /// DAX-style identifier: 'Table'[Name].
-    public var daxReference: String { kind == .measure ? "[\(name)]" : "'\(table)'[\(name)]" }
+    /// DAX-style identifier: 'Table'[Name], or 'Table'[Name].[Level] for a date hierarchy level.
+    public var daxReference: String {
+        if kind == .measure { return "[\(name)]" }
+        return "'\(table)'[\(name)]" + (dateLevel.map { ".[\($0)]" } ?? "")
+    }
     /// Identity ignoring `id` and presentation, for matching the same field across wells.
-    public var key: String { "\(kind.rawValue)|\(table)|\(name)|\(aggregation.rawValue)" }
+    public var key: String { "\(kind.rawValue)|\(table)|\(name)|\(aggregation.rawValue)" + (dateLevel.map { "|\($0)" } ?? "") }
 }
 
 // MARK: - Filters

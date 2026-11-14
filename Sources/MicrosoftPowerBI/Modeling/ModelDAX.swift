@@ -37,13 +37,18 @@ enum ModelDAX {
         return s
     }
 
-    /// A field as DAX: measures as `[Name]`, columns as `'Table'[Name]`.
-    static func reference(_ f: FieldRef) -> String { f.kind == .measure ? measure(f.name) : column(f.table, f.name) }
+    /// A field as DAX: measures as `[Name]`, columns as `'Table'[Name]`, date hierarchy levels as `'Table'[Name].[Level]`.
+    static func reference(_ f: FieldRef) -> String {
+        if f.kind == .measure { return measure(f.name) }
+        return column(f.table, f.name) + (f.dateLevel.map { ".[\(bracket($0))]" } ?? "")
+    }
     /// A field as a scalar expression: measures as-is, columns wrapped in their aggregation (default SUM / COUNTA by type).
     static func aggregate(_ f: FieldRef, model: SemanticModel) -> String {
         if f.kind == .measure { return measure(f.name) }
         var agg = f.aggregation
-        if agg == .none {
+        if agg == .none, f.dateLevel != nil {
+            agg = .count
+        } else if agg == .none {
             let col = model.table(f.table)?.column(f.name)
             agg = col?.summarizeBy ?? .none
             if agg == .none {
@@ -52,7 +57,7 @@ enum ModelDAX {
                 agg = isCoordinate ? .average : (col?.dataType.isNumeric ?? false) ? .sum : .count
             }
         }
-        let reference = column(f.table, f.name)
+        let reference = reference(f)
         switch agg {
         // First and Last take the column and an expression that marks a row as not blank.
         case .first: return "FIRSTNONBLANK(\(reference), 1)"

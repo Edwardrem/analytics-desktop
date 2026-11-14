@@ -61,7 +61,7 @@ final class GetDataSession: ObservableObject {
         self.security = security
         func option(_ key: AppSettings.Key) -> Bool { options.object(forKey: key.rawValue) as? Bool ?? AppSettings.initial[key.rawValue] as? Bool ?? false }
         detectTypes = option(.detectTypes)
-        detectRelationships = option(.autodetectRelationships)
+        detectRelationships = DataLoadOptions.autodetectRelationships(for: store.doc, defaults: options)
     }
 
     var environment: QueryEnvironment { security.environment(baseDirectory: store.fileURL?.deletingLastPathComponent()) }

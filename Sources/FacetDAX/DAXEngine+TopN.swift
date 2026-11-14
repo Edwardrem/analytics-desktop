@@ -36,7 +36,7 @@ extension DAXEngine {
             }
             return { [unowned self] ctx in try self.evalMeasure(measure, ctx) }
         case .column:
-            guard let byCid = db.columnID(table: by.table, column: by.name) else {
+            guard let byCid = columnID(by) else {
                 throw DAXError("The Top N filter orders by column '\(by.table)'[\(by.name)], which does not exist.")
             }
             try checkColumnAccess(byCid, nil)

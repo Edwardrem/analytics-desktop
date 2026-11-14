@@ -109,6 +109,10 @@ final class TableStore {
     var colsCache: Columns?
     /// Columns object-level security hides from the current role: absent from table expressions.
     var hiddenColumns: Set<Int> = []
+    /// Auto date/time hierarchy levels: reached only as `'Table'[Date].[Level]`, absent from table expressions.
+    var variationColumns: Set<Int> = []
+    /// Columns table expressions leave out.
+    var omittedColumns: Set<Int> { variationColumns.isEmpty ? hiddenColumns : hiddenColumns.union(variationColumns) }
 
     init(name: String, index: Int, columns: [ColumnStore]) {
         self.name = name; self.index = index; self.columns = columns

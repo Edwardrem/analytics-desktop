@@ -120,7 +120,7 @@ extension DAXEngine {
         d["COLUMNSTATISTICS"] = { e, _, _, _ in
             var rows: [[Value]] = []
             for t in e.db.tables {
-                for c in t.columns {
+                for (i, c) in t.columns.enumerated() where !t.variationColumns.contains(i) {
                     let dict = c.dict
                     let minMax = c.values.filter { !$0.isNull }.min(by: { $0 < $1 })
                     let max = c.values.filter { !$0.isNull }.max(by: { $0 < $1 })
@@ -273,7 +273,7 @@ extension DAXEngine {
         case "INFO.COLUMNS", "INFO.VIEW.COLUMNS":
             var rows: [[Value]] = []
             for t in db.tables {
-                for (i, c) in t.columns.enumerated() {
+                for (i, c) in t.columns.enumerated() where !t.variationColumns.contains(i) {
                     let hidden = t.model?.columns[safe: i]?.isHidden ?? false
                     rows.append([.string(t.name), .string(c.name), .string(c.type.rawValue), .bool(hidden)])
                 }
