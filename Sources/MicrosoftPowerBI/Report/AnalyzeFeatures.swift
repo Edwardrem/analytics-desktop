@@ -313,10 +313,5 @@ struct DistributionSheet: View {
 // MARK: - Local formatting (Fmt is internal to FacetAnalytics)
 
 enum Fmt2 {
-    static func number(_ d: Double) -> String {
-        if d == d.rounded(), abs(d) < 1e15 { return String(Int64(d)) }
-        return String(format: "%.10g", d)
-    }
-    static func signed(_ d: Double) -> String { (d >= 0 ? "+" : "") + number(d) }
     static func percent(_ fraction: Double) -> String { String(format: "%.1f%%", fraction * 100) }
 }

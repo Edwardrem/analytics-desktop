@@ -214,7 +214,7 @@ struct KeyInfluencersView: View {
         } else if data.table.rowCount > 0 {
             analysis = Self.gridTable(data: data)
         }
-        guard var (table, targetColumn) = analysis, table.rowCount >= 20 else {
+        guard case (var table, let targetColumn)? = analysis, table.rowCount >= 20 else {
             result = nil
             error = target.kind == .column
                 ? "Key influencers needs at least 20 rows to analyze. This data has fewer."
@@ -448,7 +448,7 @@ struct DecompositionTreeView: View {
     // MARK: Loading
 
     private func load() async {
-        guard let analyze, !dimensions.isEmpty else { return }
+        guard analyze != nil, !dimensions.isEmpty else { return }
         guard loadedFor != loadedKey else { return }
         loadedFor = loadedKey
         error = nil

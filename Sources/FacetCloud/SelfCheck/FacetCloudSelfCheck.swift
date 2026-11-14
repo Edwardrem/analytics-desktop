@@ -80,7 +80,7 @@ final class Checker: @unchecked Sendable {
     private var current = ""
 
     func section(_ name: String, _ body: () async throws -> Void) async {
-        lock.lock(); current = name; lock.unlock()
+        lock.withLock { current = name }
         do { try await body() }
         catch { fail("threw \(error)") }
     }
