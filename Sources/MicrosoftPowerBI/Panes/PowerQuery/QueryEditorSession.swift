@@ -64,6 +64,8 @@ final class QueryEditorSession: ObservableObject {
     @Published private(set) var redoName: String?
     private var generation = 0
     private var applying = false
+    /// The evaluation started by the latest `refreshPreview`.
+    private var previewTask: Task<Void, Never>?
     private var observation: AnyCancellable?
 
     init(store: DocumentStore, security: QuerySecurity = .shared) {
@@ -193,7 +195,7 @@ final class QueryEditorSession: ObservableObject {
         let engine = makeEngine(), name = q.name, step = selectedStep, whole = profileWholeDataset
         let wantsFolding = Self.mayFold(q, in: queries)
         isEvaluating = true
-        Task {
+        previewTask = Task {
             do {
                 let shown = try await engine.evaluatePreview(name, upToStep: step, rowLimit: Self.previewRows)
                 let events = engine.diagnostics
@@ -221,6 +223,15 @@ final class QueryEditorSession: ObservableObject {
                 if isRecordingDiagnostics { recordedDiagnostics += engine.diagnostics }
             }
             if mine == generation { isEvaluating = false }
+        }
+    }
+
+    /// Wait until the latest preview evaluation has finished (and any it started in turn).
+    func waitForPreview() async {
+        var seen: Task<Void, Never>?
+        while let task = previewTask, task != seen {
+            seen = task
+            await task.value
         }
     }
 
