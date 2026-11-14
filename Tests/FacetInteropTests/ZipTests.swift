@@ -172,6 +172,17 @@ final class ZipTests: XCTestCase {
         XCTAssertThrowsError(try ZipArchive(data: Data("not a zip at all, sorry".utf8))) { XCTAssertEqual($0 as? ZipError, .notAZip) }
     }
 
+    func testTinyFilesWithAZip64LocatorAreRefusedWithoutCrashing() {
+        // 42–55 bytes is too short to hold the ZIP64 record the locator points at.
+        for count in 42...60 {
+            var bytes = Data(repeating: 0, count: count)
+            bytes.replaceSubrange((count - 22)..<(count - 18), with: [0x50, 0x4b, 0x05, 0x06])
+            bytes.replaceSubrange((count - 42)..<(count - 38), with: [0x50, 0x4b, 0x06, 0x07])
+            XCTAssertThrowsError(try ZipArchive(data: bytes), "\(count) bytes")
+            XCTAssertThrowsError(try PBIXPackage.read(data: bytes, name: "Tiny"), "\(count) bytes as a .pbix")
+        }
+    }
+
     func testExtractAll() throws {
         let bytes = try ZipWriter.archive([(path: "x/y/z.txt", data: Data("deep".utf8)), (path: "top.txt", data: Data("top".utf8))])
         let dest = Fixtures.tempDir("extract")

@@ -92,7 +92,7 @@ public final class ZipArchive {
         // ZIP64 locator sits immediately before the EOCD.
         if eocd >= 20, r.u32(eocd - 20) == 0x0706_4b50 {
             let z64 = r.u64(eocd - 20 + 8)
-            guard z64 <= UInt64(r.count - 56), r.u32(Int(z64)) == 0x0606_4b50 else { throw ZipError.corrupt("bad ZIP64 directory") }
+            guard r.count >= 56, z64 <= UInt64(r.count - 56), r.u32(Int(z64)) == 0x0606_4b50 else { throw ZipError.corrupt("bad ZIP64 directory") }
             let o = Int(z64)
             total = r.u64(o + 32); cdSize = r.u64(o + 40); cdOffset = r.u64(o + 48)
         }
