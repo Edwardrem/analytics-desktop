@@ -51,7 +51,17 @@ extension MLibrary {
 
             let done = DispatchSemaphore(value: 0)
             var result: (Data?, URLResponse?, Error?) = (nil, nil, nil)
-            URLSession.shared.dataTask(with: request) { d, r, e in result = (d, r, e); done.signal() }.resume()
+            // Stored credentials go only to the source they were saved for: a redirect to another host, or away from
+            // https, drops them (headers named in the query's own Headers option are the author's choice and stay).
+            var secretHeaders: Set<String> = []
+            switch stored ?? .anonymous {
+            case .basic, .bearer, .oauth: secretHeaders.insert("authorization")
+            case .apiKey(_, let header?, _): secretHeaders.insert(header.lowercased())
+            default: break
+            }
+            let task = URLSession.shared.dataTask(with: request) { d, r, e in result = (d, r, e); done.signal() }
+            if !secretHeaders.isEmpty { task.delegate = WebCredentialRedirectGuard(host: host.lowercased(), scheme: scheme, secretHeaders: secretHeaders) }
+            task.resume()
             done.wait()
             if let e = result.2 { throw MError.dataSource("Web.Contents couldn't reach '\(location)': \(e.localizedDescription)") }
             let status = (result.1 as? HTTPURLResponse)?.statusCode ?? 0, data = result.0 ?? Data()
@@ -90,5 +100,27 @@ extension MLibrary {
                 throw MError.dataSource("The \(product) connector (\(name)) isn't available in this version of \(AppIdentity.name).")
             }
         }
+    }
+}
+
+/// Keeps a source's stored credentials from following a redirect to a different host or from https to http.
+final class WebCredentialRedirectGuard: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    let host: String, scheme: String, secretHeaders: Set<String>
+    init(host: String, scheme: String, secretHeaders: Set<String>) { self.host = host; self.scheme = scheme; self.secretHeaders = secretHeaders }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(Self.guarded(request, host: host, scheme: scheme, secretHeaders: secretHeaders))
+    }
+
+    /// The redirected request, without the secret headers unless it stays on the same host and scheme.
+    static func guarded(_ request: URLRequest, host: String, scheme: String, secretHeaders: Set<String>) -> URLRequest {
+        let sameOrigin = request.url?.host?.lowercased() == host && request.url?.scheme?.lowercased() == scheme
+        guard !sameOrigin else { return request }
+        var next = request
+        for name in (request.allHTTPHeaderFields ?? [:]).keys where secretHeaders.contains(name.lowercased()) {
+            next.setValue(nil, forHTTPHeaderField: name)
+        }
+        return next
     }
 }
