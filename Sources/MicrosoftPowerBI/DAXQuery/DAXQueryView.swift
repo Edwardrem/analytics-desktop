@@ -249,10 +249,12 @@ private struct DAXToolbar: View {
             }
             if DAXAssistantHook.explain != nil {
                 Button { explaining = true } label: { Label("Explain", systemImage: "sparkles") }
+                    .help("Explain the selected query, or the whole query, in plain language")
                     .popover(isPresented: $explaining, arrowEdge: .bottom) { DAXExplainPopover(session: session) }
             }
             if DAXAssistantHook.write != nil {
                 Button { asking = true } label: { Label("Ask assistant", systemImage: "text.bubble") }
+                    .help("Describe a result and the assistant writes the query in a new tab")
                     .popover(isPresented: $asking, arrowEdge: .bottom) { DAXAskPopover(session: session, isPresented: $asking) }
             }
             Hairline(vertical: true).frame(height: 16).padding(.horizontal, Design.Space.xs)
@@ -418,13 +420,13 @@ private struct DAXExplainPopover: View {
     @EnvironmentObject var store: DocumentStore
     @ObservedObject var session: DAXQuerySession
     @State private var answer: String?
-    @State private var failure: String?
+    @State private var failure: Error?
 
     var body: some View {
         ScrollView {
             Group {
                 if let answer { Text(answer).textSelection(.enabled) }
-                else if let failure { Text(failure).foregroundStyle(.secondary) }
+                else if let failure { AssistantNotice(error: failure) }
                 else { HStack(spacing: Design.Space.s) { ProgressView().controlSize(.small); Text("Reading the query…").foregroundStyle(.secondary) } }
             }
             .font(Design.Typeface.body)
@@ -434,9 +436,9 @@ private struct DAXExplainPopover: View {
         .frame(width: 380)
         .frame(minHeight: 80, maxHeight: 360)
         .task {
-            guard let explain = DAXAssistantHook.explain, let text = session.activeTab?.text else { return }
-            do { answer = try await explain(text, store) }
-            catch { failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+            guard let explain = DAXAssistantHook.explain else { return }
+            do { answer = try await explain(session.assistantQueryText, store) }
+            catch { failure = error }
         }
     }
 }
@@ -447,7 +449,7 @@ private struct DAXAskPopover: View {
     @Binding var isPresented: Bool
     @State private var prompt = ""
     @State private var working = false
-    @State private var failure: String?
+    @State private var failure: Error?
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.s) {
@@ -456,7 +458,8 @@ private struct DAXAskPopover: View {
                 .lineLimit(2...5)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(submit)
-            if let failure { Text(failure).font(Design.Typeface.caption).foregroundStyle(.secondary) }
+            if let failure { AssistantNotice(error: failure) }
+            else if !AssistantTasks.isConfigured { AssistantNotice(message: AssistantTasks.setupMessage, showsSettings: true) }
             HStack {
                 if working { ProgressView().controlSize(.small) }
                 Spacer()
@@ -476,10 +479,10 @@ private struct DAXAskPopover: View {
         Task {
             do {
                 let dax = try await write(request, store)
-                session.addTab(text: dax)
+                session.addTab(name: DAXAssistant.tabName(for: request), text: dax)
                 isPresented = false
             } catch {
-                failure = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                failure = error
             }
             working = false
         }

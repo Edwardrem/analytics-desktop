@@ -189,6 +189,7 @@ enum RibbonLayout {
             ]),
             RibbonGroup(title: "Assistant", items: [
                 large("view.pane.assistant", "Assistant", "sparkles"),
+                registered("assistant.summarize"),
             ]),
             more([.edit, .data]),
         ]),
