@@ -27,7 +27,7 @@
     <nav aria-label="Docs"><ul><li><a href="index.html">All docs</a></li><li><a href="getting-started.html">Getting started</a></li><li><a href="microsoft-account.html" aria-current="page">Microsoft account</a></li><li><a href="data-sources.html">Data sources</a></li><li><a href="updates.html">Updates</a></li><li><a href="privacy.html">Privacy</a></li></ul></nav>
     <article class="prose">
 <h1>Microsoft account</h1>
-<p>A Microsoft account is optional. You need one only to open and save files in OneDrive and SharePoint, browse the OneLake catalog, publish to the Power BI service, or apply sensitivity labels. Publishing, OneLake and labels need a work or school account.</p>
+<p>A Microsoft account is optional. You need a work or school account to open and save files in OneDrive and SharePoint, browse the OneLake catalog, publish to the Power BI service, apply sensitivity labels, and connect to the Microsoft cloud <a href="data-sources.html#cloud">data sources</a>: SharePoint, Dataverse, Azure, Fabric and Power BI semantic models. It is also one way to sign in to Azure SQL, Azure Synapse, Fabric warehouses and Azure Database for PostgreSQL and MySQL.</p>
 <div class="note">
   <p>These features have so far been tested only against local stand-in servers, not against live Microsoft services. Please report anything that doesn’t work on <a href="https://github.com/Edwardrem/analytics-desktop/issues">GitHub</a>.</p>
 </div>
@@ -35,45 +35,57 @@
 <h2 id="sign-in">Signing in</h2>
 <ol>
   <li>Choose <b>Sign In with Microsoft…</b> from the account button in the toolbar, or open <b>Settings ▸ Microsoft account</b> and choose <b>Sign In…</b>.</li>
-  <li>Your browser opens Microsoft’s own sign-in page at <code>login.microsoftonline.com</code>. Analytics Desktop never sees your password.</li>
-  <li>Pick your account. The first time, Microsoft shows a <b>Permissions requested</b> page that lists what Analytics Desktop asks for. Review it and choose <b>Accept</b>.</li>
+  <li>Choose <b>Continue in Browser</b>. Your browser opens Microsoft’s own sign-in page, at <code>login.microsoftonline.com</code> for the global cloud. Analytics Desktop never sees your password.</li>
+  <li>Pick your work or school account. The first time, Microsoft shows a <b>Permissions requested</b> page that lists what Analytics Desktop asks for. Review it and choose <b>Accept</b>.</li>
   <li>The browser tells you that you can close the tab, and the app shows your name and account.</li>
 </ol>
-<p>If the browser can’t be used, the sign-in sheet offers a <b>device code</b> instead: you enter a short code at Microsoft’s device login page on any device.</p>
-<p>When you use a feature that needs a permission you haven’t granted yet, Microsoft may ask once more for just that permission.</p>
+<p>If the browser can’t return to the app, choose <b>Use a Code Instead</b>. You then enter a short code at Microsoft’s device login page, on any device.</p>
+<p>By default the app accepts any work or school account (the <code>organizations</code> authority). Settings ▸ Microsoft account can limit it to one tenant, or switch to the US Government or China cloud. Data sources sign in with a Microsoft account only in the global cloud.</p>
 
 <h2 id="permissions">What the app asks for</h2>
-<p>Permissions are delegated: the app acts as you, and can reach only what your account can already reach.</p>
+<p>Permissions are delegated: the app acts as you, and can reach only what your account can already reach. Each service gets its own token. Signing in asks only for the Microsoft Graph permissions. The others are asked for the first time you use a feature or data source that needs them, and then Microsoft may ask you once more to consent to just that service.</p>
 <ul>
-  <li><b>Sign you in and read your profile</b> (<code>User.Read</code>): your name and photo for the account button.</li>
-  <li><b>Read and write files you can access</b> (<code>Files.ReadWrite.All</code>): open and save reports in OneDrive and SharePoint.</li>
-  <li><b>Read items in all site collections</b> (<code>Sites.Read.All</code>): browse SharePoint sites and libraries.</li>
-  <li><b>Maintain access to data you have given it access to</b> (<code>offline_access</code>): stay signed in between launches.</li>
-  <li><b>Power BI and Fabric</b>: workspaces, semantic models, reports and items, for Publish and the OneLake catalog.</li>
+  <li><b>Microsoft Graph</b>, at sign-in:
+    <ul>
+      <li><code>User.Read</code>: your name and photo for the account button.</li>
+      <li><code>Files.ReadWrite.All</code>: open and save reports in OneDrive and SharePoint, and read OneDrive and SharePoint files as data.</li>
+      <li><code>Sites.Read.All</code>: browse SharePoint sites, libraries and lists.</li>
+      <li><code>offline_access</code>, <code>openid</code>, <code>profile</code>: stay signed in between launches, and know who you are.</li>
+    </ul>
+  </li>
+  <li><b>Power BI Service</b>: workspaces, semantic models and reports, for Publish, the OneLake catalog and the Power BI semantic models connector.</li>
+  <li><b>Microsoft Fabric</b>: workspace items and OneLake, for the OneLake catalog.</li>
+  <li><b>Microsoft Graph <code>InformationProtectionPolicy.Read</code></b>: the sensitivity labels you can apply.</li>
+  <li><b>Data sources</b>, each as <code>user_impersonation</code>: Azure SQL Database (SQL Server family), Azure Storage (Blob, Data Lake Storage Gen2 and OneLake), Dynamics CRM (Dataverse), Azure Data Explorer, and Azure OSSRDBMS Database (Azure Database for PostgreSQL and MySQL). SharePoint <code>AllSites.Read</code> covers SharePoint addresses read with the Web connector.</li>
 </ul>
 
 <h2 id="tokens">Where your sign-in is kept</h2>
-<p>The refresh token is stored only in the macOS Keychain. Tokens are sent only to Microsoft’s sign-in, Microsoft Graph, Power BI, Fabric and OneLake hosts; the app checks every host against an allow-list before it attaches a token. <b>Sign Out</b> in Settings ▸ Microsoft account removes the account and its tokens from the Keychain.</p>
+<p>The refresh token is stored only in the macOS Keychain. Each token is bound to the service it was issued for, and the app checks the host before it sends one. A Graph token goes only to <code>graph.microsoft.com</code> and a Power BI token only to <code>api.powerbi.com</code>. A SQL token goes only to Azure SQL, Synapse and Fabric SQL hosts, and a Storage token only to storage accounts and OneLake. A Dataverse, Data Explorer or SharePoint token goes only to that environment’s, cluster’s or tenant’s own address. If a request names any other host, nothing is sent and the app says why.</p>
+<p><b>Sign Out</b> in Settings ▸ Microsoft account removes the account and its refresh token from the Keychain. Passwords, keys and other data source credentials are kept in the Keychain too. You manage those in <b>Data source settings</b>; see <a href="data-sources.html#credentials">Credentials</a>.</p>
 
 <h2 id="admin-consent">For organisations: admin consent</h2>
 <p>Many organisations don’t let people approve apps on their own. If yours doesn’t, Microsoft shows <b>Need admin approval</b> instead of the permissions page, and may offer to send a request to your admin. Nothing is wrong with the app: an administrator has to approve it once for the whole organisation.</p>
 <p>An administrator (Cloud Application Administrator, Application Administrator or Global Administrator) can do that in one of two ways:</p>
 <ul>
-  <li><b>In the Microsoft Entra admin center.</b> After someone in the organisation has tried to sign in, open <b>Enterprise applications</b>, select Analytics Desktop, open <b>Permissions</b> and choose <b>Grant admin consent for</b> your organisation.</li>
-  <li><b>With an admin consent link.</b> Open the link below while signed in as an administrator, replacing <code>&lt;tenant&gt;</code> with your tenant ID or domain and <code>&lt;client-id&gt;</code> with the application ID shown in Settings ▸ Microsoft account:
-    <pre><code>https://login.microsoftonline.com/&lt;tenant&gt;/adminconsent?client_id=&lt;client-id&gt;</code></pre>
+  <li><b>In the Microsoft Entra admin center.</b> After someone in the organisation has tried to sign in, open <b>Enterprise applications</b>, find Analytics Desktop, open <b>Permissions</b> and choose <b>Grant admin consent for</b> your organisation.</li>
+  <li><b>With an admin consent link.</b> Open this link while signed in as an administrator, replacing <code>&lt;tenant&gt;</code> with your tenant ID or domain:
+    <!-- CLIENT_ID: replace {CLIENT_ID} on the next line with the app's Entra application (client) ID, the value of AnalyticsEntraClientID in Resources/Info.plist. It appears only here. -->
+    <pre><code>https://login.microsoftonline.com/&lt;tenant&gt;/adminconsent?client_id={CLIENT_ID}</code></pre>
+    This link is for the app’s own registration. If your organisation uses its own registration, use that registration’s application ID instead.
   </li>
 </ul>
 <p>Admins can also review the requested permissions, and revoke them at any time, from the same Enterprise applications page.</p>
 
 <h2 id="own-registration">Using your own app registration</h2>
-<p>Organisations that prefer an app registration they control can create one and enter its client ID and tenant in <b>Settings ▸ Microsoft account</b>. The same applies if Sign in reports that no app registration is configured.</p>
+<p>Analytics Desktop signs in with its own multi-tenant app registration, so normally there is nothing to set up. Its application ID is built into the app and isn’t shown in Settings: when it is in use, the <b>Application (client) ID</b> field in Settings ▸ Microsoft account is empty and shows the placeholder “The app's own registration”.</p>
+<p>If a copy of the app has no application ID built in, it says so: this copy has no Microsoft application ID, so get a build with one or enter your organisation’s own. <b>Sign In with Microsoft…</b> then opens <b>Set up Microsoft sign-in</b> to ask for an application ID first, and the Sign In buttons in Settings and in Get Data stay disabled until one is saved.</p>
+<p>To use a registration your organisation controls:</p>
 <ol>
-  <li>In Microsoft Entra ID, register a new application. Add the platform <b>Mobile and desktop applications</b> with the redirect URI <code>http://localhost</code>, and turn on <b>Allow public client flows</b>.</li>
-  <li>Add the delegated permissions listed above: Microsoft Graph <code>User.Read</code>, <code>Files.ReadWrite.All</code>, <code>Sites.Read.All</code> and <code>offline_access</code>, plus the Power BI Service and Fabric permissions for what you use.</li>
-  <li>Enter the application (client) ID and your tenant in Settings ▸ Microsoft account, then sign in.</li>
+  <li>In the Microsoft Entra admin center, register a new application that accepts accounts in any organizational directory. Add the platform <b>Mobile and desktop applications</b> with the redirect URI <code>http://localhost</code>, and turn on <b>Allow public client flows</b> (needed for device-code sign-in).</li>
+  <li>Add the delegated permissions listed above for the features you use.</li>
+  <li>In Settings ▸ Microsoft account, enter its application (client) ID and, if you like, your tenant, then choose <b>Save Registration</b> and sign in. To go back to the app’s own registration, empty the field and save again.</li>
 </ol>
-<p>No client secret is needed or used: the app signs in as a public client with PKCE.</p>
+<p><b>How to Register…</b> in Settings ▸ Microsoft account shows the same steps, with buttons to open the Entra admin center and copy the redirect URI. No client secret is needed or used: the app signs in as a public client with PKCE.</p>
     </article>
   </div>
 </main>

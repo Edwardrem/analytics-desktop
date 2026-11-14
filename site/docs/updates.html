@@ -31,19 +31,19 @@
 
 <h2 id="checking">How it checks</h2>
 <ul>
-  <li>The app checks a short while after launch, then once a day. Turn this off in <b>Settings ▸ Updates</b>.</li>
-  <li><b>Help ▸ Check for Updates…</b> checks right away.</li>
-  <li>Beta releases are offered only if you turn on <b>Include beta releases</b> in Settings ▸ Updates.</li>
+  <li>The app checks a minute after it opens, then once a day. Turn this off with <b>Check for updates automatically</b> in <b>Settings ▸ Updates</b>. It is on by default.</li>
+  <li><b>Help ▸ Check for Updates…</b>, or <b>Check Now</b> in Settings ▸ Updates, checks right away.</li>
+  <li>Beta releases are offered only if you turn on <b>Include beta releases</b> in Settings ▸ Updates. It is off by default.</li>
   <li>A check is one request to GitHub’s public releases API. It carries no account, identifier or usage data; GitHub sees only what any web request shows, such as your IP address.</li>
 </ul>
 
-<h2 id="whats-new">What’s New</h2>
-<p>When a newer version is available, a What’s New window shows its release notes, and the notes of every version you skipped. Choose <b>Install and Relaunch</b>, <b>Remind Me Later</b> or <b>Skip This Version</b>. The window opens again after an update installs, and any time from <b>Help ▸ What’s New</b>.</p>
+<h2 id="whats-new">What's New</h2>
+<p>When a newer version is available, a window titled <b>What's New in Analytics Desktop</b> shows its release notes, and the notes of every version you skipped. Choose <b>Install and Relaunch</b>, <b>Remind Me Later</b> or <b>Skip This Version</b>. The window opens again after an update installs, and any time from <b>Help ▸ What's New</b>.</p>
 
 <h2 id="verification">How an update is verified</h2>
 <p>Releases are ad-hoc signed, not signed with an Apple Developer ID, so macOS can’t vouch for who made them. The app does that check itself:</p>
 <ol>
-  <li>It downloads the release zip, <code>AnalyticsDesktop-&lt;version&gt;.zip</code>, and its <code>.sig</code> signature file from GitHub over HTTPS. Only <code>api.github.com</code>, <code>github.com</code> and <code>objects.githubusercontent.com</code> are contacted.</li>
+  <li>It downloads the release zip, <code>AnalyticsDesktop-&lt;version&gt;.zip</code>, and its <code>.sig</code> signature file from GitHub over HTTPS. Only <code>api.github.com</code>, <code>github.com</code>, <code>objects.githubusercontent.com</code> and <code>release-assets.githubusercontent.com</code> are contacted.</li>
   <li>It verifies the <b>Ed25519</b> signature over the zip’s exact bytes with the public key built into the app. The matching private key is held by the project owner and used only to sign releases. If the signature is missing, truncated or wrong, the update is refused.</li>
   <li>Only then does it unzip the app into a staging folder and check that it has the right bundle identifier, a newer version number and a complete app structure.</li>
   <li>It quits, swaps the new app into place, keeping the old one until the new one has launched, and relaunches.</li>
