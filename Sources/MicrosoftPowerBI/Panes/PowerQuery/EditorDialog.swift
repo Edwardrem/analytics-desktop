@@ -36,6 +36,8 @@ enum EditorDialog: Identifiable {
     /// The gear of an applied step: its settings dialog, filled from the step.
     case editStep(StepEdit)
     case sourceSettings(step: Int)
+    /// An applied step's name and description.
+    case stepProperties(index: Int)
     case advancedEditor
     case queryProperties(UUID)
     case renameQuery(UUID)
