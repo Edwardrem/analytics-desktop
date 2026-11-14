@@ -276,6 +276,25 @@ final class UpdateCheckTests: XCTestCase {
         XCTAssertEqual(shownCurrent().count, 1, "a failed automatic check stays quiet")
     }
 
+    func testARepositoryWithNoReleasesSaysSo() async throws {
+        let suite = "UpdateCheckTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        UpdateStubProtocol.on(api, .respond(status: 200, headers: [:], body: Self.list([])))
+
+        let (c, shown) = controller(defaults, installed: "0.9.0")
+        await c.check(manual: false)
+        XCTAssertEqual(c.phase, .noReleases)
+        XCTAssertTrue(shown().isEmpty, "an automatic check stays quiet")
+        await c.check(manual: true)
+        XCTAssertEqual(shown(), [.noReleases(v("0.9.0"))])
+        await c.whatsNew()
+        XCTAssertEqual(shown().last, .noReleases(v("0.9.0")), "What's New says there are no releases, not that notes are missing")
+
+        XCTAssertFalse(c.canVerifyUpdates, "the test controller has no key, like a build without UpdatePublicKey.txt")
+        XCTAssertTrue(UpdateController.missingKeyNote.contains("signing key"))
+    }
+
     func testReleaseNotesMarkdownBlocks() {
         let notes = "## New\r\nThe **ribbon** and\r\nthe panes.\r\n\r\n- One\r\n  - Nested\r\n1. First\r\n> Quote\r\n```\r\nlet x = 1\r\n```\r\n---\r\n#NotAHeading"
         XCTAssertEqual(MarkdownBlocks.parse(notes), [

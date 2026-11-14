@@ -13,6 +13,8 @@ final class UpdateController: ObservableObject {
         case idle
         case checking
         case upToDate
+        /// GitHub has no releases of the app at all yet.
+        case noReleases
         case available(AvailableUpdate)
         case downloading(AvailableUpdate, received: Int64, total: Int64)
         /// Downloaded, verified and staged; installs as the app quits.
@@ -54,6 +56,10 @@ final class UpdateController: ObservableObject {
         self.publicKey = publicKey
         lastCheck = defaults.object(forKey: Key.lastCheck) as? Date
     }
+
+    /// Whether this build carries the key updates are verified with. Without it updates can be found but not installed.
+    var canVerifyUpdates: Bool { (try? publicKey()) != nil }
+    static let missingKeyNote = "This copy of \(AppIdentity.name) was built without an update signing key, so it can find new versions but can't check that they're genuine or install them. Download new versions from GitHub instead."
 
     var automatic: Bool { defaults.object(forKey: AppSettings.Key.checkForUpdates.rawValue) as? Bool ?? true }
     var includeBeta: Bool { defaults.bool(forKey: AppSettings.Key.includeBetaUpdates.rawValue) }
@@ -100,6 +106,11 @@ final class UpdateController: ObservableObject {
             let releases = try await cache.fetch(with: http)
             lastCheck = Date()
             defaults.set(lastCheck, forKey: Key.lastCheck)
+            if releases.isEmpty {
+                phase = .noReleases
+                if manual { present(.noReleases(installed)) }
+                return
+            }
             guard let update = ReleaseFeed.update(installed: installed, releases: releases, includeBeta: includeBeta,
                                                   skipped: manual ? nil : skipped) else {
                 phase = .upToDate
@@ -124,6 +135,7 @@ final class UpdateController: ObservableObject {
         present(.loading)
         do {
             let releases = try await cache.fetch(with: http)
+            if releases.isEmpty { present(.noReleases(installed)); return }
             present(.installed(ReleaseFeed.release(for: installed, in: releases).map { [$0] } ?? [], installed))
         } catch {
             present(.failed(error.localizedDescription))

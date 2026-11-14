@@ -184,13 +184,37 @@ struct StartSurface: View {
                 .font(Design.Typeface.body).foregroundStyle(store.theme.secondaryColor)
             if !hasData {
                 HStack(spacing: Design.Space.m) {
-                    Button("Get Data…") { AppCommands.run("data.get", store) }.buttonStyle(.borderedProminent)
+                    Button("Get Data…") { AppCommands.run("data.get", store) }
+                        .buttonStyle(PageActionStyle(theme: store.theme, prominent: true))
+                        .help("Connect to a file, a database or an online source.")
                     Button("Try Sample Data") { AppCommands.run("data.sample", store) }
+                        .buttonStyle(PageActionStyle(theme: store.theme, prominent: false))
+                        .help("Load a small sample model to explore.")
                     Button("Open…") { AppCommands.run("file.open", store) }
+                        .buttonStyle(PageActionStyle(theme: store.theme, prominent: false))
+                        .help("Open a saved report or Power BI file.")
                 }
-                .controlSize(.large)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A button drawn on the report page itself. The page is painted in the report theme's colours, whatever the
+/// system appearance, so system-styled buttons there lose their labels (white text on the white page in dark mode).
+private struct PageActionStyle: ButtonStyle {
+    let theme: ThemeSpec
+    let prominent: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
+        return configuration.label
+            .font(Design.Typeface.body.weight(prominent ? .semibold : .regular))
+            .foregroundStyle(prominent ? Color.white : theme.foregroundColor)
+            .padding(.horizontal, Design.Space.l).padding(.vertical, Design.Space.s)
+            .background(shape.fill(prominent ? theme.accentColor : theme.secondaryColor.opacity(0.08)))
+            .overlay(shape.strokeBorder(prominent ? Color.clear : theme.secondaryColor.opacity(0.35), lineWidth: 1))
+            .opacity(configuration.isPressed ? 0.75 : 1)
+            .contentShape(shape)
     }
 }

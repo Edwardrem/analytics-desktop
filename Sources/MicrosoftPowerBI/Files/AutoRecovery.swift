@@ -18,6 +18,8 @@ final class AutoRecovery {
         var name: String
         var original: URL?
         var savedAt: Date
+        /// The process that wrote the copy. Copies kept by another instance that is still running aren't leftovers.
+        var process: Int32? = nil
     }
 
     /// The folder recovery copies go to unless Settings names another one.
@@ -31,11 +33,21 @@ final class AutoRecovery {
     private struct Slot { weak var store: DocumentStore?; var id: String; var lastWrite: Date? }
     private var slots: [ObjectIdentifier: Slot] = [:]
     private var timer: Timer?
+    private let isAppRunning: (Int32) -> Bool
 
-    init(directory: URL? = nil, defaults: UserDefaults = .standard) {
+    init(directory: URL? = nil, defaults: UserDefaults = .standard, isAppRunning: @escaping (Int32) -> Bool = AutoRecovery.isAppRunning) {
         self.fixedDirectory = directory
         self.defaults = defaults
+        self.isAppRunning = isAppRunning
     }
+
+    /// Whether `pid` is another running copy of this app (under the current or the earlier bundle identifier).
+    nonisolated static func isAppRunning(_ pid: Int32) -> Bool {
+        guard pid != ProcessInfo.processInfo.processIdentifier,
+              let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return false }
+        return id == AppIdentity.bundleIdentifier || id == AppIdentity.legacyBundleIdentifier
+    }
+    private static var ownProcess: Int32 { ProcessInfo.processInfo.processIdentifier }
 
     var directory: URL {
         if let fixedDirectory { return fixedDirectory }
@@ -83,7 +95,7 @@ final class AutoRecovery {
         var s = slot(for: store)
         s.lastWrite = now
         slots[ObjectIdentifier(store)] = s
-        let (doc, entry, folder) = (store.doc, Entry(id: s.id, name: store.displayName, original: store.fileURL, savedAt: now), directory)
+        let (doc, entry, folder) = (store.doc, Entry(id: s.id, name: store.displayName, original: store.fileURL, savedAt: now, process: Self.ownProcess), directory)
         Task.detached(priority: .utility) {
             let result = Result { try Self.writeFiles(doc, entry: entry, to: folder) }
             await MainActor.run {
@@ -123,7 +135,7 @@ final class AutoRecovery {
     /// Writes (or replaces) the store's recovery copy now.
     func write(_ store: DocumentStore, now: Date = Date()) throws {
         var s = slot(for: store)
-        try Self.writeFiles(store.doc, entry: Entry(id: s.id, name: store.displayName, original: store.fileURL, savedAt: now), to: directory)
+        try Self.writeFiles(store.doc, entry: Entry(id: s.id, name: store.displayName, original: store.fileURL, savedAt: now, process: Self.ownProcess), to: directory)
         s.lastWrite = now
         slots[ObjectIdentifier(store)] = s
     }
@@ -156,7 +168,8 @@ final class AutoRecovery {
         try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(id).json"))
     }
 
-    /// Recovery copies left behind by an earlier session (not by a document open now), newest first.
+    /// Recovery copies left behind by an earlier session (not by a document open now, here or in another running
+    /// instance of the app), newest first.
     func leftovers() -> [Entry] {
         let live = Set(slots.values.filter { $0.store != nil }.map(\.id))
         let d = JSONDecoder()
@@ -165,6 +178,7 @@ final class AutoRecovery {
         return files.filter { $0.pathExtension == "json" }.compactMap { url -> Entry? in
             guard let data = try? BoundedFile.read(url, limit: 64 * 1024), let entry = try? d.decode(Entry.self, from: data),
                   entry.id == url.deletingPathExtension().lastPathComponent, !live.contains(entry.id),
+                  !(entry.process.map(isAppRunning) ?? false),
                   FileManager.default.fileExists(atPath: directory.appendingPathComponent("\(entry.id).facet").path) else { return nil }
             return entry
         }.sorted { $0.savedAt > $1.savedAt }

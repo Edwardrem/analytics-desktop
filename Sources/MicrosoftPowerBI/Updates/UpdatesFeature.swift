@@ -70,6 +70,10 @@ struct UpdatesSettings: View {
                     Spacer()
                     Text(status).font(Design.Typeface.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
+                if !updates.canVerifyUpdates {
+                    Label(UpdateController.missingKeyNote, systemImage: "lock.trianglebadge.exclamationmark")
+                        .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
             }
             Section("Privacy") {
                 Text("Update checks send nothing beyond the request itself: a plain, unauthenticated request to GitHub's public release list (api.github.com), naming only \(AppIdentity.name) and its version as HTTP requires. No identifier, usage data or document information is sent. Updates are downloaded from GitHub and installed only when their signature matches the publisher's key.")
@@ -83,6 +87,7 @@ struct UpdatesSettings: View {
         switch updates.phase {
         case .idle, .checking: return ""
         case .upToDate: return "You have the newest version."
+        case .noReleases: return "No releases have been published on GitHub yet."
         case .available(let u): return "\(u.version) is available."
         case .downloading(let u, _, _): return "Downloading \(u.version)…"
         case .ready(let u): return "\(u.version) installs when you quit."
