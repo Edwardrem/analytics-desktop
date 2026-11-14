@@ -209,7 +209,6 @@ struct HeatmapView: View {
         for (d, v) in raw { byDay[calendar.startOfDay(for: d)] = v }
 
         // One year per row of blocks; months flow three across, 7 weekday rows tall.
-        let fs = env.labelSize
         let years = Array(Set(raw.map { calendar.component(.year, from: $0.date) })).sorted()
         let perRow = max(1, min(years.count, Int(size.width / 200)))
         let blockW = size.width / CGFloat(perRow)
