@@ -8,13 +8,17 @@ import FacetDesign
 struct GetDataDialog: View {
     @StateObject private var session: GetDataSession
     @Environment(\.dismiss) private var dismiss
+    private let connectNow: Bool
 
     /// `insideEditor`: opened from the Power Query Editor (New Source), where the navigator only adds queries.
-    init(store: DocumentStore, connector: DataConnector? = nil, location: String = "", insideEditor: Bool = false) {
+    /// `connectNow`: connect to `location` as the dialog opens and go straight to the navigator (a data source file);
+    /// if that fails, the connection form shows why and lets the details be corrected.
+    init(store: DocumentStore, connector: DataConnector? = nil, location: String = "", insideEditor: Bool = false, connectNow: Bool = false) {
         let s = GetDataSession(store: store)
         s.insideEditor = insideEditor
         if let connector { s.choose(connector, location: location) }
         _session = StateObject(wrappedValue: s)
+        self.connectNow = connectNow && connector != nil
     }
 
     var body: some View {
@@ -29,6 +33,7 @@ struct GetDataDialog: View {
         .frame(minWidth: 780, idealWidth: 860, minHeight: 520, idealHeight: 580)
         .onChange(of: session.isDone) { _, done in if done { dismiss() } }
         .onAppear { if session.isDone { dismiss() } }
+        .task { if connectNow, session.stage == .form { await session.connect() } }
     }
 }
 

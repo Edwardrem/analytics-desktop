@@ -83,6 +83,7 @@ struct EditorDialogHost: View {
         case .goToColumn: ColumnListDialog(session: session, choose: false)
         case .chooseColumns: ColumnListDialog(session: session, choose: true)
         case .queryProperties(let id): QueryPropertiesDialog(session: session, id: id)
+        case .stepProperties(let index): StepPropertiesDialog(session: session, index: index)
         case .nativeQuery(let text): NativeQueryDialog(text: text)
         case .diagnostics(let events, let title): DiagnosticsDialog(session: session, events: events, title: title)
         case .script(let python): ScriptDialog(session: session, python: python, edit: nil)
@@ -373,6 +374,36 @@ private struct QueryPropertiesDialog: View {
         if description != q.description { session.setDescription(id, description) }
         if load != q.loadEnabled { session.setLoadEnabled(id, load) }
         if load, refresh != (session.query(id)?.includeInRefresh ?? refresh) { session.setIncludeInRefresh(id, refresh) }
+        dismiss()
+    }
+}
+
+/// An applied step's properties, as Power Query has them: its name and its description, which the script keeps as
+/// the comment lines above the step.
+private struct StepPropertiesDialog: View {
+    @ObservedObject var session: QueryEditorSession
+    let index: Int
+    @State private var name = ""
+    @State private var description = ""
+    @State private var problem: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        DialogChrome(title: "Step Properties", canCommit: !name.trimmingCharacters(in: .whitespaces).isEmpty, width: 440,
+                     problem: problem, commit: done) {
+            PropertyRow("Name") { TextField("Name", text: $name).textFieldStyle(.roundedBorder) }
+            PropertyRow("Description") {
+                TextField("Description", text: $description, axis: .vertical).lineLimit(3...6).textFieldStyle(.roundedBorder)
+            }
+        }
+        .onAppear {
+            guard let step = session.steps[safe: index] else { return }
+            name = step.name; description = step.description
+        }
+    }
+
+    private func done() {
+        if let p = session.setStepProperties(at: index, name: name, description: description) { problem = p; return }
         dismiss()
     }
 }

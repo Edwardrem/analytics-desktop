@@ -111,19 +111,6 @@ final class FileFormatsTests: XCTestCase {
         XCTAssertNil(FileOperations.documentURL(for: pbit))
     }
 
-    func testDataSourceFilesBecomeQueriesWithUniqueNames() throws {
-        let pbids = dir.appendingPathComponent("Sales.pbids")
-        try Data(#"{"version":"0.1","connections":[{"details":{"protocol":"file","address":{"path":"/data/sales.csv"}},"mode":"Import"},{"details":{"protocol":"file","address":{"path":"/other/sales.csv"}},"mode":"DirectQuery"}]}"#.utf8).write(to: pbids)
-        let result = try FileOperations.read(pbids)
-        XCTAssertEqual(result.document.queries.map(\.name), ["sales", "sales (2)"])
-        XCTAssertTrue(result.document.queries[0].mScript.contains(#"Csv.Document(File.Contents("/data/sales.csv"))"#))
-        XCTAssertTrue(result.warnings.contains { $0.contains("Power Query Editor") })
-        XCTAssertTrue(result.warnings.contains { $0.contains("DirectQuery") })
-        XCTAssertNil(FileOperations.documentURL(for: pbids))
-        let existing = DataSourceFiles.queries(for: try PBIDS.read(from: pbids), existing: ["Sales"])
-        XCTAssertEqual(existing.map(\.name), ["sales (2)", "sales (3)"], "names are compared without case")
-    }
-
     func testTMDLFoldersOpenAsDocuments() throws {
         let folder = dir.appendingPathComponent("definition")
         for f in TMDL.serialize(model: document().model, queries: document().queries) {

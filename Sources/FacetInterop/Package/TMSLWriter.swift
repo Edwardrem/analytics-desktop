@@ -3,6 +3,10 @@ import FacetCore
 
 /// Writes a semantic model as a Tabular Model Scripting Language document (`model.bim`, and the
 /// `DataModelSchema` stream of a `.pbit` template). The inverse of `TMSLConverter`.
+///
+/// Incremental refresh and aggregations are written the way TMDL writes them (`TMDLRefreshPolicy`,
+/// `TMDLAggregations`): a table's `refreshPolicy`, each aggregation column's `alternateOf`, and the
+/// `Facet_aggregations` / `Facet_refreshPolicyDateColumn` annotations for what Tabular can't say.
 enum TMSLWriter {
     static func summarize(_ a: Aggregation) -> String {
         switch a {
@@ -19,12 +23,13 @@ enum TMSLWriter {
     static func document(model: SemanticModel, queries: [QueryDefinition]) -> JSONValue {
         let byName = Dictionary(queries.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
         let tableQueries = Set(model.tables.compactMap(\.sourceQuery))
+        let native = TMDLAggregations.native(in: model)
         var m: [String: JSONValue] = [
             "culture": js(model.culture.isEmpty ? "en-US" : model.culture),
             "dataAccessOptions": jo(["legacyRedirects": jb(true), "returnErrorValuesAsNull": jb(true)]),
             "defaultPowerBIDataSourceVersion": js("powerBI_V3"),
             "sourceQueryCulture": js(model.culture.isEmpty ? "en-US" : model.culture),
-            "tables": ja(model.tables.map { table($0, queries: byName) }),
+            "tables": ja(model.tables.map { table($0, queries: byName, aggregations: native) }),
         ]
         let relationships = model.relationships.map(relationship)
         if !relationships.isEmpty { m["relationships"] = ja(relationships) }
@@ -45,11 +50,47 @@ enum TMSLWriter {
             return jo(role)
         }
         if !roles.isEmpty { m["roles"] = ja(roles) }
-        m["annotations"] = ja([jo(["name": js("__PBI_TimeIntelligenceEnabled"), "value": js(model.autoDateTime ? "1" : "0")])])
+        var annotations = [jo(["name": js("__PBI_TimeIntelligenceEnabled"), "value": js(model.autoDateTime ? "1" : "0")])]
+        if !model.aggregations.isEmpty,
+           let v = TMDLAggregations.annotation(model.aggregations, native: Set(native.values.map(\.id))) {
+            annotations.append(facet(TMDLAggregations.annotationName, v))
+        }
+        m["annotations"] = ja(annotations)
         return jo(["name": js(model.name), "compatibilityLevel": jn(1567), "model": jo(m)])
     }
 
-    private static func table(_ t: ModelTable, queries: [String: QueryDefinition]) -> JSONValue {
+    /// A `Facet_*` annotation; its value is compact JSON, as in TMDL.
+    static func facet(_ name: String, _ value: JSONValue) -> JSONValue {
+        jo(["name": js("Facet_" + name), "value": js(value.compactString)])
+    }
+
+    /// A column's `alternateOf`: the detail column (an object reference, as TMSL writes references into another
+    /// table) or, to count rows, the detail table.
+    static func alternateOf(_ m: AggregationMapping) -> JSONValue? {
+        guard let s = TMDLAggregations.summarization(m) else { return nil }
+        var o: [String: JSONValue] = ["summarization": js(s)]
+        if m.detailColumn.isEmpty { o["baseTable"] = js(m.detailTable) }
+        else { o["baseColumn"] = jo(["table": js(m.detailTable), "column": js(m.detailColumn)]) }
+        return jo(o)
+    }
+
+    /// A table's `refreshPolicy`; `source` is the M of its partition, if it has one.
+    static func refreshPolicy(_ p: IncrementalRefreshPolicy, source: String?, table: String) -> JSONValue {
+        var o: [String: JSONValue] = [
+            "policyType": js("basic"),
+            "rollingWindowGranularity": js(p.archiveUnit), "rollingWindowPeriods": jn(p.archiveCount),
+            "incrementalGranularity": js(p.refreshUnit), "incrementalPeriods": jn(p.refreshCount),
+        ]
+        if p.onlyCompletePeriods { o["incrementalPeriodsOffset"] = jn(-1) }
+        if p.realTimeDirectQuery { o["mode"] = js("hybrid") }
+        if let c = p.detectChangesColumn {
+            o["pollingExpression"] = js(TMDLRefreshPolicy.pollingExpression(column: c, source: source, table: table))
+        }
+        if let source { o["sourceExpression"] = js(source) }
+        return jo(o)
+    }
+
+    private static func table(_ t: ModelTable, queries: [String: QueryDefinition], aggregations: [String: AggregationMapping]) -> JSONValue {
         var out: [String: JSONValue] = ["name": js(t.name)]
         if !t.description.isEmpty { out["description"] = js(t.description) }
         if t.isHidden { out["isHidden"] = jb(true) }
@@ -66,6 +107,7 @@ enum TMSLWriter {
             if !c.displayFolder.isEmpty { col["displayFolder"] = js(c.displayFolder) }
             if !c.description.isEmpty { col["description"] = js(c.description) }
             if let category = TMDLVocabulary.category(c.dataCategory) { col["dataCategory"] = js(category) }
+            if let m = aggregations[TMDLAggregations.key(t.name, c.name)], let a = alternateOf(m) { col["alternateOf"] = a }
             return jo(col)
         })
         if !t.measures.isEmpty {
@@ -91,6 +133,13 @@ enum TMSLWriter {
             out["partitions"] = ja([jo(["name": js(t.name), "mode": js(mode), "source": jo(["type": js("calculated"), "expression": js(expression)])])])
         } else if let name = t.sourceQuery, let q = queries[name] {
             out["partitions"] = ja([jo(["name": js(q.name), "mode": js(mode), "source": jo(["type": js("m"), "expression": js(q.mScript)])])])
+        }
+        if let p = t.incrementalRefresh {
+            let source = t.expression == nil ? t.sourceQuery.flatMap { queries[$0]?.mScript } : nil
+            out["refreshPolicy"] = refreshPolicy(p, source: source, table: t.name)
+            if TMDLRefreshPolicy.needsDateColumnAnnotation(p, source: source) {
+                out["annotations"] = ja([facet(TMDLRefreshPolicy.dateColumnAnnotation, .string(p.dateColumn))])
+            }
         }
         return jo(out)
     }

@@ -46,15 +46,28 @@ enum PBIExpr {
 
     // MARK: Fields
 
+    /// Power BI's names for a date column's auto date/time hierarchy: the column's variation and the hierarchy in it.
+    static let dateVariation = "Variation", dateHierarchy = "Date Hierarchy"
+
     /// The expression for a field. With `alias`, the source is `{"Source": alias}` (inside a query); otherwise `{"Entity": table}`.
+    /// A level of a date column's auto date/time hierarchy is a `HierarchyLevel` of the column's `Date Hierarchy`,
+    /// reached through its variation (`PropertyVariationSource`), as Power BI Desktop writes it.
     static func field(_ f: FieldRef, alias: String? = nil) -> JSONValue {
         let source = jo(["SourceRef": alias.map { jo(["Source": js($0)]) } ?? jo(["Entity": js(f.table)])])
         let base = jo(["Expression": source, "Property": js(f.name)])
         if f.kind == .measure { return jo(["Measure": base]) }
-        if let code = PowerBIMapping.aggregationCode(f.aggregation) {
-            return jo(["Aggregation": jo(["Expression": jo(["Column": base]), "Function": jn(code)])])
+        let grouped: JSONValue
+        if let level = f.dateLevel {
+            let variation = jo(["PropertyVariationSource": jo(["Expression": source, "Name": js(dateVariation), "Property": js(f.name)])])
+            grouped = jo(["HierarchyLevel": jo(["Expression": jo(["Hierarchy": jo(["Expression": variation, "Hierarchy": js(dateHierarchy)])]),
+                                                 "Level": js(level)])])
+        } else {
+            grouped = jo(["Column": base])
         }
-        return jo(["Column": base])
+        if let code = PowerBIMapping.aggregationCode(f.aggregation) {
+            return jo(["Aggregation": jo(["Expression": grouped, "Function": jn(code)])])
+        }
+        return grouped
     }
 
     /// Parses a field expression. `aliases` maps query source aliases to entity names.
@@ -75,24 +88,25 @@ enum PBIExpr {
         if let h = j["HierarchyLevel"], let level = h["Level"]?.stringValue {
             let hier = h["Expression"]?["Hierarchy"]
             if let t = entity(hier?["Expression"]) { return .column(t, level) }
-            // Auto date/time hierarchies hang off a column via PropertyVariationSource.
+            // Auto date/time hierarchies hang off a column via PropertyVariationSource: the level is the field's date level.
             if let pvs = hier?["Expression"]?["PropertyVariationSource"], let t = entity(pvs["Expression"]),
                let p = pvs["Property"]?.stringValue {
-                var f = FieldRef.column(t, p)
-                f.displayName = level
-                return f
+                return .dateLevel(t, p, level)
             }
         }
         return nil
     }
 
-    /// "Sales.Region", "Sum(Sales.Amount)".
+    /// "Sales.Region", "Sum(Sales.Amount)", "Sales.Order Date.Variation.Date Hierarchy.Year".
     static func queryRef(_ f: FieldRef) -> String {
-        let base = "\(f.table).\(f.name)"
+        var base = "\(f.table).\(f.name)"
+        if f.kind == .column, let level = f.dateLevel { base += ".\(dateVariation).\(dateHierarchy).\(level)" }
         return f.kind == .column && f.aggregation != .none ? "\(PowerBIMapping.aggregationQueryName(f.aggregation))(\(base))" : base
     }
+    /// "Region", "Sum of Amount", "Order Date Year".
     static func nativeQueryRef(_ f: FieldRef) -> String {
-        f.kind == .column && f.aggregation != .none ? "\(f.aggregation.displayName) of \(f.name)" : f.name
+        let base = f.kind == .column ? f.dateLevel.map { "\(f.name) \($0)" } ?? f.name : f.name
+        return f.kind == .column && f.aggregation != .none ? "\(f.aggregation.displayName) of \(base)" : base
     }
 
     // MARK: Filters
