@@ -165,6 +165,7 @@ final class LiveCalculation: CalculationService {
             out.baseline = baseline
             out.queryMilliseconds = ms
             out.daxQuery = dax
+            out.dynamicTitle = DynamicTitles.text(for: spec, filters: filters, model: model) { try engine.query($0).first }
             return out
         } catch {
             let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000

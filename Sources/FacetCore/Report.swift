@@ -523,6 +523,8 @@ public struct VisualData: Sendable {
     public var queryMilliseconds: Double = 0
     /// The DAX query that produced this data (for Performance Analyzer / copy query).
     public var daxQuery: String = ""
+    /// The title a measure supplies (a `.title` conditional format), evaluated under the visual's filters.
+    public var dynamicTitle: String?
 
     public init(table: DataTable = DataTable(), roles: [String: [Int]] = [:], fields: [FieldRef?] = [],
                 formats: [String] = [], totals: [Value] = [], error: String? = nil) {

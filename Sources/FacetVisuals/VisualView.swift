@@ -111,6 +111,7 @@ public struct VisualView: View {
     }
 
     private func titleText(_ f: ResolvedFormat) -> String {
+        if let t = data.dynamicTitle, !t.isEmpty { return t }
         if let t = spec.fmt("title", "text")?.stringValue { return t }
         if spec.type.isPageElement { return "" }
         return VisualTitles.automatic(for: spec)
