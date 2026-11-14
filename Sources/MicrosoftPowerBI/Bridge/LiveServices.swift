@@ -4,6 +4,7 @@ import FacetDAX
 import FacetQuery
 import FacetAnalytics
 import FacetInterop
+import FacetVisuals
 
 // The live implementations of the app's service protocols: the DAX engine, the analytics layer,
 // and the Power Query engine. Created by `Services.live()`.
@@ -46,6 +47,25 @@ final class LiveCalculation: CalculationService {
         return engine.check(expression, kind: daxKind, homeTable: homeTable).map {
             ExpressionIssue(message: $0.message, range: $0.range, isWarning: $0.severity == .warning)
         }
+    }
+
+    func rows(of table: String, request: VisualRequest) throws -> DataTable {
+        let filters = filterTables(request)
+        guard !filters.isEmpty else {
+            guard let all = engine.data[table] else { throw DAXError("There is no table named \(table).") }
+            return all
+        }
+        let dax = "EVALUATE CALCULATETABLE(\(ModelDAX.table(table)), \(filters.joined(separator: ", ")))"
+        guard var rows = try engine.query(dax).first else { throw DAXError("The query for \(table)'s rows returned nothing.") }
+        // Result columns may come back qualified ('Sales'[Amount]); the analysis wants the plain names.
+        for i in rows.columns.indices {
+            let name = rows.columns[i].name
+            if name.hasSuffix("]"), let open = name.lastIndex(of: "[") {
+                rows.columns[i].name = String(name[name.index(after: open)..<name.index(before: name.endIndex)]).replacingOccurrences(of: "]]", with: "]")
+            }
+        }
+        rows.name = table
+        return rows
     }
 
     // MARK: Visual queries
@@ -331,6 +351,14 @@ final class LiveCalculation: CalculationService {
     }
 
     private func slicerTables(_ s: VisualRequest.Slicer) -> [String] {
+        // An input slicer's terms are matched with its operator, not taken as values.
+        if s.type == .inputSlicer, let field = s.fields.first, field.kind == .column, !s.state.selected.isEmpty {
+            return [inputSlicerTable(field, terms: s.state.selected, op: s.matchOperator)]
+        }
+        // A hierarchy slicer selects whole paths: a parent alone selects everything under it.
+        if !s.state.hierarchyPaths.isEmpty, let table = hierarchyTable(s.fields, paths: s.state.hierarchyPaths) {
+            return [table]
+        }
         var out: [String] = []
         for field in s.fields where field.kind == .column {
             let ref = ModelDAX.reference(field)
@@ -353,6 +381,31 @@ final class LiveCalculation: CalculationService {
             }
         }
         return out
+    }
+
+    /// The values of a column that an input slicer's terms match, as the slicer itself matches them.
+    private func inputSlicerTable(_ field: FieldRef, terms: [Value], op: String) -> String {
+        let ref = ModelDAX.reference(field)
+        var seen = Set<Value>(), matching: [Value] = []
+        for v in engine.data[field.table]?.column(field.name)?.values ?? [] where seen.insert(v).inserted {
+            if CmpSlInputMatcher.matches(v, terms: terms, op: op) { matching.append(v) }
+        }
+        guard !matching.isEmpty else { return "FILTER(ALL(\(ref)), FALSE())" }
+        return "FILTER(ALL(\(ref)), \(ref) IN { \(matching.map(ModelDAX.literal).joined(separator: ", ")) })"
+    }
+
+    /// One filter over the hierarchy's columns keeping the rows on any ticked path. The levels
+    /// must come from one table (as a hierarchy's do); otherwise nil.
+    private func hierarchyTable(_ fields: [FieldRef], paths: [[Value]]) -> String? {
+        let levels = fields.filter { $0.kind == .column }
+        guard let table = levels.first?.table, levels.allSatisfy({ $0.table == table }) else { return nil }
+        let refs = levels.map(ModelDAX.reference)
+        let alternatives = paths.compactMap { path -> String? in
+            let parts = zip(refs, path).map { "\($0) = \(ModelDAX.literal($1))" }
+            return parts.isEmpty ? nil : "(" + parts.joined(separator: " && ") + ")"
+        }
+        guard !alternatives.isEmpty else { return nil }
+        return "FILTER(ALL(\(refs.joined(separator: ", "))), \(alternatives.joined(separator: " || ")))"
     }
 
     private func crossFilterTables(_ points: [DataPointSelection]) -> [String] {
@@ -458,6 +511,7 @@ extension Services {
 @MainActor
 enum LiveBridge {
     static func register() {
+        DataExporters.register()
         FileOperations.importers["pbip"] = { url in
             let (doc, warnings) = try PBIPProject.read(from: url)
             return FileOperations.ImportResult(document: doc, warnings: warnings.map(\.description))

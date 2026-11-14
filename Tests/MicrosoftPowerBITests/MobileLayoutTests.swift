@@ -135,13 +135,13 @@ final class MobileLayoutTests: XCTestCase {
     // MARK: Page view
 
     func testPageViewScales() {
-        let page = PageSize.widescreen   // 1280 × 720, 32 pt kept free on every side
-        // Width-bound viewport: (1000 − 64) / 1280 = 0.73125 either way.
-        XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: CGSize(width: 1000, height: 800), zoom: 2), 0.73125, accuracy: 1e-9)
-        XCTAssertEqual(PageView.scale(mode: .fitWidth, page: page, viewport: CGSize(width: 1000, height: 800), zoom: 2), 0.73125, accuracy: 1e-9)
-        // Short viewport: fit to page is bound by height (336 / 720), fit to width fills the width (1280 / 1280).
-        XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: CGSize(width: 1344, height: 400), zoom: 2), 336.0 / 720.0, accuracy: 1e-9)
-        XCTAssertEqual(PageView.scale(mode: .fitWidth, page: page, viewport: CGSize(width: 1344, height: 400), zoom: 2), 1, accuracy: 1e-9)
+        let page = PageSize.widescreen   // 1280 × 720, 16 pt kept free on every side
+        // Width-bound viewport: (1000 − 32) / 1280 = 0.75625 either way.
+        XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: CGSize(width: 1000, height: 800), zoom: 2), 0.75625, accuracy: 1e-9)
+        XCTAssertEqual(PageView.scale(mode: .fitWidth, page: page, viewport: CGSize(width: 1000, height: 800), zoom: 2), 0.75625, accuracy: 1e-9)
+        // Short viewport: fit to page is bound by height (368 / 720), fit to width fills the width (1312 / 1280).
+        XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: CGSize(width: 1344, height: 400), zoom: 2), 368.0 / 720.0, accuracy: 1e-9)
+        XCTAssertEqual(PageView.scale(mode: .fitWidth, page: page, viewport: CGSize(width: 1344, height: 400), zoom: 2), 1312.0 / 1280.0, accuracy: 1e-9)
         XCTAssertEqual(PageView.scale(mode: .zoom, page: page, viewport: CGSize(width: 1344, height: 400), zoom: 2), 2)
         // A viewport smaller than the padding never produces a zero or negative scale.
         XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: CGSize(width: 10, height: 10), zoom: 1), 0.1)

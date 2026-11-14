@@ -220,6 +220,26 @@ final class GallerySampleRenderTests: XCTestCase {
     }
 }
 
+/// The calendar heatmap's year block: four rows of months that must stay inside the block.
+final class CalendarGridTests: XCTestCase {
+    func testFourMonthRowsFitInTheirYearBlock() {
+        // A roomy block: cells at their 22-pt maximum under a 12-pt header.
+        let big = HeatmapView.calendarGrid(monthWidth: 400, blockHeight: 1000)
+        XCTAssertEqual(big.cell, CGSize(width: 22, height: 22))
+        XCTAssertEqual(big.header, 12)
+        XCTAssertEqual(big.rowHeight, 7 * 22 + 12 + 6)
+        // 3 years in a 420 × 280 visual leave about 77 pt a year: 19.25 pt a row.
+        for height in [77.0, 40, 120, 233, 500] as [CGFloat] {
+            let g = HeatmapView.calendarGrid(monthWidth: 120, blockHeight: height)
+            XCTAssertLessThanOrEqual(g.rowHeight * 4, height + 1e-9, "rows overflow a \(height)-pt year")
+            XCTAssertLessThanOrEqual(g.header + 7 * g.cell.height, g.rowHeight + 1e-9, "days overflow their row at \(height) pt")
+            XCTAssertGreaterThan(g.cell.height, 0)
+        }
+        XCTAssertEqual(HeatmapView.calendarGrid(monthWidth: 120, blockHeight: 77).rowHeight, 19.25)
+        XCTAssertEqual(HeatmapView.calendarGrid(monthWidth: 82, blockHeight: 400).cell.width, 10)
+    }
+}
+
 /// Waterfall and ribbon charts show a cross-highlight inside the unhighlighted shape.
 @MainActor
 final class HighlightBaselineTests: XCTestCase {

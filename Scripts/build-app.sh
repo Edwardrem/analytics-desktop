@@ -25,6 +25,7 @@ iconutil -c icns "$ICONSET" -o "$STAGE/Contents/Resources/MicrosoftPowerBI.icns"
 # Stage under a neutral path, clear extended attributes there, then sign the final location —
 # signing after the copy keeps the sealed resources intact (file-provider attributes otherwise
 # break verification).
+mkdir -p "$(dirname "$APP")"
 cp -R "$STAGE" "$APP"
 rm -rf "$WORK"
 

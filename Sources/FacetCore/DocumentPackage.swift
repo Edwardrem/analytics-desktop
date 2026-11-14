@@ -20,8 +20,8 @@ public enum DocumentPackage {
         case notAPackage(URL), newerFormat(Int)
         public var errorDescription: String? {
             switch self {
-            case .notAPackage(let u): return "“\(u.lastPathComponent)” is not a Facet document."
-            case .newerFormat(let v): return "This document was saved by a newer version of Facet (format \(v))."
+            case .notAPackage(let u): return "“\(u.lastPathComponent)” is not an \(AppIdentity.name) document."
+            case .newerFormat(let v): return "This document was saved by a newer version of \(AppIdentity.name) (format \(v))."
             }
         }
     }

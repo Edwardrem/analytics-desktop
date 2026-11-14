@@ -46,7 +46,11 @@ enum ModelDAX {
         if agg == .none {
             let col = model.table(f.table)?.column(f.name)
             agg = col?.summarizeBy ?? .none
-            if agg == .none { agg = (col?.dataType.isNumeric ?? false) ? .sum : .count }
+            if agg == .none {
+                // Coordinates are averaged: the sum of a place's latitudes is not a latitude.
+                let isCoordinate = col?.dataCategory == .latitude || col?.dataCategory == .longitude
+                agg = isCoordinate ? .average : (col?.dataType.isNumeric ?? false) ? .sum : .count
+            }
         }
         let reference = column(f.table, f.name)
         switch agg {

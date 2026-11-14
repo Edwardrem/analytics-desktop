@@ -44,7 +44,8 @@ extension DocumentStore {
         c.onAction = { [weak self] action in self?.perform(action, from: id) }
         c.onDrill = { [weak self] action in self?.drill(action, in: id) }
         c.onSpecChange = { [weak self] new in
-            self?.updateVisual(id, name: "Change Visual", coalesce: "spec-\(id)") { $0 = new }
+            // A slicer's settings (an input slicer's operator) change what it filters on the whole page.
+            self?.updateVisual(id, name: "Change Visual", coalesce: "spec-\(id)", invalidates: new.type.isSlicer ? .visuals(nil) : nil) { $0 = new }
         }
         c.modernTooltips = report.settings.modernTooltips
         c.drillthroughTargets = { [weak self] point in

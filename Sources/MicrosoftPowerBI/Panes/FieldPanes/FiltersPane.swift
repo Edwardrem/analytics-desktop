@@ -192,17 +192,44 @@ private struct FilterEditor: View {
 
     private var kind: Binding<FilterSpec.Kind> {
         Binding(get: { filter.kind }, set: { newKind in
-            store.updateFilter(id: filter.id, scope: scope, name: "Change Filter Type") { f in
-                guard f.kind != newKind else { return }
-                f.kind = newKind
-                switch newKind {
-                case .basic: f.values = f.conditions.map(\.value)
-                case .advanced: f.conditions = [FilterCondition(op: .equals, value: f.values.first ?? .null)]
-                case .topN: f.topN = TopNFilter()
-                case .relativeDate, .relativeTime: f.relative = RelativeDateFilter()
-                }
-            }
+            store.updateFilter(id: filter.id, scope: scope, name: "Change Filter Type") { FilterEditing.setKind(newKind, of: &$0) }
         })
+    }
+}
+
+/// The edits the Filters pane makes to a filter, kept apart from the views so they can be tested.
+enum FilterEditing {
+    /// Switches a filter to another type, carrying over what makes sense.
+    static func setKind(_ kind: FilterSpec.Kind, of f: inout FilterSpec) {
+        guard f.kind != kind else { return }
+        f.kind = kind
+        switch kind {
+        case .basic: f.values = f.conditions.map(\.value)
+        case .advanced: f.conditions = [FilterCondition(op: .equals, value: f.values.first ?? .null)]
+        case .topN: f.topN = TopNFilter()
+        case .relativeDate, .relativeTime: f.relative = RelativeDateFilter()
+        }
+    }
+
+    /// What a Top N filter can rank by (its By value well): every visible measure, then every
+    /// visible numeric column with the summarization it gets in a visual.
+    static func topNCandidates(_ model: SemanticModel) -> [FieldRef] {
+        var out: [FieldRef] = []
+        for (table, measure) in model.allMeasures where !measure.isHidden {
+            out.append(.measure(table, measure.name))
+        }
+        for table in model.tables where !table.isHidden {
+            for column in table.columns where !column.isHidden && column.dataType.isNumeric {
+                let aggregation: Aggregation = column.summarizeBy == .none ? .sum : column.summarizeBy
+                out.append(.column(table.name, column.name, aggregation))
+            }
+        }
+        return out
+    }
+
+    /// Sets (or, with nil, clears) the field a Top N filter ranks by.
+    static func setTopNBy(_ field: FieldRef?, of f: inout FilterSpec) {
+        f.topN.by = field
     }
 }
 
@@ -358,7 +385,27 @@ private struct TopNEditor: View {
                     }
                 }
             }
+            // The By value well: what the items are ranked by. Without it the filter does nothing.
+            Picker("By value", selection: by) {
+                Text("Choose a value").tag(String?.none)
+                ForEach(candidates, id: \.key) { field in
+                    Text(field.caption).tag(String?.some(field.key))
+                }
+            }
+            .font(Design.Typeface.caption)
+            if filter.topN.by == nil {
+                Text("Choose the value that ranks the items.").font(Design.Typeface.caption).foregroundStyle(.tertiary)
+            }
         }
+    }
+
+    private var candidates: [FieldRef] { FilterEditing.topNCandidates(store.model) }
+
+    private var by: Binding<String?> {
+        Binding(get: { filter.topN.by?.key }, set: { key in
+            let field = key.flatMap { k in candidates.first { $0.key == k } }
+            store.updateFilter(id: filter.id, scope: scope, name: "Change Filter") { FilterEditing.setTopNBy(field, of: &$0) }
+        })
     }
 
     private var direction: Binding<Bool> {

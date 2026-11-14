@@ -127,10 +127,10 @@ final class LayoutAidTests: XCTestCase {
 
     func testPageViewModes() {
         let page = PageSize(width: 1280, height: 720)
-        let viewport = CGSize(width: 704, height: 1000)   // 640 × 936 inside the padding
+        let viewport = CGSize(width: 672, height: 1000)   // 640 × 968 inside the 16-pt margin
         XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: viewport, zoom: 3), 0.5)
         XCTAssertEqual(PageView.scale(mode: .fitWidth, page: page, viewport: viewport, zoom: 3), 0.5)
-        XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: CGSize(width: 2624, height: 424), zoom: 1), 0.5,
+        XCTAssertEqual(PageView.scale(mode: .fitPage, page: page, viewport: CGSize(width: 2624, height: 392), zoom: 1), 0.5,
                        "a short window fits the height")
         XCTAssertEqual(PageView.scale(mode: .zoom, page: page, viewport: viewport, zoom: 1), 1)
 
