@@ -7,10 +7,10 @@ the Applied Steps editor and the UI transforms. Depends only on FacetCore; links
 
 | Type | Use |
 | --- | --- |
-| `QueryEngine(queries:environment:)` | `evaluate`, `evaluatePreview` (cell errors, structured cells, truncation), `evaluateValue`, `evaluateExpression`, `refreshAll` (dependency order, parallel, progress), `stepFolding`, `nativeQuery(for:upToStep:)`, `directQuery(_:)`, `diagnostics`, `nativeQueriesSent`, `traceMessages`, `dependencyGraph()`, `profile(_:upToStep:rowLimit:)` |
+| `QueryEngine(queries:environment:)` | `evaluate`, `evaluatePreview` (cell errors, structured cells, truncation), `evaluateValue`, `evaluateExpression`, `refreshAll` (dependency order, parallel, progress), `stepFolding`, `nativeQuery(for:upToStep:)`, `directQuery(_:)`, `diagnostics`, `nativeQueriesSent`, `traceMessages`, `dependencyGraph()`, `profile(_:upToStep:rowLimit:)`, `structuredColumn(_:of:upToStep:sampleRows:)` (kind and field names of a column of nested tables/records/lists, for Expand) |
 | `QueryEnvironment` | base directory for relative paths, credentials, privacy levels + firewall switch, native query approval, script switch and interpreter paths, culture, clock, time zone, `maxSourceBytes` |
-| `MScript` | `steps(of:)`, `appending(_:to:)`, `insertingStep`, `renamingStep`, `deletingStep`, `movingStep`, `replacingStepExpression`, `truncating`, `validate`, `format`, `referencedIdentifiers`, `duplicateQuery`, `referenceQuery`, `parameterScript`, `toFunction` |
-| `Transform` | one case per Power Query Editor command; `stepName` and `expression(previous:)` give the step; `Transform.detectTypes(in:)` is "Detect data type" |
+| `MScript` | `steps(of:)`, `appending(_:to:)`, `insertingStep`, `renamingStep`, `deletingStep`, `movingStep`, `replacingStepExpression`, `truncating`, `validate`, `format`, `referencedIdentifiers`, `duplicateQuery`, `referenceQuery`, `parameterScript`, `toFunction`, `sourceReferences(in:)` (the data sources a script names, found without running it, recorded as the engine records them) |
+| `Transform` | one case per Power Query Editor command; `stepName` and `expression(previous:)` give the step; `Transform.detectTypes(in:)` is "Detect data type"; `Transform.recognize(_:)` reads a step's M back as the transform and previous step ("Edit settings"), verified by re-emitting it |
 | `ColumnFromExamples.infer(table:examples:columns:)` | the M expression that reproduces typed examples |
 | `ColumnProfiler.profile(_:)` → `[ColumnProfile]` | column quality (valid / error / empty), distribution (distinct, unique, value histogram) and statistics for a `QueryPreview` or `DataTable` |
 | `MInterpreter` | evaluates M text directly (`evaluate(_:)`), without queries |
