@@ -77,6 +77,11 @@ final class GetDataSession: ObservableObject {
         guard let kind = connector.kind else { return }
         self.connector = connector
         request = SourceRequest(kind: kind, location: location)
+        // A recent database server is remembered as "server;database".
+        if kind.isServer, let split = location.firstIndex(of: ";") {
+            request.location = String(location[..<split])
+            request.database = String(location[location.index(after: split)...])
+        }
         reset()
         if kind == .blank { Task { await finish(.transform) } } else { stage = .form }
     }
@@ -105,12 +110,15 @@ final class GetDataSession: ObservableObject {
         combine = nil; scripts = [:]; headersDecided = false; promoteHeaders = false
     }
 
-    /// The database file a native query would run against, as the engine names it.
-    private var nativeQueryLocation: String { (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath }
+    /// The database a native query would run against, as the engine names it (kind and location).
+    private var nativeQuerySource: (kind: String, location: String) {
+        if request.kind.isServer, let s = SourcePlanner.dataSource(request) { return (s.kind, s.location) }
+        return ("SQLite", (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath)
+    }
     var pendingNativeQuery: String { request.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     func approveNativeQuery() async {
-        security.approve(query: pendingNativeQuery, kind: "SQLite", location: nativeQueryLocation)
+        security.approve(query: pendingNativeQuery, kind: nativeQuerySource.kind, location: nativeQuerySource.location)
         await connect()
     }
 
@@ -118,8 +126,8 @@ final class GetDataSession: ObservableObject {
     func connect() async {
         if let message = SourcePlanner.validationMessage(request) { error = message; return }
         reset()
-        if request.kind == .sqlite, !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
-           !security.isApproved(query: pendingNativeQuery, kind: "SQLite", location: nativeQueryLocation) {
+        if request.kind.isDatabase, !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
+           !security.isApproved(query: pendingNativeQuery, kind: nativeQuerySource.kind, location: nativeQuerySource.location) {
             stage = .approval
             return
         }
@@ -188,7 +196,7 @@ final class GetDataSession: ObservableObject {
                 shown = try await sample(script)
             }
         }
-        let typed = [.sqlite, .python, .r].contains(request.kind)
+        let typed = request.kind.isDatabase || [.python, .r].contains(request.kind)
         if detectTypes, !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)
@@ -275,7 +283,7 @@ final class GetDataSession: ObservableObject {
                 // One record per location: OData reads its feed through Web.Contents, which is the same source.
                 for s in engine.dataSourcesAccessed where !sources.contains(where: { $0.location == s.location }) { sources.append(s) }
             }
-            let directQuery = request.kind == .sqlite && request.directQuery
+            let directQuery = request.kind.isDatabase && request.directQuery
             if directQuery {
                 // The same check as the storage-mode menu: DirectQuery only when every step folds into SQL.
                 for table in tables {
@@ -319,7 +327,9 @@ final class GetDataSession: ObservableObject {
                     }
                 }
             }
-            security.noteRecent(kind: request.kind, location: request.location)
+            security.noteRecent(kind: request.kind, location: request.kind.isServer
+                                ? request.location.trimmingCharacters(in: .whitespacesAndNewlines) + ";" + request.database.trimmingCharacters(in: .whitespacesAndNewlines)
+                                : request.location)
             switch destination {
             case .load:
                 let rows = tables.reduce(0) { $0 + $1.rowCount }

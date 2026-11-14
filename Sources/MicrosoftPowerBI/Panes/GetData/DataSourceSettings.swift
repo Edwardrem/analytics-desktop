@@ -110,7 +110,7 @@ struct DataSourceSettingsSheet: View {
     private func symbol(_ kind: String) -> String {
         switch kind {
         case "Folder": return "folder"
-        case "SQLite": return "cylinder"
+        case "SQLite", "PostgreSQL", "MySQL", "MariaDB", "AmazonRedshift": return "cylinder"
         case "Web", "OData": return "globe"
         default: return "doc"
         }

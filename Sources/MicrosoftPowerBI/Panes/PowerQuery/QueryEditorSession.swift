@@ -280,7 +280,8 @@ final class QueryEditorSession: ObservableObject {
     static func mayFold(_ q: QueryDefinition, in queries: [QueryDefinition]) -> Bool {
         let graph = QueryDependencyGraph(queries: queries)
         let names = graph.transitiveDependencies(of: q.name).union([q.name])
-        return queries.contains { names.contains($0.name) && $0.mScript.contains("Sqlite.Database") }
+        let databases = ["Sqlite.Database", "PostgreSQL.Database", "MySQL.Database", "MariaDB.Contents", "AmazonRedshift.Database"]
+        return queries.contains { q in names.contains(q.name) && databases.contains { q.mScript.contains($0) } }
     }
 
     /// Power Query shows a query that evaluates to a function as a function (fx), and loads only tables.

@@ -191,9 +191,43 @@ private struct ConnectionForm: View {
                  ? "The script runs with your permissions using the Python on this Mac (pandas is required). Every data frame it leaves behind becomes a table."
                  : "The script runs with your permissions using the R on this Mac. Every data frame it leaves behind becomes a table.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        case .postgresql, .mysql, .mariadb, .redshift:
+            serverFields
+            databaseOptions
         case .blank:
             EmptyView()
         }
+    }
+
+    private var serverPlaceholder: String {
+        switch kind {
+        case .redshift: return "cluster.abc123.us-east-1.redshift.amazonaws.com:5439"
+        case .mysql, .mariadb: return "server.example.com:3306"
+        default: return "server.example.com:5432"
+        }
+    }
+
+    @ViewBuilder
+    private var serverFields: some View {
+        TextField("Server", text: $session.request.location, prompt: Text(serverPlaceholder)).textFieldStyle(.roundedBorder)
+        TextField("Database", text: $session.request.database).textFieldStyle(.roundedBorder)
+        Toggle("Encrypt connection", isOn: $session.request.encrypt)
+            .help("Use TLS and verify the server's certificate")
+        if session.request.encrypt {
+            Toggle("Trust server certificate", isOn: $session.request.trustServerCertificate)
+                .help("Accept a certificate that doesn't verify, such as a self-signed one")
+            if session.request.trustServerCertificate {
+                Label("The certificate won't be checked, so another server could pose as this one. Use this only on a network you trust.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(Design.Typeface.caption).foregroundStyle(Design.Palette.caution).fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            Label("Without encryption, data and sign-in exchanges travel in the clear. A password is never sent in clear text.",
+                  systemImage: "exclamationmark.triangle")
+                .font(Design.Typeface.caption).foregroundStyle(Design.Palette.caution).fixedSize(horizontal: false, vertical: true)
+        }
+        Text("The database user name and password (or, for Azure Database, your organizational account) come from Data source settings.")
+            .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -240,13 +274,16 @@ private struct NativeQueryApproval: View {
             Label("Native Database Query", systemImage: "exclamationmark.shield").font(Design.Typeface.headline)
             Text("You are about to run a native database query. Native queries can make changes to the database. Run it only if you trust the statement below.")
                 .font(Design.Typeface.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(session.request.location).font(Design.Typeface.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
+            Text(session.request.kind.isServer ? session.request.location + " · " + session.request.database : session.request.location)
+                .font(Design.Typeface.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
             ScrollView {
                 Text(session.pendingNativeQuery).font(Design.Typeface.mono).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(Design.Space.s)
             }
             .background(Design.Palette.fill, in: RoundedRectangle(cornerRadius: Design.Radius.control))
-            Text("\(AppIdentity.name) opens SQLite databases read-only, and remembers this approval until you clear it in Data source settings.")
+            Text(session.request.kind.isServer
+                 ? "The statement runs on the server with the database user's permissions. \(AppIdentity.name) remembers this approval until you clear it in Data source settings."
+                 : "\(AppIdentity.name) opens SQLite databases read-only, and remembers this approval until you clear it in Data source settings.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Back") { session.back() }

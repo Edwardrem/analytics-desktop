@@ -46,12 +46,22 @@ final class DirectQuerySession {
         }
     }
 
-    /// The SQLite file a query reads (its first `Sqlite.Database("…")`), so fetches can be counted per source;
-    /// a query whose source can't be told counts as a source of its own.
+    /// The source a query reads (its first `Sqlite.Database("…")` file, or its database server), so fetches can be
+    /// counted per source; a query whose source can't be told counts as a source of its own.
     nonisolated static func sourceKey(_ script: String, query: String) -> String {
-        guard let r = script.range(of: #"Sqlite\.Database\s*\(\s*"((?:[^"]|"")*)""#, options: .regularExpression) else { return "query:" + query }
-        let literal = script[r].drop { $0 != "\"" }.dropFirst().dropLast()
-        return "sqlite:" + literal.replacingOccurrences(of: "\"\"", with: "\"")
+        if let r = script.range(of: #"Sqlite\.Database\s*\(\s*"((?:[^"]|"")*)""#, options: .regularExpression) {
+            let literal = script[r].drop { $0 != "\"" }.dropFirst().dropLast()
+            return "sqlite:" + literal.replacingOccurrences(of: "\"\"", with: "\"")
+        }
+        // A database server: its function and server name.
+        let server = #"(PostgreSQL\.Database|MySQL\.Database|MariaDB\.Contents|AmazonRedshift\.Database)\s*\(\s*"((?:[^"]|"")*)""#
+        if let r = script.range(of: server, options: .regularExpression) {
+            let call = script[r]
+            let function = call.prefix { $0 != "(" }.trimmingCharacters(in: .whitespaces)
+            let literal = call.drop { $0 != "\"" }.dropFirst().dropLast()
+            return function.lowercased() + ":" + literal.replacingOccurrences(of: "\"\"", with: "\"").lowercased()
+        }
+        return "query:" + query
     }
 
     /// The queries and their parameters, as one value: a change to any of them means fetching again.
