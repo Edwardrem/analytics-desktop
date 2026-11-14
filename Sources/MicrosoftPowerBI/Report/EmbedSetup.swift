@@ -85,19 +85,12 @@ enum EmbedSetup {
 
     // MARK: - Running a flow
 
-    /// The visual's rows with its fields' captions as names, as Export data writes them.
-    static func captioned(_ data: VisualData) -> DataTable {
-        var table = data.table
-        for i in table.columns.indices { table.columns[i].name = data.fields[safe: i]??.caption ?? table.columns[i].name }
-        return table
-    }
-
     /// The POST that starts a flow with the visual's rows.
     static func flowRequest(url: URL, data: VisualData) -> URLRequest {
         var request = URLRequest(url: url, timeoutInterval: 30)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = DataExporters.json(captioned(data))
+        request.httpBody = DataExporters.json(VisualExport.captioned(data))
         return request
     }
 

@@ -78,6 +78,7 @@ extension DocumentStore {
         }
         c.extensionView = { [weak self] spec, data, ctx in
             guard let self else { return nil }
+            if let script = ScriptVisuals.view(spec, data, ctx, self) { return script }
             return VisualExtensions.provider?(spec, data, ctx, self)
         }
         return c
@@ -92,6 +93,17 @@ struct ReportCanvas: View {
     @State private var dropTargeted = false
 
     var body: some View {
+        VStack(spacing: 0) {
+            canvas
+            // Power BI opens the script editor under the canvas while a Python or R visual is selected.
+            if !store.mobileLayout, let spec = store.selectedVisual, ScriptVisuals.isScript(spec.type) {
+                Hairline()
+                ScriptEditorPane(spec: spec, runtime: .of(store)).frame(height: 220)
+            }
+        }
+    }
+
+    private var canvas: some View {
         HStack(spacing: 0) {
             if store.mobileLayout {
                 MobileVisualsPanel()

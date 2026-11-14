@@ -23,7 +23,7 @@ struct CmpScriptVisualView: View {
             let hasScript = !env.spec.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             let hasFields = !env.spec.fields(.values).isEmpty
             let message: String = {
-                if hasScript { return "Run the script to render the plot here. Script visuals use your local \(language) installation — enable them in Settings › Script visuals." }
+                if hasScript { return "Run the script to render the plot here. Script visuals use your local \(language) installation — allow them in Settings › Scripting." }
                 if hasFields { return "Write a \(language) script in the script editor. The fields in Values are passed to it as a data frame named dataset." }
                 return "Script visuals run with your local \(language) installation. Enable script visuals in Settings, add fields to Values, then write a script that draws a plot."
             }()

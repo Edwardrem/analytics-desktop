@@ -57,10 +57,16 @@ enum VisualExport {
 
     /// Writes a query result with its fields' captions as column names. Returns the rows written.
     static func write(_ data: VisualData, with exporter: (DataTable, [String], URL) throws -> Void, to url: URL) throws -> Int {
-        var table = data.table
-        for i in table.columns.indices { table.columns[i].name = data.fields[safe: i]??.caption ?? table.columns[i].name }
+        let table = captioned(data)
         try exporter(table, data.formats, url)
         return table.rowCount
+    }
+
+    /// A query result with its fields' captions as column names (what exports, flows and scripts see).
+    nonisolated static func captioned(_ data: VisualData) -> DataTable {
+        var table = data.table
+        for i in table.columns.indices { table.columns[i].name = data.fields[safe: i]??.caption ?? table.columns[i].name }
+        return table
     }
 
     static func insertImage(_ store: DocumentStore) {
