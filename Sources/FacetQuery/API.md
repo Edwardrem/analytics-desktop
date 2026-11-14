@@ -35,12 +35,13 @@ Binary, Lines, Csv), `LibJson`, `LibXml`, `LibExcel` (+ `ZipReader`), `LibSQL` (
 | `Xml.Tables`, `Xml.Document` | attributes become `Attribute:name` columns in name order |
 | `Excel.Workbook` | .xlsx/.xlsm: sheets, tables, defined names, shared/inline strings, dates (1900 and 1904), booleans, error cells |
 | `Sqlite.Database`, `Value.NativeQuery` | tables and views; read-only; parameters; folding (below) |
+| `Sql.Database`, `Sql.Databases`, `Value.NativeQuery` | SQL Server 2012+, Azure SQL, Synapse SQL, Fabric SQL endpoints over a native TDS 7.4 / 8.0 client (`Connectors/SQLServer/`, no driver). Options: `Query` (approved native query), `CommandTimeout`, `ConnectionTimeout` (durations), `HierarchicalNavigation`, `Encrypt = "Strict"` (TDS 8.0, TLS first). Always encrypted; certificates are verified unless the host is in `trustServerCertificateHosts`. Sign-in: credential kind `"SQL"`, location `server;database` — `.basic` (database user), `.oauth` (Entra token for `EntraResource.azureSQL`, sent only to the server host; the default for Azure/Fabric hosts). Native query parameters are a record used as `@name` (`sp_executesql`). Connections are pooled; a cancelled evaluation (`QueryCancellation`) sends ATTENTION. |
 | `Web.Contents` | http/https with `Query`, `Headers`, `RelativePath`, `Timeout`, `Content`, `ManualStatusHandling` and stored credentials |
 | `Web.Page` | tables of an HTML document (text or binary) via the system tidy parser: `Caption`, `Source`, `ClassName`, `Id`, `Data`; header rows, `colspan`/`rowspan` |
 | `OData.Feed` | JSON only (v4, or v2/v3 answering `Accept: application/json`): service document → `Name`/`Data` navigation table; entity sets follow `@odata.nextLink` / `__next` |
 | `Python.Execute`, `R.Execute` | need `allowScripts`; tables travel as CSV; Python needs pandas |
 
-Every other Get Data connector (SQL Server, PostgreSQL, MySQL, Oracle, ODBC, SharePoint, Azure, Fabric, Parquet,
+Every other Get Data connector (PostgreSQL, MySQL, Oracle, ODBC, SharePoint, Azure, Fabric, Parquet,
 PDF, …) and the `AI.*` functions are registered only to fail with a `DataSource.Error` that names the connector.
 
 ## Query folding (SQLite)
@@ -52,10 +53,21 @@ comparers, `List.Contains` over literals, `+ - * &`, parameters and other scalar
 results match M (`null <> 1` is true). Division, conditionals and other functions are not folded: from that step on
 the query runs locally on the rows the folded prefix returned.
 
+## Query folding (SQL Server)
+
+Everything SQLite folds (with T-SQL `top`/`offset … fetch`, `count_big(*)`, `like` for the text functions and
+`convert(date|datetime2|datetimeoffset|time, '…')` literals), plus `Table.Group` (global, case-sensitive) with
+`List.Sum/Min/Max/Average/Count/NonNullCount` and `Table.RowCount(_)`, `Table.Join` and `Table.NestedJoin` +
+`Table.ExpandTableColumn` (inner, left, right, full outer; both sides in the same database with the same sign-in).
+Any expression that does not read the row is evaluated and sent as a literal. Nulls follow M: `=` treats null as
+a value, `<>` keeps nulls, negation is pushed down so it never negates a three-valued comparison. A grouped or
+joined query becomes a derived table before later steps; an unsliced sort moves outside it.
+
 ## Behaviour chosen where Power Query does not document it
 
 - Fuzzy matching scores `1 − editDistance / longerLength` after case, white-space and transformation-table normalisation (`FuzzyMatch`).
 - `Table.Pivot` returns rows ordered by the remaining key columns.
 - `Combiner.CombineTextByDelimiter` treats null as empty text (the delimiter stays); `Text.Combine` skips nulls.
 - `Table.TransformColumnTypes` turns blank text into null for non-text types.
+- SQL Server `uniqueidentifier` values are lower-case text; `money`, `decimal` and `numeric` load as numbers (doubles).
 - The privacy firewall compares the levels of every source one evaluation touches; unclassified sources are not checked.
