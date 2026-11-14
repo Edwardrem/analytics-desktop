@@ -81,6 +81,123 @@ final class ProjectSafetyTests: XCTestCase {
         XCTAssertFalse(parts.warnings.contains { $0.message.contains("Table data") })
     }
 
+    // MARK: Links and paths that leave the project folder
+
+    /// A folder beside the project holding files that a save must never touch.
+    private func outsideFolder() throws -> (URL, [String: Data]) {
+        let outside = dir.appendingPathComponent("Documents")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let files = ["keep.txt": Data("keep".utf8), "notes.json": Data("{\"a\":1}".utf8)]
+        for (name, data) in files { try data.write(to: outside.appendingPathComponent(name)) }
+        return (outside, files)
+    }
+
+    private func contents(of folder: URL) throws -> [String: Data] {
+        var out: [String: Data] = [:]
+        for name in try FileManager.default.contentsOfDirectory(atPath: folder.path) {
+            out[name] = try Data(contentsOf: folder.appendingPathComponent(name))
+        }
+        return out
+    }
+
+    func testSavingThroughALinkedFolderLeavesTheLinkTargetUntouched() throws {
+        let fm = FileManager.default
+        let (outside, original) = try outsideFolder()
+        for linked in ["Sales.Report/StaticResources/RegisteredResources", "Sales.SemanticModel/definition", "Sales.SemanticModel/.pbi"] {
+            let project = dir.appendingPathComponent("Project-\(UUID().uuidString)")
+            try PBIPProject.write(document: document(), to: project, name: "Sales")
+            let link = project.appendingPathComponent(linked)
+            if fm.fileExists(atPath: link.path) { try fm.removeItem(at: link) }
+            try fm.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try fm.createSymbolicLink(at: link, withDestinationURL: outside)
+
+            XCTAssertThrowsError(try PBIPProject.write(document: document(), to: project, name: "Sales",
+                                                       options: .init(includeFacetDataCache: true)), linked) { error in
+                XCTAssertTrue(error.localizedDescription.contains("symbolic link"), error.localizedDescription)
+            }
+            XCTAssertEqual(try contents(of: outside), original, "a save through \(linked) changed the folder it points to")
+        }
+    }
+
+    func testPruningNeverFollowsOrDeletesLinks() throws {
+        let fm = FileManager.default
+        let (outside, original) = try outsideFolder()
+        let project = dir.appendingPathComponent("Project")
+        let base = project.appendingPathComponent("Sales.Report/definition")
+        try fm.createDirectory(at: base.appendingPathComponent("pages"), withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: base.appendingPathComponent("pages/stale.json"))
+        try fm.createSymbolicLink(at: base.appendingPathComponent("pages/linked"), withDestinationURL: outside)
+        try fm.createSymbolicLink(at: base.appendingPathComponent("keep.txt"), withDestinationURL: outside.appendingPathComponent("keep.txt"))
+        let root = try XCTUnwrap(ProjectPaths.realPath(project))
+
+        PBIPProject.prune("Sales.Report/definition", keeping: [], in: project, root: root)
+        XCTAssertFalse(fm.fileExists(atPath: base.appendingPathComponent("pages/stale.json").path), "stale generated files still go")
+        XCTAssertTrue(ProjectPaths.isSymbolicLink(base.appendingPathComponent("pages/linked")))
+        XCTAssertTrue(ProjectPaths.isSymbolicLink(base.appendingPathComponent("keep.txt")))
+        XCTAssertEqual(try contents(of: outside), original)
+
+        // A managed folder that is itself a link is never walked.
+        let other = dir.appendingPathComponent("Other")
+        try fm.createDirectory(at: other.appendingPathComponent("Sales.Report"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(at: other.appendingPathComponent("Sales.Report/definition"), withDestinationURL: outside)
+        PBIPProject.prune("Sales.Report/definition", keeping: [], in: other, root: try XCTUnwrap(ProjectPaths.realPath(other)))
+        XCTAssertEqual(try contents(of: outside), original)
+    }
+
+    func testAProjectFolderReachedThroughALinkStillSaves() throws {
+        let real = dir.appendingPathComponent("Real")
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        let alias = dir.appendingPathComponent("Alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: real)
+        XCTAssertNoThrow(try PBIPProject.write(document: document(), to: alias, name: "Sales"))
+        XCTAssertNoThrow(try PBIPProject.write(document: document(), to: alias, name: "Sales"), "saving again over the same project")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: real.appendingPathComponent("Sales.pbip").path))
+        XCTAssertEqual(try PBIPProject.read(from: alias.appendingPathComponent("Sales.pbip")).0.model.tables.map(\.name), ["Sales"])
+    }
+
+    func testReportAndModelOutsideTheProjectFolderAreRefused() throws {
+        let fm = FileManager.default
+        let elsewhere = dir.appendingPathComponent("Elsewhere")
+        var secret = document()
+        secret.model.tables[0].name = "Payroll"
+        try PBIPProject.write(document: secret, to: elsewhere, name: "Secret")
+        func project() throws -> URL {
+            let folder = dir.appendingPathComponent("Shared/\(UUID().uuidString)")
+            try PBIPProject.write(document: document(), to: folder, name: "Sales")
+            return folder
+        }
+        func refused(_ url: URL, _ why: String) {
+            XCTAssertThrowsError(try PBIPProject.read(from: url), why) { error in
+                XCTAssertTrue(error.localizedDescription.contains("outside the folder"), error.localizedDescription)
+            }
+        }
+
+        // The report points `byPath` at a model in another folder.
+        let byPath = try project()
+        let pbir = byPath.appendingPathComponent("Sales.Report/definition.pbir")
+        try Data(#"{"version":"4.0","datasetReference":{"byPath":{"path":"../../../Elsewhere/Secret.SemanticModel"}}}"#.utf8).write(to: pbir)
+        refused(byPath.appendingPathComponent("Sales.pbip"), "byPath")
+
+        // The .pbip points its report at another folder.
+        let artifact = try project()
+        try Data(#"{"version":"1.0","artifacts":[{"report":{"path":"../../Elsewhere/Secret.Report"}}]}"#.utf8)
+            .write(to: artifact.appendingPathComponent("Sales.pbip"))
+        refused(artifact.appendingPathComponent("Sales.pbip"), "artifact path")
+
+        // The model folder is a link to a model elsewhere.
+        let linked = try project()
+        try fm.removeItem(at: linked.appendingPathComponent("Sales.SemanticModel"))
+        try fm.createSymbolicLink(at: linked.appendingPathComponent("Sales.SemanticModel"), withDestinationURL: elsewhere.appendingPathComponent("Secret.SemanticModel"))
+        refused(linked.appendingPathComponent("Sales.pbip"), "linked model folder")
+
+        // A model file linked from elsewhere is not read either.
+        let file = try project()
+        let tables = file.appendingPathComponent("Sales.SemanticModel/definition/tables")
+        try fm.createSymbolicLink(at: tables.appendingPathComponent("Payroll.tmdl"), withDestinationURL: elsewhere.appendingPathComponent("Secret.SemanticModel/definition/tables/Payroll.tmdl"))
+        let (doc, _) = try PBIPProject.read(from: file.appendingPathComponent("Sales.pbip"))
+        XCTAssertEqual(doc.model.tables.map(\.name), ["Sales"])
+    }
+
     func testTemplatesKeepTheirSensitivityLabel() throws {
         var doc = document()
         doc.report.settings.sensitivityLabel = "Highly Confidential"

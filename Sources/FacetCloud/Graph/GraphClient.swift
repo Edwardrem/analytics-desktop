@@ -204,10 +204,9 @@ public final class GraphClient {
     public func upload(fileAt fileURL: URL, to folder: DriveLocation = .myRoot, named name: String? = nil,
                        conflict: ConflictBehavior = .replace, progress: TransferProgressHandler? = nil) async throws -> DriveItem {
         let fileName = name ?? fileURL.lastPathComponent
-        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        let size = try LocalFile.size(of: fileURL, service: rest.service)
         if size <= Self.simpleUploadLimit {
-            let data = try Data(contentsOf: fileURL)
+            let data = try LocalFile.read(fileURL, limit: Self.simpleUploadLimit, service: rest.service)
             let item = try await upload(data: data, to: folder, named: fileName, conflict: conflict)
             progress?(TransferProgress(completedBytes: size, totalBytes: size))
             return item
@@ -237,13 +236,12 @@ public final class GraphClient {
     /// read, so someone else's newer version is never silently overwritten.
     public func replaceContent(of location: DriveLocation, withFileAt fileURL: URL, ifMatchETag: String? = nil,
                                progress: TransferProgressHandler? = nil) async throws -> DriveItem {
-        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+        let size = try LocalFile.size(of: fileURL, service: rest.service)
         if size <= Self.simpleUploadLimit {
             var request = rest.request("PUT", try url(location.subresource("content")))
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
             if let ifMatchETag, !ifMatchETag.isEmpty { request.setValue(ifMatchETag, forHTTPHeaderField: "If-Match") }
-            request.httpBody = try Data(contentsOf: fileURL)
+            request.httpBody = try LocalFile.read(fileURL, limit: Self.simpleUploadLimit, service: rest.service)
             let (body, _) = try await rest.send(request)
             progress?(TransferProgress(completedBytes: size, totalBytes: size))
             return try rest.decode(DriveItem.self, from: body)
@@ -272,7 +270,7 @@ public final class GraphClient {
         guard let uploadURL = URL(string: session.uploadUrl), uploadURL.scheme == "https" else {
             throw CloudAPIError(service: rest.service, kind: .invalidResponse, statusCode: 0, message: "The upload session did not return a valid URL.")
         }
-        let handle = try FileHandle(forReadingFrom: fileURL)
+        let handle = try FileHandle(forReadingFrom: fileURL.resolvingSymlinksInPath())
         defer { try? handle.close() }
         var offset: Int64 = 0
         var resyncs = 0

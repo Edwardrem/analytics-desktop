@@ -87,6 +87,11 @@ enum CloudDocuments {
                 throw CloudAPIError(service: "Microsoft Graph", kind: .badRequest, statusCode: 0,
                                     message: "A shared project can't be opened from “Shared with me”; add its folder to your OneDrive first.")
             }
+            // The project opens from the mirror under its own name, so a name that isn't one safe path component is refused.
+            guard CloudDocumentSync.safeFileName(item.name) == item.name else {
+                throw CloudAPIError(service: "Microsoft Graph", kind: .badRequest, statusCode: 0,
+                                    message: "“\(item.name)” can't be opened as a project because its name can't be used as a file name on this Mac. Rename it in OneDrive or SharePoint and try again.")
+            }
             let names: Set<String> = [item.name, "\(stem).Report", "\(stem).SemanticModel"]
             let root = work.appendingPathComponent("project")
             let mirror = try await sync.downloadFolder(driveID: drive, folderItemID: parent, folderPath: parentPath, only: names, into: root)
@@ -102,6 +107,12 @@ enum CloudDocuments {
     }
 
     // MARK: Save back
+
+    /// A new working folder and, in it, `name` made safe as a local file name. The service supplies the name, so it
+    /// is never used as a path as it stands.
+    static func stagingFile(named name: String) throws -> URL {
+        try CloudDocumentSync.makeWorkingDirectory().appendingPathComponent(CloudDocumentSync.safeFileName(name))
+    }
 
     /// Sends the just-saved working copy back. A save made while one is still uploading follows it.
     static func push(_ store: DocumentStore) {
@@ -121,7 +132,7 @@ enum CloudDocuments {
         do {
             switch link {
             case .packedDocument(let reference):
-                let zip = try CloudDocumentSync.makeWorkingDirectory().appendingPathComponent(reference.name)
+                let zip = try stagingFile(named: reference.name)
                 defer { try? FileManager.default.removeItem(at: zip.deletingLastPathComponent()) }
                 try FacetArchive.pack(package: local, to: zip)
                 files.cloud = .packedDocument(try await sync.saveBack(fileAt: zip, to: reference, overwrite: overwrite))
@@ -178,7 +189,7 @@ enum CloudDocuments {
                 return
             }
             do {
-                let zip = try CloudDocumentSync.makeWorkingDirectory().appendingPathComponent(reference.name)
+                let zip = try stagingFile(named: reference.name)
                 defer { try? FileManager.default.removeItem(at: zip.deletingLastPathComponent()) }
                 try FacetArchive.pack(package: local, to: zip)
                 let stem = (reference.name as NSString).deletingPathExtension

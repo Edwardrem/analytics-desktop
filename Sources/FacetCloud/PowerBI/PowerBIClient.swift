@@ -158,16 +158,15 @@ public final class PowerBIClient {
     /// for larger files is not implemented).
     public func importFile(at fileURL: URL, displayName: String? = nil, to workspace: PowerBIWorkspaceRef = .myWorkspace,
                            conflict: PowerBIImportConflict = .createOrOverwrite) async throws -> PowerBIImport {
-        let attrs = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-        let size = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-        guard size <= 1_073_741_824 else {
+        let limit: Int64 = 1_073_741_824
+        guard try LocalFile.size(of: fileURL, service: rest.service) <= limit else {
             throw CloudAPIError(service: rest.service, kind: .badRequest, statusCode: 0,
                                 message: "Files larger than 1 GB cannot be published from Facet yet.")
         }
         let name = displayName ?? fileURL.lastPathComponent
         var form = MultipartFormData()
         form.addFile(name: "file", filename: fileURL.lastPathComponent, contentType: "application/octet-stream",
-                     data: try Data(contentsOf: fileURL, options: .mappedIfSafe))
+                     data: try LocalFile.read(fileURL, limit: limit, service: rest.service))
         let query = "?datasetDisplayName=\(seg(name))&nameConflict=\(conflict.rawValue)"
         var request = rest.request("POST", try url(workspace.pathPrefix + "/imports" + query))
         request.setValue(form.contentType, forHTTPHeaderField: "Content-Type")

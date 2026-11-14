@@ -1,4 +1,5 @@
 import XCTest
+import Network
 @testable import FacetCloud
 
 /// The Microsoft sign-in flow, end to end, against `StubIdentityServer`. Nothing leaves this machine.
@@ -277,6 +278,37 @@ final class LoopbackListenerSecurityTests: XCTestCase {
         try await Task.sleep(nanoseconds: 700_000_000)
         let replay = await status("http://127.0.0.1:\(port)/?code=second&state=expected-state")
         XCTAssertEqual(replay, 0, "the listener is closed after one accepted redirect")
+    }
+
+    func testNoOtherSocketCanBindTheListenersPort() async throws {
+        let params = LoopbackRedirectListener.parameters(host: .ipv4(.loopback), port: .any)
+        XCTAssertFalse(params.allowLocalEndpointReuse, "the port is never shared")
+        XCTAssertTrue(params.acceptLocalOnly)
+        let listener = LoopbackRedirectListener(expectedState: "expected-state")
+        let port = try await listener.start()
+        defer { listener.stop() }
+        // Another process could otherwise bind the same port with SO_REUSEPORT and take the redirect.
+        for reuse in [false, true] {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            XCTAssertGreaterThanOrEqual(fd, 0)
+            defer { close(fd) }
+            var one: Int32 = 1
+            if reuse {
+                setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, socklen_t(MemoryLayout<Int32>.size))
+                setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, socklen_t(MemoryLayout<Int32>.size))
+            }
+            var address = sockaddr_in()
+            address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+            address.sin_family = sa_family_t(AF_INET)
+            address.sin_port = port.bigEndian
+            address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            let result = withUnsafePointer(to: &address) {
+                $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+            }
+            let error = errno
+            XCTAssertEqual(result, -1, "another socket bound 127.0.0.1:\(port) (reuse options: \(reuse))")
+            XCTAssertEqual(error, EADDRINUSE)
+        }
     }
 
     func testGivesUpAfterTooManyUnexpectedRequests() async throws {

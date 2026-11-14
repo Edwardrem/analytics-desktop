@@ -45,12 +45,15 @@ public struct ZipEntry: Hashable, Sendable {
 public final class ZipArchive {
     /// Safety limits applied while opening and extracting.
     public struct Limits: Sendable {
-        /// Maximum total uncompressed size of all entries.
+        /// Maximum total uncompressed size of all entries, as declared and as actually produced while reading.
         public var maxTotalUncompressedSize: UInt64 = 4 * 1024 * 1024 * 1024
-        /// Maximum uncompressed size of one entry read into memory with `data(for:)`.
+        /// Maximum uncompressed size of any one entry. An archive declaring a larger entry is refused when opened.
         public var maxEntrySize: UInt64 = 2 * 1024 * 1024 * 1024
         /// Maximum number of entries. Document formats hold tens to a few thousand; more is treated as hostile.
         public var maxEntryCount = 100_000
+        /// Largest uncompressed-to-compressed ratio an entry may declare. Deflate can't exceed about 1,032:1, and the
+        /// app's own documents reach 500–1,000:1 for constant columns, so this refuses only sizes no real stream yields.
+        public var maxCompressionRatio: UInt64 = 1_100
         public init() {}
         public init(maxTotalUncompressedSize: UInt64) { self.maxTotalUncompressedSize = maxTotalUncompressedSize }
     }
@@ -62,10 +65,15 @@ public final class ZipArchive {
     private var producedTotal: UInt64 = 0
     private let lock = NSLock()
 
-    /// Opens an archive file (memory-mapped, so large archives are not loaded up front).
+    /// Opens an archive file (memory-mapped, so large archives are not loaded up front). Only a regular file is
+    /// opened (a link is followed to its target); a device, pipe or folder is refused rather than read without end.
     public convenience init(url: URL, limits: Limits = Limits()) throws {
+        let target = url.resolvingSymlinksInPath()
+        guard (try? target.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+            throw ZipError.io("“\(url.lastPathComponent)” is not a file that can be opened.")
+        }
         let d: Data
-        do { d = try Data(contentsOf: url, options: .mappedIfSafe) }
+        do { d = try Data(contentsOf: target, options: .mappedIfSafe) }
         catch { throw ZipError.io("Couldn't open “\(url.lastPathComponent)”: \(error.localizedDescription)") }
         try self.init(data: d, limits: limits)
     }
@@ -92,7 +100,7 @@ public final class ZipArchive {
         // ZIP64 locator sits immediately before the EOCD.
         if eocd >= 20, r.u32(eocd - 20) == 0x0706_4b50 {
             let z64 = r.u64(eocd - 20 + 8)
-            guard z64 <= UInt64(r.count - 56), r.u32(Int(z64)) == 0x0606_4b50 else { throw ZipError.corrupt("bad ZIP64 directory") }
+            guard r.count >= 56, z64 <= UInt64(r.count - 56), r.u32(Int(z64)) == 0x0606_4b50 else { throw ZipError.corrupt("bad ZIP64 directory") }
             let o = Int(z64)
             total = r.u64(o + 32); cdSize = r.u64(o + 40); cdOffset = r.u64(o + 48)
         }
@@ -127,10 +135,16 @@ public final class ZipArchive {
                 e += 4 + size
             }
             let name = ZipArchive.decodeName(nameData, utf8Flag: flags & 0x0800 != 0)
-            sum = sum &+ usize
-            guard sum <= limits.maxTotalUncompressedSize else {
+            guard usize <= limits.maxEntrySize else { throw ZipError.tooLarge("“\(name)” expands to \(usize) bytes") }
+            let (ratioLimit, ratioOverflow) = max(csize, 1).multipliedReportingOverflow(by: limits.maxCompressionRatio)
+            guard ratioOverflow || usize <= ratioLimit else {
+                throw ZipError.tooLarge("“\(name)” claims to expand from \(csize) to \(usize) bytes")
+            }
+            let (next, overflow) = sum.addingReportingOverflow(usize)
+            guard !overflow, next <= limits.maxTotalUncompressedSize else {
                 throw ZipError.tooLarge("contents expand beyond the \(limits.maxTotalUncompressedSize)-byte limit")
             }
+            sum = next
             list.append(ZipEntry(path: name, compressedSize: csize, uncompressedSize: usize, crc32: crc, method: method,
                                  flags: flags, localHeaderOffset: offset, modified: ZipArchive.date(dosDate: date, dosTime: time)))
             p += 46 + nameLen + extraLen + commentLen
@@ -178,7 +192,7 @@ public final class ZipArchive {
             produced += UInt64(chunk.count)
             guard produced <= entry.uncompressedSize else { throw ZipError.corrupt("“\(entry.path)” expands beyond its declared size") }
             lock.lock(); producedTotal += UInt64(chunk.count); let overall = producedTotal; lock.unlock()
-            guard overall <= limits.maxTotalUncompressedSize &* 4 else { throw ZipError.tooLarge("extraction exceeded the safety limit") }
+            guard overall <= limits.maxTotalUncompressedSize else { throw ZipError.tooLarge("extraction exceeded the safety limit") }
             crc = chunk.withUnsafeBytes { crc32(crc, $0.bindMemory(to: Bytef.self).baseAddress, uInt($0.count)) }
             try consumer(chunk)
         }
