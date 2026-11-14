@@ -1,13 +1,15 @@
 import SwiftUI
 import FacetCore
 
-/// Optional assistant integration for the DAX query view. The Explain and Ask buttons only appear
+/// Optional assistant integration for the DAX query view. The Explain, Ask and Fix buttons only appear
 /// once the corresponding hook is set.
 enum DAXAssistantHook {
     /// Explains a query in plain language.
     @MainActor static var explain: ((String, DocumentStore) async throws -> String)?
     /// Writes a DAX query for a natural-language prompt.
     @MainActor static var write: ((String, DocumentStore) async throws -> String)?
+    /// Proposes a corrected query for a query that failed, given the query and its error.
+    @MainActor static var fix: ((String, String, DocumentStore) async throws -> String)?
 }
 
 /// What a quick-query command should act on. Other panes set these just before running a

@@ -70,6 +70,11 @@ struct QnAView: View {
             } else {
                 Button("Ask") { ask() }.controlSize(.small).disabled(question.trimmingCharacters(in: .whitespaces).isEmpty)
             }
+            if context.isInteractive {
+                IconButton("gearshape", help: "Q&A setup: teach Q&A terms and review the questions asked") {
+                    store.present { QnASetupSheet(tab: .teach, question: question) }
+                }
+            }
         }
         .padding(Design.Space.m)
     }
@@ -106,8 +111,15 @@ struct QnAView: View {
         VStack(alignment: .leading, spacing: Design.Space.xs) {
             Text(answer.interpretation).font(Design.Typeface.body)
             if !answer.unrecognized.isEmpty {
-                Text("Didn't understand: \(answer.unrecognized.joined(separator: ", "))")
-                    .font(Design.Typeface.caption).foregroundStyle(.tertiary)
+                HStack(spacing: Design.Space.s) {
+                    Text("Didn't understand: \(answer.unrecognized.joined(separator: ", "))")
+                        .font(Design.Typeface.caption).foregroundStyle(.tertiary)
+                    if context.isInteractive {
+                        Button("Teach Q&A") { store.present { QnASetupSheet(tab: .teach, question: spec.content) } }
+                            .buttonStyle(.link).font(Design.Typeface.caption)
+                            .help("Define the words Q&A didn't understand as a field or a filter")
+                    }
+                }
             }
         }
     }
@@ -158,7 +170,8 @@ struct QnAView: View {
         guard !q.isEmpty, !working else { return }
         working = true
         answerData = nil
-        store.updateVisual(spec.id, name: "Ask a Question") { $0.content = q }
+        // A new question is also kept for Q&A setup ▸ Review questions.
+        if q != spec.content { QnASetupLogic.ask(q, visual: spec.id, store: store) }
         if let match = QnAVerifiedResult.find(q, store: store) {
             verified = match
             answer = nil
@@ -175,7 +188,7 @@ struct QnAView: View {
         }
         verified = nil
         let parser = QuestionParser(model: store.model, synonyms: store.model.qnaSynonyms,
-                                    distinctValues: { f in valueCache["\(f.table)|\(f.name)"] ?? [] })
+                                    distinctValues: { f in valueCache[QnASetupLogic.valueKey(f)] ?? [] })
         let parsed = parser.parse(q)
         answer = parsed
         guard parsed.isAnswerable else {
@@ -193,18 +206,6 @@ struct QnAView: View {
 
     /// Preloads the distinct values of visible text columns so the parser recognises filter values.
     private func preload() async {
-        var fields: [FieldRef] = []
-        for t in store.model.tables where !t.isHidden {
-            for c in t.columns where !c.isHidden && c.dataType == .text && fields.count < 12 {
-                fields.append(.column(t.name, c.name))
-            }
-        }
-        guard !fields.isEmpty else { return }
-        let loaded: [String: [Value]] = await store.withEngine { engine in
-            var d: [String: [Value]] = [:]
-            for f in fields { d["\(f.table)|\(f.name)"] = engine.distinctValues(field: f, filters: [], limit: 100) }
-            return d
-        }
-        valueCache = loaded
+        valueCache = await QnASetupLogic.loadValues(store)
     }
 }

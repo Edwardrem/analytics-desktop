@@ -355,6 +355,7 @@ private struct DAXResultsPane: View {
                     }
                 }
                 Spacer(minLength: Design.Space.s)
+                DAXFixButton(session: session, run: run)
                 if located {
                     Button("Show in editor") { session.revealFirstIssue() }.buttonStyle(.link).font(Design.Typeface.caption)
                 }

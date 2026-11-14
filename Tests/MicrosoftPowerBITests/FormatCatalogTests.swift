@@ -10,15 +10,14 @@ final class FormatCatalogTests: XCTestCase {
     // MARK: - Visual-tab cards per visual type
 
     /// Types that yield no Visual-tab cards, with the reason each has none.
-    /// - Key influencers, decomposition tree, narrative and Q&A are app-supplied through
-    ///   `VisualContext.extensionView` and honour no format keys.
+    /// - Key influencers, decomposition tree and Q&A are app-supplied through `VisualContext.extensionView`
+    ///   and honour no format keys. (The narrative has its assistant option, "Rewrite when the data changes".)
     /// - Script visuals render the app's script output (`spec.imageData`); paginated report, Power
     ///   Apps and metrics are embedded web views — none has format keys in the component catalog.
     ///   (Power automate does: the "Run flow" button label.)
     private static let typesWithoutVisualCards: [VisualType: String] = [
         .keyInfluencers: "app-supplied through VisualContext.extensionView and honours no format keys",
         .decompositionTree: "app-supplied through VisualContext.extensionView and honours no format keys",
-        .narrative: "app-supplied through VisualContext.extensionView and honours no format keys",
         .qna: "app-supplied through VisualContext.extensionView and honours no format keys",
         .pythonVisual: "the script renders into spec.imageData; no format keys in the component catalog",
         .rVisual: "the script renders into spec.imageData; no format keys in the component catalog",

@@ -53,7 +53,9 @@ final class AgentBridgeTests: XCTestCase {
         let handled = await dispatcher.handle(request)
         let reply = try XCTUnwrap(handled)
         let names = reply["result"]?["tools"]?.arrayValue?.compactMap { $0["name"]?.stringValue }
-        XCTAssertEqual(names, ["list_documents", "get_model", "get_report_outline", "run_dax_query", "set_measure"])
+        XCTAssertEqual(names, ["list_documents", "get_model", "get_report_outline", "run_dax_query", "set_measure",
+                               "set_calculated_column", "create_relationship", "delete_relationship", "rename_object",
+                               "set_hidden", "set_description", "set_format_string", "add_visual", "add_page"])
     }
 
     func testAgentsCanReadTheModelAndReport() async throws {
