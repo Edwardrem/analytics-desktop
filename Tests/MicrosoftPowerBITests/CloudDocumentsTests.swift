@@ -68,6 +68,20 @@ final class CloudDocumentsTests: XCTestCase {
         XCTAssertFalse(CloudDocuments.isSyncedFile("Sales.Report/.DS_Store"))
     }
 
+    func testProjectSaveBackStaysInsideTheProjectsFolders() {
+        let mirror = CloudFolderMirror(driveID: "d", folderItemID: "f", folderPath: "Reports", files: [
+            "Sales.pbip": CloudTrackedFile(itemID: "1", eTag: nil, sha256: ""),
+            "Sales.Report/definition.pbir": CloudTrackedFile(itemID: "2", eTag: nil, sha256: ""),
+        ])
+        let project = CloudDocuments.syncedPaths(of: mirror, wholeFolder: false)
+        XCTAssertTrue(project("Sales.Report/definition/pages/p1/page.json"))
+        XCTAssertTrue(project("Sales.pbip"))
+        XCTAssertFalse(project(".gitignore"), "files written beside the project stay on this Mac")
+        XCTAssertFalse(project("Other.Report/x.json"))
+        XCTAssertFalse(project("Sales.Report/.pbi/localSettings.json"))
+        XCTAssertTrue(CloudDocuments.syncedPaths(of: mirror, wholeFolder: true)("data/Budget.json"), "a package folder goes back whole")
+    }
+
     func testConflictChoicesDependOnHowTheDocumentTravels() {
         let conflict = CloudSaveError.conflict(name: "Sales.facet", modifiedBy: "Ana", modified: nil, currentETag: "e2")
         XCTAssertEqual(CloudDocuments.choices(for: conflict, packed: true), [.saveCopy, .replace, .cancel])

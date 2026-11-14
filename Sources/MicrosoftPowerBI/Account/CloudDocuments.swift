@@ -29,6 +29,17 @@ enum CloudDocuments {
         return !parts.contains(".pbi") && parts.last != ".DS_Store" && !(parts.last?.hasSuffix(".facet-tmp") ?? false)
     }
 
+    /// What goes back for a mirrored folder: synced files inside the entries that were downloaded. A project's
+    /// `.pbip`, `.Report` and `.SemanticModel` go back; files the app writes beside them (a `.gitignore`) don't land in
+    /// the user's cloud folder.
+    nonisolated static func syncedPaths(of mirror: CloudFolderMirror, wholeFolder: Bool) -> (String) -> Bool {
+        let tops = Set(mirror.files.keys.compactMap { $0.split(separator: "/").first.map(String.init) })
+        return { path in
+            guard isSyncedFile(path) else { return false }
+            return wholeFolder || path.split(separator: "/").first.map { tops.contains(String($0)) } == true
+        }
+    }
+
     // MARK: Open
 
     static func open(_ item: DriveItem, into store: DocumentStore) {
@@ -115,7 +126,9 @@ enum CloudDocuments {
                 try FacetArchive.pack(package: local, to: zip)
                 files.cloud = .packedDocument(try await sync.saveBack(fileAt: zip, to: reference, overwrite: overwrite))
             case .folder(let mirror, let root, let name, let web):
-                let updated = try await sync.uploadChanges(from: root, mirror: mirror, overwrite: overwrite, relevant: isSyncedFile)
+                let wholeFolder = (name as NSString).pathExtension.lowercased() == DocumentPackage.fileExtension
+                let updated = try await sync.uploadChanges(from: root, mirror: mirror, overwrite: overwrite,
+                                                           relevant: syncedPaths(of: mirror, wholeFolder: wholeFolder))
                 files.cloud = .folder(updated, localRoot: root, name: name, webURL: web)
             }
             files.cloudState = .uploaded(Date())

@@ -74,9 +74,34 @@ final class AutoRecovery {
             let key = ObjectIdentifier(store)
             guard Self.isDue(isDirty: store.isDirty, lastWrite: slots[key]?.store === store ? slots[key]?.lastWrite : nil,
                              now: now, interval: interval) else { continue }
-            do { try write(store, now: now) }
-            catch { store.status = StatusMessage(kind: .warning, text: "Couldn't save a recovery copy: \(error.localizedDescription)") }
+            writeInBackground(store, now: now)
         }
+    }
+
+    /// Writes the copy off the main thread. A copy that finishes after the document was saved or closed is removed.
+    private func writeInBackground(_ store: DocumentStore, now: Date) {
+        var s = slot(for: store)
+        s.lastWrite = now
+        slots[ObjectIdentifier(store)] = s
+        let (doc, entry, folder) = (store.doc, Entry(id: s.id, name: store.displayName, original: store.fileURL, savedAt: now), directory)
+        Task.detached(priority: .utility) {
+            let result = Result { try Self.writeFiles(doc, entry: entry, to: folder) }
+            await MainActor.run {
+                let live = self.recoveryID(of: store) == entry.id && store.isDirty
+                if !live { self.remove(id: entry.id, in: folder) }
+                if case .failure(let error) = result, live {
+                    store.status = StatusMessage(kind: .warning, text: "Couldn't save a recovery copy: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    nonisolated static func writeFiles(_ doc: FacetDocument, entry: Entry, to folder: URL) throws {
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try DocumentPackage.write(doc, to: folder.appendingPathComponent("\(entry.id).facet"))
+        let e = JSONEncoder()
+        e.dateEncodingStrategy = .iso8601
+        try e.encode(entry).write(to: folder.appendingPathComponent("\(entry.id).json"), options: .atomic)
     }
 
     // MARK: Copies
@@ -98,13 +123,7 @@ final class AutoRecovery {
     /// Writes (or replaces) the store's recovery copy now.
     func write(_ store: DocumentStore, now: Date = Date()) throws {
         var s = slot(for: store)
-        let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try DocumentPackage.write(store.doc, to: directory.appendingPathComponent("\(s.id).facet"))
-        let entry = Entry(id: s.id, name: store.displayName, original: store.fileURL, savedAt: now)
-        let e = JSONEncoder()
-        e.dateEncodingStrategy = .iso8601
-        try e.encode(entry).write(to: directory.appendingPathComponent("\(s.id).json"), options: .atomic)
+        try Self.writeFiles(store.doc, entry: Entry(id: s.id, name: store.displayName, original: store.fileURL, savedAt: now), to: directory)
         s.lastWrite = now
         slots[ObjectIdentifier(store)] = s
     }
@@ -131,9 +150,10 @@ final class AutoRecovery {
             && url.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path
     }
 
-    func remove(id: String) {
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(id).facet"))
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent("\(id).json"))
+    func remove(id: String, in folder: URL? = nil) {
+        let folder = folder ?? directory
+        try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(id).facet"))
+        try? FileManager.default.removeItem(at: folder.appendingPathComponent("\(id).json"))
     }
 
     /// Recovery copies left behind by an earlier session (not by a document open now), newest first.

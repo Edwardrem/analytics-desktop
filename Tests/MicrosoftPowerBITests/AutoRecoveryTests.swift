@@ -39,13 +39,20 @@ final class AutoRecoveryTests: XCTestCase {
         XCTAssertEqual(AutoRecovery(directory: dir, defaults: defaults).interval, 3600, "at most an hour")
     }
 
-    func testUnsavedDocumentsAreCopiedAndOfferedBackAfterACrash() throws {
+    private func waitForCopy(_ id: String) async throws {
+        let json = dir.appendingPathComponent("\(id).json")
+        let deadline = Date().addingTimeInterval(5)
+        while !FileManager.default.fileExists(atPath: json.path), Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+    }
+
+    func testUnsavedDocumentsAreCopiedAndOfferedBackAfterACrash() async throws {
         let recovery = AutoRecovery(directory: dir, defaults: defaults)
         let clean = DocumentStore(services: .live())
         let edited = editedStore()
         edited.fileURL = URL(fileURLWithPath: "/Users/me/Budget.facet")
         recovery.tick(stores: [clean, edited])
         let id = try XCTUnwrap(recovery.recoveryID(of: edited))
+        try await waitForCopy(id)
         XCTAssertNil(recovery.recoveryID(of: clean), "a saved document gets no copy")
         XCTAssertEqual(try DocumentPackage.read(from: dir.appendingPathComponent("\(id).facet")).model.tables.map(\.name), ["Budget"])
         XCTAssertTrue(recovery.leftovers().isEmpty, "copies of documents that are still open aren't leftovers")
@@ -88,6 +95,17 @@ final class AutoRecoveryTests: XCTestCase {
         defaults.set(false, forKey: AppSettings.Key.autoRecovery.rawValue)
         recovery.tick(stores: [edited])
         XCTAssertNil(recovery.recoveryID(of: edited), "turned off in Settings")
+    }
+
+    func testACopyFinishedAfterTheDocumentWasSavedIsRemoved() async throws {
+        let recovery = AutoRecovery(directory: dir, defaults: defaults)
+        let edited = editedStore()
+        recovery.tick(stores: [edited])
+        let id = try XCTUnwrap(recovery.recoveryID(of: edited))
+        recovery.discard(edited)            // saved while the copy was being written
+        try await Task.sleep(nanoseconds: 500_000_000)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("\(id).json").path))
+        XCTAssertTrue(recovery.leftovers().isEmpty)
     }
 
     func testTheLocationSettingIsHonoured() {
