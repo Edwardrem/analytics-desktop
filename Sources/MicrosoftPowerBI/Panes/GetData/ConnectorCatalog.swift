@@ -50,6 +50,7 @@ struct DataConnector: Identifiable, Hashable {
         static let service = "Needs this online service's API and sign-in, which the query engine does not have."
         static let windowsOnly = "Relies on a Windows-only data provider."
         static let cluster = "Needs a cluster client, which this app does not include."
+        static let customConnector = "Needs the Power Query SDK runtime for .mez and .pqx extensions, which this app does not include."
     }
 
     private static func works(_ id: String, _ name: String, _ category: Category, _ symbol: String, _ kind: SourceKind) -> DataConnector {
@@ -149,5 +150,6 @@ struct DataConnector: Identifiable, Hashable {
         missing("active-directory", "Active Directory", .other, "person.3", Missing.windowsOnly),
         missing("exchange", "Microsoft Exchange", .other, "envelope", Missing.service),
         missing("sharepoint-onprem", "SharePoint list", .other, "list.bullet.rectangle", Missing.sharePoint),
+        missing("custom-connector", "Custom connector (.mez, .pqx)", .other, "puzzlepiece.extension", Missing.customConnector),
     ]
 }

@@ -121,7 +121,7 @@ enum EditorCommands {
         c("pq.groupBy", "Group By…", "square.grid.3x1.below.line.grid.1x2", Need.table) { $0.dialog = .groupBy },
         c("pq.typeLocale", "Using Locale…", "globe", Need.columns) { $0.dialog = .changeTypeWithLocale(columns: sel($0)) },
         c("pq.detectType", "Detect Data Type", "wand.and.stars", Need.table) { s in
-            guard let table = s.preview?.table else { return }
+            guard let table = s.preview?.untypedTable else { return }
             let scope = s.selectedColumns.isEmpty ? table : DataTable(name: table.name, columns: table.columns.filter { s.selectedColumns.contains($0.name) })
             if let t = Transform.detectTypes(in: scope) { s.apply(t) } else { s.message = StatusMessage(kind: .info, text: "The column types already match the data.") }
         },

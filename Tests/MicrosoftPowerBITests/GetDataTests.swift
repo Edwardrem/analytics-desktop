@@ -284,3 +284,42 @@ final class QuerySecurityTests: XCTestCase {
         XCTAssertEqual(security.recentSources.first?.location, "/f29.json")
     }
 }
+
+final class EditParametersTests: XCTestCase {
+    private func parameter(_ name: String, _ value: Value, type: DataType, list: [Value] = []) -> QueryDefinition {
+        var p = QueryParameter()
+        p.type = type; p.currentValue = value; p.suggestedValues = list
+        var q = QueryDefinition(name: name, mScript: MScript.parameterScript(p))
+        q.kind = .parameter
+        q.parameter = p
+        return q
+    }
+
+    func testTypedValuesReplaceTheCurrentValues() throws {
+        let year = parameter("Year", .int(2024), type: .integer)
+        let region = parameter("Region", .string("North"), type: .text, list: [.string("North"), .string("South")])
+        let sales = QueryDefinition(name: "Sales", mScript: "let\n    Source = Year\nin\n    Source")
+        let after = try XCTUnwrap(EditParametersSheet.applying([year.id: "2025", region.id: "South"], to: [year, region, sales]))
+        XCTAssertEqual(after[0].parameter?.currentValue, .int(2025))
+        XCTAssertEqual(after[0].mScript, "2025 meta [IsParameterQuery=true, Type=\"Number\", IsParameterQueryRequired=true]")
+        XCTAssertEqual(after[1].parameter?.currentValue, .string("South"))
+        XCTAssertEqual(after[1].parameter?.suggestedValues, [.string("North"), .string("South")])
+        XCTAssertEqual(after[2], sales)
+        XCTAssertNil(EditParametersSheet.applying([year.id: "next year"], to: [year]), "a whole number parameter refuses text")
+        XCTAssertNil(EditParametersSheet.applying([year.id: ""], to: [year]), "a required parameter needs a value")
+    }
+
+    func testParameterDraftReadsAndWritesAParameter() {
+        let q = parameter("Cutoff", .double(2.5), type: .decimal, list: [.double(2.5), .double(5)])
+        let draft = ParameterDraft(q)
+        XCTAssertTrue(draft.listMode)
+        XCTAssertEqual(draft.list, "2.5\n5")
+        XCTAssertEqual(draft.current, "2.5")
+        XCTAssertNil(draft.problem)
+        XCTAssertEqual(draft.parameter, q.parameter)
+        var empty = ParameterDraft()
+        empty.listMode = true
+        empty.current = "x"
+        XCTAssertEqual(empty.problem, "Add at least one suggested value, one per line.")
+    }
+}

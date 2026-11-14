@@ -2,6 +2,16 @@ import SwiftUI
 import FacetCore
 import FacetQuery
 
+extension QueryPreview {
+    /// The preview with columns the M type leaves untyped (`any`) marked `.any`, so "Detect data type" types them
+    /// even when their values already are numbers or dates (as Excel cells are).
+    var untypedTable: DataTable {
+        var t = table
+        for i in t.columns.indices where columnTypes[safe: i]?.dataType == .any { t.columns[i].type = .any }
+        return t
+    }
+}
+
 /// Which query the Power Query Editor should select when it opens for a document (set by Get Data ▸ Transform Data).
 @MainActor
 enum QueryEditorRouting {
@@ -169,7 +179,7 @@ final class GetDataSession: ObservableObject {
             }
         }
         let typed = [.sqlite, .python, .r].contains(request.kind)
-        if !typed, let types = Transform.detectTypes(in: shown.table) {
+        if !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)
         }
@@ -251,7 +261,8 @@ final class GetDataSession: ObservableObject {
                     }
                 }
                 if !failures.isEmpty { error = failures.joined(separator: "\n"); return false }
-                for s in engine.dataSourcesAccessed where !sources.contains(s) { sources.append(s) }
+                // One record per location: OData reads its feed through Web.Contents, which is the same source.
+                for s in engine.dataSourcesAccessed where !sources.contains(where: { $0.location == s.location }) { sources.append(s) }
             }
             let directQuery = request.kind == .sqlite && request.directQuery
             // Routed before the write, so an editor that is already open selects the new query as it appears.

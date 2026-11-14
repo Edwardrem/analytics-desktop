@@ -26,6 +26,10 @@ enum GetDataFeature {
             AppCommand(id: "data.sourceSettings", title: "Data Source Settings…", menu: .data, symbol: "lock.shield") { store in
                 store.present { DataSourceSettingsSheet() }
             },
+            AppCommand(id: "data.editParameters", title: "Edit Parameters…", menu: .data, symbol: "slider.horizontal.3",
+                       isEnabled: { $0.doc.queries.contains { $0.kind == .parameter } }) { store in
+                store.present { EditParametersSheet() }
+            },
             AppCommand(id: "data.transform", title: "Transform Data", menu: .data, symbol: "wand.and.rays") { store in
                 // Addressed to this document: its window opens the editor only for its own store.
                 NotificationCenter.default.post(name: .facetOpenQueryEditor, object: store)
