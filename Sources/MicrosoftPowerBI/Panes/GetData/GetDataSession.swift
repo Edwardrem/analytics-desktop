@@ -276,6 +276,19 @@ final class GetDataSession: ObservableObject {
                 for s in engine.dataSourcesAccessed where !sources.contains(where: { $0.location == s.location }) { sources.append(s) }
             }
             let directQuery = request.kind == .sqlite && request.directQuery
+            if directQuery {
+                // The same check as the storage-mode menu: DirectQuery only when every step folds into SQL.
+                for table in tables {
+                    var probe = ModelTable(name: table.name)
+                    probe.sourceQuery = table.name
+                    let support = await StorageModeLogic.support(probe, queries: store.doc.queries + definitions,
+                                                                   baseDirectory: store.fileURL?.deletingLastPathComponent())
+                    if case .importOnly(let reason) = support {
+                        error = reason + " Choose Import to load it."
+                        return false
+                    }
+                }
+            }
             // Routed before the write, so an editor that is already open selects the new query as it appears.
             if destination == .transform { QueryEditorRouting.select(first.name, in: store) }
             var related: [Relationship] = []
