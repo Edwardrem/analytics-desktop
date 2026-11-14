@@ -14,6 +14,8 @@ public final class GraphClient {
     public static let simpleUploadLimit: Int64 = 4 * 1024 * 1024
     /// Upload-session chunk size: 10 MiB, a multiple of the 320 KiB Graph requires.
     public static let uploadChunkSize = 32 * 327_680
+    /// Largest file `download` accepts unless told otherwise (8 GB).
+    public static let defaultMaxDownloadBytes: Int64 = 8 * 1024 * 1024 * 1024
 
     /// - Parameters:
     ///   - tokenProvider: usually the app's `MicrosoftAccountManager`.
@@ -163,28 +165,35 @@ public final class GraphClient {
 
     /// Downloads a file to disk. Graph answers with a 302 to a pre-authenticated URL, which is followed
     /// (without forwarding the bearer token); the body is streamed to a file with progress.
-    /// - Parameter destination: target file; defaults to a new file in Facet's temporary downloads folder.
+    /// - Parameters:
+    ///   - destination: target file; defaults to a new file in Facet's temporary downloads folder.
+    ///   - maxBytes: the download is stopped and refused once it grows past this size.
     /// - Returns: the local file URL.
     public func download(_ location: DriveLocation, suggestedName: String? = nil, destination: URL? = nil,
-                         progress: TransferProgressHandler? = nil) async throws -> URL {
+                         maxBytes: Int64 = GraphClient.defaultMaxDownloadBytes, progress: TransferProgressHandler? = nil) async throws -> URL {
         var name = suggestedName
         if name == nil, destination == nil { name = try await item(at: location).name }
-        return try await downloadAttempt(location, name: name ?? "download", destination: destination, progress: progress, retryOn401: true)
+        return try await downloadAttempt(location, name: name ?? "download", destination: destination, maxBytes: maxBytes,
+                                         progress: progress, retryOn401: true)
     }
 
-    private func downloadAttempt(_ location: DriveLocation, name: String, destination: URL?, progress: TransferProgressHandler?,
-                                 retryOn401: Bool) async throws -> URL {
+    private func downloadAttempt(_ location: DriveLocation, name: String, destination: URL?, maxBytes: Int64,
+                                 progress: TransferProgressHandler?, retryOn401: Bool) async throws -> URL {
         var request = URLRequest(url: try url(location.subresource("content")))
+        guard rest.policy.allowsCredentials(for: request.url) else {
+            throw CloudAPIError(service: rest.service, kind: .badRequest, statusCode: 0, message: "Refused to send your sign-in to an address that is not Microsoft Graph.")
+        }
         let token = try await rest.tokenProvider.accessToken(resource: rest.scope)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         do {
             return try await FileDownloader.download(request, service: rest.service, suggestedName: name, destination: destination,
-                                                     configuration: transferConfiguration, progress: progress)
+                                                     configuration: transferConfiguration, maxBytes: maxBytes, progress: progress)
         } catch let e as CloudAPIError where e.kind == .unauthorized && retryOn401 {
             if let r = rest.tokenProvider as? RefreshableAccessTokenProviding {
                 _ = try await r.accessToken(resource: rest.scope, forceRefresh: true)
             }
-            return try await downloadAttempt(location, name: name, destination: destination, progress: progress, retryOn401: false)
+            return try await downloadAttempt(location, name: name, destination: destination, maxBytes: maxBytes,
+                                             progress: progress, retryOn401: false)
         }
     }
 

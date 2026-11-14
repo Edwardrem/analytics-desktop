@@ -73,6 +73,11 @@ public enum PBIXPackage {
             }
         }
 
+        // A template written with a sensitivity label carries it in its metadata; keep it on the document.
+        if doc.report.settings.sensitivityLabel.isEmpty, let meta = try text(zip, "Metadata"),
+           let label = (try? JSONValue.parse(meta))?["SensitivityLabel"]?.stringValue, !label.isEmpty {
+            doc.report.settings.sensitivityLabel = String(label.prefix(256))
+        }
         guard hasReport || hasModel || !doc.queries.isEmpty else {
             throw InteropError.invalidFormat("“\(fileName)” holds no report layout, model definition or queries \(AppIdentity.name) can read.")
         }

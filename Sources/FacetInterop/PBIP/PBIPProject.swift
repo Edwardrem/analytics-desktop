@@ -103,7 +103,7 @@ public enum PBIPProject {
         // Keep the logical ids of an existing project stable.
         func existingID(_ item: String) -> String? {
             let url = folder.appendingPathComponent("\(safeName).\(item)/.platform")
-            return (try? Data(contentsOf: url)).flatMap { try? JSONValue.parse($0) }?.at("config", "logicalId")?.stringValue
+            return BoundedFile.readIfPresent(url).flatMap { try? JSONValue.parse($0) }?.at("config", "logicalId")?.stringValue
         }
         let ids = (report: existingID("Report") ?? UUID().lower, model: existingID("SemanticModel") ?? UUID().lower)
         let generated = files(for: document, name: safeName, options: options, logicalIDs: ids)
@@ -113,7 +113,7 @@ public enum PBIPProject {
             for (path, data) in generated.files {
                 written.insert(path)
                 let url = folder.appendingPathComponent(path)
-                if let old = try? Data(contentsOf: url), old == data { continue }
+                if let old = BoundedFile.readIfPresent(url, limit: max(data.count, 1)), old == data { continue }
                 try fm.writeCreatingDirectories(data, to: url)
             }
             // Prune stale generated files.
@@ -143,7 +143,7 @@ public enum PBIPProject {
         let fm = FileManager.default
         var warnings: [ImportWarning] = []
         var reportDir: URL?, modelDir: URL?
-        func json(_ u: URL) -> JSONValue? { (try? Data(contentsOf: u)).flatMap { try? JSONValue.parse($0) } }
+        func json(_ u: URL) -> JSONValue? { BoundedFile.readIfPresent(u).flatMap { try? JSONValue.parse($0) } }
 
         var pbip: URL?
         if url.pathExtension.lowercased() == "pbip" { pbip = url }
@@ -187,7 +187,13 @@ public enum PBIPProject {
                 var tmdl: [TMDLFile] = []
                 if let walker = fm.enumerator(at: defDir, includingPropertiesForKeys: nil) {
                     for case let f as URL in walker where f.pathExtension.lowercased() == "tmdl" {
-                        guard let text = (try? Data(contentsOf: f)).flatMap(TextDecoding.string(from:)) else { continue }
+                        guard tmdl.count < BoundedFile.maxProjectFiles else {
+                            throw InteropError.invalidFormat("“\(modelDir.lastPathComponent)” holds more than \(BoundedFile.maxProjectFiles) model files.")
+                        }
+                        guard let text = BoundedFile.readIfPresent(f).flatMap(TextDecoding.string(from:)) else {
+                            warnings.append(ImportWarning("“\(f.lastPathComponent)” couldn't be read (missing, unreadable or too large).", location: f.lastPathComponent))
+                            continue
+                        }
                         tmdl.append(TMDLFile(path: String(f.path.dropFirst(defDir.path.count + 1)), text: text))
                     }
                 }
@@ -204,7 +210,7 @@ public enum PBIPProject {
             }
             let cache = modelDir.appendingPathComponent(".pbi/facet-cache")
             for f in (try? fm.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "json" {
-                if let t = try? JSONDecoder().decode(DataTable.self, from: Data(contentsOf: f)) { doc.data[t.name] = t }
+                if let d = BoundedFile.readIfPresent(f, limit: BoundedFile.dataLimit), let t = try? JSONDecoder().decode(DataTable.self, from: d) { doc.data[t.name] = t }
             }
         }
         // Report.
@@ -214,7 +220,7 @@ public enum PBIPProject {
             if let reportJSON = json(def.appendingPathComponent("report.json")) {
                 try readPBIR(def: def, reportJSON: reportJSON, resources: resources, into: &doc, warnings: &warnings)
             } else if let legacy = json(reportDir.appendingPathComponent("report.json")) {
-                let converted = LegacyReportLayout.convert(legacy) { name in try? Data(contentsOf: resources.appendingPathComponent(name)) }
+                let converted = LegacyReportLayout.convert(legacy) { name in resource(resources, name) }
                 doc.report = converted.report
                 warnings += converted.warnings
             } else {
@@ -225,10 +231,16 @@ public enum PBIPProject {
         return (doc, warnings)
     }
 
+    /// A registered resource (theme, image) by the name the report gives it; names that would leave the folder are refused.
+    static func resource(_ folder: URL, _ name: String) -> Data? {
+        guard BoundedFile.isSafeResourceName(name) else { return nil }
+        return BoundedFile.readIfPresent(folder.appendingPathComponent(name))
+    }
+
     private static func readPBIR(def: URL, reportJSON: JSONValue, resources: URL, into doc: inout FacetDocument, warnings: inout [ImportWarning]) throws {
         let fm = FileManager.default
-        func json(_ u: URL) -> JSONValue? { (try? Data(contentsOf: u)).flatMap { try? JSONValue.parse($0) } }
-        let head = PBIR.readReport(reportJSON, resource: { try? Data(contentsOf: resources.appendingPathComponent($0)) }, warnings: &warnings)
+        func json(_ u: URL) -> JSONValue? { BoundedFile.readIfPresent(u).flatMap { try? JSONValue.parse($0) } }
+        let head = PBIR.readReport(reportJSON, resource: { resource(resources, $0) }, warnings: &warnings)
         doc.report = head.report
         doc.dataSources = head.dataSources
 
