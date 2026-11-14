@@ -94,6 +94,8 @@ enum TMSLWriter {
         var out: [String: JSONValue] = ["name": js(t.name)]
         if !t.description.isEmpty { out["description"] = js(t.description) }
         if t.isHidden { out["isHidden"] = jb(true) }
+        if t.dateColumn != nil { out["dataCategory"] = js("Time") }
+        var annotations: [JSONValue] = []
         out["columns"] = ja(t.columns.map { c in
             var col: [String: JSONValue] = ["name": js(c.name), "dataType": js(TMDLVocabulary.dataType(c.dataType).name),
                                             "summarizeBy": js(summarize(c.summarizeBy))]
@@ -138,9 +140,12 @@ enum TMSLWriter {
             let source = t.expression == nil ? t.sourceQuery.flatMap { queries[$0]?.mScript } : nil
             out["refreshPolicy"] = refreshPolicy(p, source: source, table: t.name)
             if TMDLRefreshPolicy.needsDateColumnAnnotation(p, source: source) {
-                out["annotations"] = ja([facet(TMDLRefreshPolicy.dateColumnAnnotation, .string(p.dateColumn))])
+                annotations.append(facet(TMDLRefreshPolicy.dateColumnAnnotation, .string(p.dateColumn)))
             }
         }
+        // Which column "Mark as date table" chose, as the TMDL writer records it.
+        if let d = t.dateColumn { annotations.append(facet("dateColumn", .string(d))) }
+        if !annotations.isEmpty { out["annotations"] = ja(annotations) }
         return jo(out)
     }
 

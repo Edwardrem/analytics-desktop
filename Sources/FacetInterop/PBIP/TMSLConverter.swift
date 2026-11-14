@@ -193,9 +193,16 @@ enum TMSLConverter {
                 warnings.append(ImportWarning("Partition “\(p["name"]?.stringValue ?? name)” of kind “\(source?["type"]?.stringValue ?? "m")” isn't supported; the table has no source.", location: location))
             }
         }
-        if table.dateColumn == nil, let date = table.columns.first(where: { $0.dataType == .dateTime && $0.isKey })?.name
-            ?? table.columns.first(where: { $0.dataType.isTemporal })?.name {
-            table.dateColumn = date
+        // A date table: the column this app recorded, else the key date column (how Power BI marks one), else the first
+        // date column of a table tagged dataCategory "Time". A table that merely has a date column is not one.
+        if table.dateColumn == nil {
+            if let d = facet(t, "dateColumn")?.stringValue, table.column(d) != nil {
+                table.dateColumn = d
+            } else if let key = table.columns.first(where: { $0.isKey && $0.dataType.isTemporal })?.name {
+                table.dateColumn = key
+            } else if t["dataCategory"]?.stringValue?.lowercased() == "time" {
+                table.dateColumn = table.columns.first { $0.dataType.isTemporal }?.name
+            }
         }
         if let rp = t["refreshPolicy"], rp.objectValue != nil {
             let annotated = facet(t, TMDLRefreshPolicy.dateColumnAnnotation)?.stringValue
