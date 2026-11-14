@@ -120,23 +120,31 @@ final class TDSConnection: @unchecked Sendable {
         if target.port == nil, let instance = target.instance {
             target.port = try SQLServerBrowser.port(host: target.host, instance: instance, timeout: min(options.connectTimeout, 5))
         }
+        var trust = options.trustServerCertificate
         for _ in 0..<3 {
-            let (connection, routing) = try login(options, host: target.host, port: target.port ?? 1433)
+            let (connection, routing) = try login(options, host: target.host, port: target.port ?? 1433, trust: trust)
             guard let routing else { return connection }
             connection.close()
-            target = TDSServerAddress(host: routing.host, port: routing.port)
+            let next = TDSServerAddress(host: routing.host, port: routing.port)
+            // The sign-in (password or Entra token) is sent again to the routed host, so a redirect may only move
+            // between Microsoft cloud SQL hosts, and "Trust server certificate" covers only the host the user named.
+            guard options.address.isMicrosoftCloud, next.isMicrosoftCloud else {
+                throw TDSError.connection("The server '\(target.host)' redirected the connection to '\(routing.host)', which isn't a Microsoft cloud SQL host, so the sign-in wasn't sent there.")
+            }
+            target = next
+            trust = false
         }
         throw TDSError.connection("The server redirected the connection too many times.")
     }
 
-    private static func login(_ options: TDSConnectOptions, host: String, port: Int) throws -> (TDSConnection, (host: String, port: Int)?) {
+    private static func login(_ options: TDSConnectOptions, host: String, port: Int, trust: Bool) throws -> (TDSConnection, (host: String, port: Int)?) {
         let usesToken: Bool
         if case .accessToken = options.authentication { usesToken = true } else { usesToken = false }
         let deadline = Date().addingTimeInterval(options.connectTimeout)
         let transport: TDSTransport
         let prelogin: TDSPrelogin.Response
         if options.strictEncryption {
-            transport = try TDSTransport.connectStrict(host: host, port: port, trustServerCertificate: options.trustServerCertificate, timeout: options.connectTimeout)
+            transport = try TDSTransport.connectStrict(host: host, port: port, trustServerCertificate: trust, timeout: options.connectTimeout)
             transport.deadline = deadline
             try transport.send(TDSWriter.packets(.prelogin, TDSPrelogin.request(encryption: .on, fedAuth: usesToken), packetSize: TDSLimits.initialPacketSize))
             let reader = TDSMessageReader(transport, maxBytes: 4096)
@@ -145,7 +153,7 @@ final class TDSConnection: @unchecked Sendable {
             prelogin = try TDSPrelogin.parse(payload)
         } else {
             transport = try TDSTransport.connect(host: host, port: port, prelogin: TDSPrelogin.request(encryption: .on, fedAuth: usesToken),
-                                                 trustServerCertificate: options.trustServerCertificate, timeout: options.connectTimeout)
+                                                 trustServerCertificate: trust, timeout: options.connectTimeout)
             transport.deadline = deadline
             guard let r = transport.preloginResponse else { transport.close(); throw TDSError.protocolViolation("no PRELOGIN response") }
             prelogin = r
