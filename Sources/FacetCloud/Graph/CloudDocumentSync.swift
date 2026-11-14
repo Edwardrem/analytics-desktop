@@ -164,10 +164,20 @@ public final class CloudDocumentSync {
         return String(s.prefix(200))
     }
 
+    /// Where working copies of cloud documents are made.
+    public static var workingRoot: URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
+        return base.appendingPathComponent("AnalyticsDesktop/Cloud", isDirectory: true)
+    }
+
+    /// Whether `url` is inside a working copy made by `makeWorkingDirectory`.
+    public static func isWorkingCopy(_ url: URL) -> Bool {
+        url.standardizedFileURL.path.hasPrefix(workingRoot.standardizedFileURL.path + "/")
+    }
+
     /// A new private folder for working copies, under the user's caches.
     public static func makeWorkingDirectory() throws -> URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory
-        let dir = base.appendingPathComponent("AnalyticsDesktop/Cloud", isDirectory: true).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let dir = workingRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         return dir
     }

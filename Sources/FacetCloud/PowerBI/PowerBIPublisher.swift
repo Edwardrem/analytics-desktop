@@ -6,8 +6,8 @@ public struct PublishWorkspace: Sendable, Equatable, Identifiable {
     public let name: String
     public let isPersonal: Bool
     public init(id: String, name: String, isPersonal: Bool) { self.id = id; self.name = name; self.isPersonal = isPersonal }
-    /// The Power BI REST reference (`/myorg` for My workspace).
-    public var powerBIRef: PowerBIWorkspaceRef { isPersonal && id == PowerBIWorkspace.myWorkspace.id ? .myWorkspace : .group(id: id) }
+    /// The Power BI REST reference: `/myorg` for My workspace (whatever id Fabric gives it), `/groups/<id>` otherwise.
+    public var powerBIRef: PowerBIWorkspaceRef { isPersonal ? .myWorkspace : .group(id: id) }
 }
 
 /// What a publish created or replaced in the service.

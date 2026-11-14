@@ -11,7 +11,7 @@ final class RibbonLayoutTests: XCTestCase {
     /// Ribbon ids that no feature registers yet. They draw disabled. When a feature registers one,
     /// remove it here; the test only fails if an id goes missing that is not on this list.
     static let pending: Set<String> = [
-        "account.sensitivity", "insert.sparkline",
+        "insert.sparkline",
     ]
 
     override func setUp() {

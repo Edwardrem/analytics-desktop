@@ -23,11 +23,11 @@ enum AppSettings {
         // Updates, diagnostics
         case updateNotifications, usageData, tracing
         // Auto recovery
-        case autoRecovery, autoRecoveryMinutes
+        case autoRecovery, autoRecoveryMinutes, autoRecoveryLocation
         // Preview features
-        case previewGantt, previewNewQueryEditor, previewCalendarTI, previewUserContextColumns, previewFullTextSearch, previewAgentBridge
-        // Agent bridge
-        case mcpServerEnabled
+        case previewGantt, previewNewQueryEditor, previewCalendarTI, previewUserContextColumns, previewFullTextSearch
+        // Developer: agent bridge, Power BI projects
+        case mcpServerEnabled, pbipDataCache
     }
     static let initial: [String: Any] = [
         Key.appearance.rawValue: "system", Key.detectTypes.rawValue: true, Key.autodetectRelationships.rawValue: true,
@@ -38,8 +38,8 @@ enum AppSettings {
         Key.privacyMode.rawValue: "combine", Key.appLanguage.rawValue: "system", Key.modelLanguage.rawValue: "en-US", Key.importLocale.rawValue: "en-US",
         Key.updateNotifications.rawValue: true, Key.usageData.rawValue: false, Key.autoRecovery.rawValue: true, Key.autoRecoveryMinutes.rawValue: 10,
         Key.allowScripts.rawValue: false, Key.previewGantt.rawValue: true, Key.previewNewQueryEditor.rawValue: true, Key.previewCalendarTI.rawValue: true,
-        Key.previewUserContextColumns.rawValue: true, Key.previewFullTextSearch.rawValue: true, Key.previewAgentBridge.rawValue: false,
-        Key.mcpServerEnabled.rawValue: false,
+        Key.previewUserContextColumns.rawValue: true, Key.previewFullTextSearch.rawValue: true,
+        Key.mcpServerEnabled.rawValue: false, Key.pbipDataCache.rawValue: false, Key.autoRecoveryLocation.rawValue: "",
     ]
     static func registerDefaults() { defaults.register(defaults: initial) }
     static func bool(_ k: Key) -> Bool { defaults.bool(forKey: k.rawValue) }
@@ -113,14 +113,41 @@ private struct GeneralSettings: View {
                 Picker("Locale for import", selection: $importLocale) { ForEach(locales, id: \.self) { Text(Locale.current.localizedString(forIdentifier: $0) ?? $0).tag($0) } }
             }
             Section("Auto recovery") {
-                Toggled("Store recovery copies of open documents", .autoRecovery)
-                Stepper("Every \(minutes) minutes", value: $minutes, in: 1...60)
+                Toggled("Store recovery copies of open documents", .autoRecovery,
+                        help: "Documents with unsaved changes are copied regularly and offered back if \(AppIdentity.name) quits before you save.")
+                Stepper("Every \(minutes) minute\(minutes == 1 ? "" : "s")", value: $minutes, in: 1...60)
+                RecoveryLocationRow()
             }
             Section("Updates") {
                 Toggled("Tell me when an update is available", .updateNotifications)
                 Toggled("Share anonymous usage data", .usageData, help: "Off by default. \(AppIdentity.name) never sends your data or documents.")
             }
         }.formStyle(.grouped)
+    }
+}
+
+/// Where recovery copies go: the default folder, or one the user chooses.
+private struct RecoveryLocationRow: View {
+    @AppStorage(AppSettings.Key.autoRecoveryLocation.rawValue) private var location = ""
+    private var folder: URL { AutoRecovery.shared.directory }
+    var body: some View {
+        LabeledContent("Location") {
+            HStack {
+                Text((folder.path as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(.secondary).help(folder.path)
+                Button("Choose…") {
+                    let p = NSOpenPanel()
+                    p.canChooseDirectories = true; p.canChooseFiles = false; p.canCreateDirectories = true
+                    p.message = "Choose where recovery copies are kept."
+                    if p.runModal() == .OK, let u = p.url { location = u.path }
+                }
+                Button("Show") {
+                    try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                    NSWorkspace.shared.open(folder)
+                }
+                if !location.isEmpty { Button("Use Default") { location = "" } }
+            }
+        }
     }
 }
 
@@ -226,8 +253,6 @@ private struct PreviewSettings: View {
                 Toggled("Calendar-based time intelligence", .previewCalendarTI)
                 Toggled("User-context-aware calculated columns", .previewUserContextColumns)
                 Toggled("String indexing and full-text search functions", .previewFullTextSearch)
-                Toggled("Agent bridge and Modeling MCP server", .previewAgentBridge,
-                        help: "Lets AI agents and external tools on this Mac read and change the open model, with your confirmation.")
             }
         }.formStyle(.grouped)
     }

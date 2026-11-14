@@ -18,6 +18,6 @@ enum FeatureRegistration {
         AccountFeature.register()
         AIFeature.register()
         AnalyzeFeature.register()
-        LiveBridge.register()
+        FileFormatsFeature.register()
     }
 }
