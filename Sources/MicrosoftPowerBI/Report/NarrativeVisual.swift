@@ -93,7 +93,17 @@ enum NarrativeAssistant {
         guard !request.isEmpty else { throw NarrativeError.emptyPrompt }
         let data = await context(scope, excluding: id, store: store)
         let tag = scope.rawValue
-        let answer = try await AssistantTasks.ask(instructions, prompt: "\(request)\n\n<\(tag)>\n\(data)\n</\(tag)>", store: store)
+        var message = "\(request)\n\n<\(tag)>\n\(data)\n</\(tag)>"
+        // The Values well holds what the narrative must talk about.
+        if let spec = store.visual(id), let own = store.visualData[id] {
+            let values = NarrativeValues.current(spec, data: own)
+            if !values.isEmpty {
+                message += "\n\nMention each of these values, written exactly as shown:\n<values>\n"
+                    + values.map { "\($0.field.caption): \(ValueFormatter.format($0.value, $0.format))" }.joined(separator: "\n")
+                    + "\n</values>"
+            }
+        }
+        let answer = try await AssistantTasks.ask(instructions, prompt: message, store: store)
         let text = clean(answer)
         guard !text.isEmpty else { throw NarrativeError.unusable }
         return text
@@ -118,9 +128,13 @@ enum NarrativeAssistant {
                      store: DocumentStore, name: String = "Write Narrative") -> Bool {
         guard let spec = store.visual(id) else { return false }
         let basis = currentBasis(for: spec, store: store)
+        // Figures from the Values well become live values the author can click to change.
+        let kept = NarrativeValues.tokenize(text, spec: spec, data: store.visualData[id] ?? VisualData(),
+                                            previous: NarrativeValues.values(spec))
         store.updateVisual(id, name: name, invalidates: .layout) { v in
             v.setFmt("narrative", "prompt", .string(prompt))
-            v.setFmt("narrative", "text", .string(text))
+            v.setFmt("narrative", "text", .string(kept.text))
+            v.setFmt("narrative", "values", NarrativeValues.encoded(kept.values))
             v.setFmt("narrative", "scope", .string(scope.rawValue))
             v.setFmt("narrative", "basis", .string(basis))
             if let autoRewrite { v.setFmt("narrative", "autoRewrite", .bool(autoRewrite)) }
@@ -131,7 +145,7 @@ enum NarrativeAssistant {
     /// Goes back to the on-device summary.
     static func clear(visual id: UUID, store: DocumentStore) {
         store.updateVisual(id, name: "Clear Narrative", invalidates: .layout) { v in
-            for key in ["prompt", "text", "scope", "basis", "autoRewrite"] { v.setFmt("narrative", key, nil) }
+            for key in ["prompt", "text", "scope", "basis", "autoRewrite", "values"] { v.setFmt("narrative", key, nil) }
         }
     }
 
@@ -170,6 +184,10 @@ struct NarrativeView: View {
     @State private var refreshed: (basis: String, text: String)?
     @State private var refreshing = false
     @State private var refreshError: String?
+    /// The value token whose editor is open.
+    @State private var editingValue: EditingValue?
+
+    private struct EditingValue: Identifiable { var id: UUID }
 
     private var assistantText: String { NarrativeAssistant.text(spec) }
     private var basis: String { NarrativeAssistant.currentBasis(for: spec, store: store) }
@@ -212,10 +230,26 @@ struct NarrativeView: View {
     @ViewBuilder
     private var written: some View {
         let current = refreshed?.basis == basis ? refreshed?.text : nil
-        Text(current ?? assistantText)
-            .font(Design.Typeface.body)
-            .textSelection(.enabled)
-            .fixedSize(horizontal: false, vertical: true)
+        Group {
+            if let current {
+                Text(current)
+            } else {
+                // Values are live and, while editing, links that open their editor.
+                Text(NarrativeValues.attributed(assistantText, spec: spec, data: store.visualData[spec.id] ?? data,
+                                                editable: context.isInteractive))
+            }
+        }
+        .font(Design.Typeface.body)
+        .textSelection(.enabled)
+        .fixedSize(horizontal: false, vertical: true)
+        .environment(\.openURL, OpenURLAction { url in
+            guard let id = NarrativeValues.valueID(from: url) else { return .systemAction }
+            editingValue = EditingValue(id: id)
+            return .handled
+        })
+        .popover(item: $editingValue, arrowEdge: .bottom) { item in
+            NarrativeValueEditor(spec: store.visual(spec.id) ?? spec, valueID: item.id, store: store) { editingValue = nil }
+        }
         HStack(spacing: Design.Space.xs) {
             if refreshing { ProgressView().controlSize(.mini) }
             Text(refreshing ? "Updating for the current filters…" : (refreshError ?? "Written by the assistant: \(NarrativeAssistant.prompt(spec))"))
