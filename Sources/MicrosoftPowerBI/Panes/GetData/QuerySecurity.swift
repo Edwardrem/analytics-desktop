@@ -180,6 +180,7 @@ final class QuerySecurity: @unchecked Sendable {
         env.pythonPath = pythonPath
         env.rPath = rPath
         env.culture = importLocale
+        env.trustServerCertificateHosts = trustedServerCertificateHosts
         return env
     }
 

@@ -156,22 +156,26 @@ public final class MInterpreter: @unchecked Sendable {
     public func credential(kind: String, location: String) -> SourceCredential? {
         environment.credentials?.credential(kind: kind, location: location)
     }
-    /// Synchronously obtain a bearer token from the credential provider. Must not be called on the main thread
-    /// (evaluation always runs on the engine's worker thread).
-    public func accessToken(resource: String) throws -> String {
+    /// Synchronously obtain an Entra access token for `resource`, to be sent only to `host`
+    /// (`QueryEnvironment.accessToken(resource:host:)`). Must not be called on the main thread
+    /// (evaluation always runs on the engine's worker thread). The token is never traced.
+    public func accessToken(resource: String, host: String) throws -> String {
         guard let provider = environment.credentials else {
-            throw MError.dataSource("Sign in is required to access '\(resource)', but no credential provider is configured.")
+            throw MError.dataSource("Sign in with a Microsoft account to access '\(host)'; no credential provider is configured.")
         }
         let sem = DispatchSemaphore(value: 0)
-        var result: Result<String, Error> = .failure(MError.dataSource("No access token was returned for '\(resource)'."))
+        let box = TokenBox()
         Task.detached {
-            do { result = .success(try await provider.accessToken(resource: resource)) } catch { result = .failure(error) }
+            do { box.result = .success(try await provider.accessToken(resource: resource, host: host)) } catch { box.result = .failure(error) }
             sem.signal()
         }
         sem.wait()
-        do { return try result.get() } catch {
-            throw MError.dataSource("Couldn't get an access token for '\(resource)': \(MError.wrap(error).message)")
+        do { return try box.result.get() } catch {
+            throw MError.dataSource("Couldn't sign in to '\(host)': \(MError.wrap(error).message)")
         }
+    }
+    private final class TokenBox: @unchecked Sendable {
+        var result: Result<String, Error> = .failure(MError.dataSource("No access token was returned."))
     }
     public func addTrace(_ message: String) { lock.lock(); trace.append(message); lock.unlock() }
 

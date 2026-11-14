@@ -14,17 +14,55 @@ public enum SourceCredential: Sendable {
     case accountKey(String)
     /// Azure storage SAS token (query string, with or without the leading `?`).
     case sasToken(String)
-    /// Ask the provider for an OAuth token for the resource (`CredentialProvider.accessToken(resource:)`).
+    /// Organizational account: ask the provider for an Entra token for the resource
+    /// (`AccessTokenProvider.accessToken(resource:host:)`).
     case oauth(resource: String)
 }
 
-/// Supplies credentials to the query engine. The app implements this on top of the Keychain / its sign-in flow.
-public protocol CredentialProvider: Sendable {
+/// Microsoft Entra resources (token audiences, as `/.default` scopes) that connectors ask for.
+/// These are the global-cloud identifiers; the app's provider maps them for national clouds.
+public enum EntraResource {
+    public static let graph = "https://graph.microsoft.com/.default"
+    public static let powerBI = "https://analysis.windows.net/powerbi/api/.default"
+    /// Azure SQL Database, Synapse SQL and Fabric warehouse / SQL analytics endpoints.
+    public static let azureSQL = "https://database.windows.net/.default"
+    /// Azure Blob Storage, ADLS Gen2 and OneLake.
+    public static let storage = "https://storage.azure.com/.default"
+    /// Azure Database for PostgreSQL and MySQL (flexible server).
+    public static let ossRDBMS = "https://ossrdbms-aad.database.windows.net/.default"
+    /// A Dataverse environment, e.g. `https://contoso.crm.dynamics.com`.
+    public static func dataverse(_ environmentURL: String) -> String { origin(environmentURL) + "/.default" }
+    /// An Azure Data Explorer cluster, e.g. `https://help.kusto.windows.net`.
+    public static func kusto(_ clusterURL: String) -> String { origin(clusterURL) + "/.default" }
+    /// A SharePoint Online tenant, e.g. `https://contoso.sharepoint.com`.
+    public static func sharePoint(_ siteURL: String) -> String { origin(siteURL) + "/.default" }
+
+    /// `https://host` of an address (scheme and host, lower-cased; no path, port, query or user).
+    public static func origin(_ url: String) -> String {
+        let text = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let withScheme = text.contains("://") ? text : "https://" + text
+        guard let host = URLComponents(string: withScheme)?.host?.lowercased(), !host.isEmpty else { return text.lowercased() }
+        return "https://" + host
+    }
+}
+
+/// Supplies Microsoft Entra access tokens to connectors. The app implements it on top of its Microsoft sign-in.
+///
+/// Every caller names the host the token will be sent to. Implementations must refuse (throw) when that host is not
+/// on their allow-list for the resource, so a token can never be handed to a look-alike or unrelated host.
+/// Never log, trace or put the token in an error message.
+public protocol AccessTokenProvider: Sendable {
+    /// An access token for `resource` (an `EntraResource` value or any `<resource>/.default` scope), to be sent only
+    /// to `host` over https.
+    func accessToken(resource: String, host: String) async throws -> String
+}
+
+/// Supplies stored data-source credentials and Entra tokens to the query engine. The app implements this on top of
+/// the Keychain and its Microsoft sign-in.
+public protocol CredentialProvider: AccessTokenProvider {
     /// Stored credential for a source, e.g. kind "Web" + location "https://api.example.com", kind "PostgreSQL" + "host/db".
-    /// Implementations should match on the longest location prefix.
+    /// Implementations match on the longest location prefix that ends at a host or path boundary.
     func credential(kind: String, location: String) -> SourceCredential?
-    /// An OAuth bearer token for a resource such as "https://analysis.windows.net/powerbi/api" or "https://graph.microsoft.com".
-    func accessToken(resource: String) async throws -> String
 }
 
 /// A request to approve a hand-written native database query.
@@ -62,11 +100,24 @@ public struct QueryEnvironment: Sendable {
     public var networkTimeout: TimeInterval = 100
     /// Extra directories searched for command-line database clients (psql, mysql, sqlcmd, isql) before PATH and Homebrew.
     public var toolSearchPaths: [String] = []
+    /// Database servers (lower-cased host names) whose TLS certificate is not verified ("Trust server certificate",
+    /// set per source by the user after a warning). Every other server's certificate must be valid for its name.
+    public var trustServerCertificateHosts: Set<String> = []
     /// Largest file (or decompressed archive entry) a file connector will read, in bytes. Larger inputs fail with a clear error.
     public var maxSourceBytes: Int = 4 << 30
 
     public init(baseDirectory: URL? = nil, credentials: CredentialProvider? = nil) {
         self.baseDirectory = baseDirectory; self.credentials = credentials
+    }
+
+    /// An Entra access token for `resource`, to be sent only to `host` (see `AccessTokenProvider`).
+    /// Database connectors (Azure SQL, Fabric SQL endpoints, Azure PostgreSQL / MySQL) call this with
+    /// `EntraResource.azureSQL` or `.ossRDBMS` and the server's host name.
+    public func accessToken(resource: String, host: String) async throws -> String {
+        guard let credentials else {
+            throw MError.dataSource("Sign in with a Microsoft account to access '\(host)'; no credential provider is configured.")
+        }
+        return try await credentials.accessToken(resource: resource, host: host)
     }
 
     /// The privacy level configured for a source (`.none` when unclassified).

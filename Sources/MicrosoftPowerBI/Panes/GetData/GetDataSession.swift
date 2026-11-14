@@ -30,6 +30,8 @@ final class GetDataSession: ObservableObject {
     @Published var stage: Stage = .catalog
     @Published var connector: DataConnector?
     @Published var request = SourceRequest(kind: .csv)
+    /// The SQL Server sign-in typed into the form (saved to the Keychain on connect).
+    @Published var sqlSignIn = SQLServerSignIn()
     @Published var isWorking = false
     @Published var error: String?
     /// Objects of a multi-table source; empty when the source is a single table.
@@ -77,6 +79,11 @@ final class GetDataSession: ObservableObject {
         guard let kind = connector.kind else { return }
         self.connector = connector
         request = SourceRequest(kind: kind, location: location)
+        if kind == .sqlServer, let split = location.firstIndex(of: ";") {      // "server;database", as data source files give it
+            request.location = String(location[..<split])
+            request.database = String(location[location.index(after: split)...])
+        }
+        sqlSignIn = SQLServerSignIn(method: SQLServerConnection.defaultMethod(for: request.location))
         reset()
         if kind == .blank { Task { await finish(.transform) } } else { stage = .form }
     }
@@ -105,12 +112,16 @@ final class GetDataSession: ObservableObject {
         combine = nil; scripts = [:]; headersDecided = false; promoteHeaders = false
     }
 
-    /// The database file a native query would run against, as the engine names it.
-    private var nativeQueryLocation: String { (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath }
+    /// The database a native query would run against, as the engine names it.
+    private var nativeQueryLocation: String {
+        if request.kind == .sqlServer { return SQLServerConnection.location(server: request.location, database: request.database) }
+        return (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
+    }
+    private var nativeQueryKind: String { request.kind == .sqlServer ? "SQL" : "SQLite" }
     var pendingNativeQuery: String { request.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     func approveNativeQuery() async {
-        security.approve(query: pendingNativeQuery, kind: "SQLite", location: nativeQueryLocation)
+        security.approve(query: pendingNativeQuery, kind: nativeQueryKind, location: nativeQueryLocation)
         await connect()
     }
 
@@ -118,8 +129,17 @@ final class GetDataSession: ObservableObject {
     func connect() async {
         if let message = SourcePlanner.validationMessage(request) { error = message; return }
         reset()
-        if request.kind == .sqlite, !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
-           !security.isApproved(query: pendingNativeQuery, kind: "SQLite", location: nativeQueryLocation) {
+        if request.kind == .sqlServer {
+            let stored = SQLServerConnection.hasStoredCredential(server: request.location, database: request.database)
+            if let message = SQLServerConnection.validationMessage(server: request.location, database: request.database, signIn: sqlSignIn, hasStoredCredential: stored) {
+                error = message; return
+            }
+            do { try SQLServerConnection.save(sqlSignIn, server: request.location, database: request.database) } catch {
+                self.error = "The sign-in couldn't be saved in the Keychain: \(error.localizedDescription)"; return
+            }
+        }
+        if [.sqlite, .sqlServer].contains(request.kind), !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
+           !security.isApproved(query: pendingNativeQuery, kind: nativeQueryKind, location: nativeQueryLocation) {
             stage = .approval
             return
         }
@@ -188,7 +208,7 @@ final class GetDataSession: ObservableObject {
                 shown = try await sample(script)
             }
         }
-        let typed = [.sqlite, .python, .r].contains(request.kind)
+        let typed = [.sqlite, .sqlServer, .python, .r].contains(request.kind)
         if detectTypes, !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)
@@ -275,7 +295,7 @@ final class GetDataSession: ObservableObject {
                 // One record per location: OData reads its feed through Web.Contents, which is the same source.
                 for s in engine.dataSourcesAccessed where !sources.contains(where: { $0.location == s.location }) { sources.append(s) }
             }
-            let directQuery = request.kind == .sqlite && request.directQuery
+            let directQuery = [.sqlite, .sqlServer].contains(request.kind) && request.directQuery
             if directQuery {
                 // The same check as the storage-mode menu: DirectQuery only when every step folds into SQL.
                 for table in tables {

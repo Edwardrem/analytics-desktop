@@ -92,8 +92,18 @@ extension MLibrary {
                                           out, rows: ordered.count))
         }
         lib.fn("Table.Group", 3...5) { a, ctx in
-            let t = try a.table(0), keys = try t.requiredIndices(try a.textList(1)), cols = try t.columns
+            let t = try a.table(0), keys = try t.requiredIndices(try a.textList(1))
             let local = (try a.optInt(3) ?? 1) == 0, ignoreCase = MLib.ignoresCase(a[4])
+            if !local, !ignoreCase, t.isLazy, let specs = try? MLib.specList(a[2]) {
+                let aggregations = specs.compactMap { spec -> MGroupAggregation? in
+                    guard spec.count >= 2, case .text(let name) = spec[0], case .function(let f) = spec[1] else { return nil }
+                    return MGroupAggregation(name: name, function: f, type: spec.count > 2 ? spec[2].typeValue : nil)
+                }
+                if aggregations.count == specs.count, let folded = t.folded(.group(keys: try a.textList(1), aggregations: aggregations), ctx) {
+                    return .table(folded)
+                }
+            }
+            let cols = try t.columns
             var groups: [MKey: Int] = [:], groupRows: [[Int]] = [], lastKey: MKey?
             for r in 0..<(try t.rowCount) {
                 let k = MLib.rowKey(cols, keys, r, ignoreCase: ignoreCase)
@@ -148,8 +158,14 @@ extension MLibrary {
                 }
             })
         }
-        lib.fn("Table.ExpandTableColumn", 2...4) { a, _ in
+        lib.fn("Table.ExpandTableColumn", 2...4) { a, ctx in
             let t = try a.table(0), i = try t.requireColumn(try a.text(1))
+            if a.has(2), t.isLazy {
+                let names = try a.textList(2), newNames = a.has(3) ? try a.textList(3) : names
+                if names.count == newNames.count, let folded = t.folded(.expandTableColumn(column: try a.text(1), names: names, newNames: newNames), ctx) {
+                    return .table(folded)
+                }
+            }
             var wanted: [String]
             if a.has(2) { wanted = try a.textList(2) } else {
                 wanted = []

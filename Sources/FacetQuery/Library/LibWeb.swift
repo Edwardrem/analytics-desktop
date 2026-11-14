@@ -24,7 +24,9 @@ extension MLibrary {
             case .anonymous, .accountKey, .sasToken: break
             case .basic(let user, let password): headers["Authorization"] = "Basic " + Data("\(user):\(password)".utf8).base64EncodedString()
             case .bearer(let token): headers["Authorization"] = "Bearer " + token
-            case .oauth(let resource): headers["Authorization"] = "Bearer " + (try ctx.accessToken(resource: resource))
+            case .oauth(let resource):
+                guard scheme == "https" else { throw MError.dataSource("An organizational account is only sent over https; '\(location)' isn't https.") }
+                headers["Authorization"] = "Bearer " + (try ctx.accessToken(resource: resource, host: host.lowercased()))
             case .apiKey(let key, let header, let parameter):
                 if let header { headers[header] = key } else if let parameter { items.append(URLQueryItem(name: parameter, value: key)) }
                 else { throw MError.dataSource("The API key for '\(location)' has neither a header name nor a query parameter name.") }

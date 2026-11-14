@@ -291,7 +291,7 @@ final class GetDataSessionTests: XCTestCase {
 
     func testUnavailableConnectorCannotBeStarted() throws {
         let s = GetDataSession(store: DocumentStore(services: .live()), security: QuerySecurity(defaults: defaults))
-        s.choose(try XCTUnwrap(DataConnector.connector("sqlserver")))
+        s.choose(try XCTUnwrap(DataConnector.connector("oracle")))
         XCTAssertEqual(s.stage, .catalog)
         XCTAssertNil(s.connector)
     }
