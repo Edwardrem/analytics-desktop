@@ -42,6 +42,15 @@ struct QueriesPane: View {
                 .padding(.vertical, Design.Space.xs)
             }
         }
+        .confirmationDialog("Delete query?", isPresented: Binding(get: { session.deleteRequest != nil }, set: { if !$0 { session.deleteRequest = nil } }),
+                            presenting: session.deleteRequest.flatMap(session.query)) { q in
+            Button("Delete", role: .destructive) { session.deleteQueries([q.id]) }
+            Button("Cancel", role: .cancel) {}
+        } message: { q in
+            Text(session.store.doc.model.tables.contains { $0.sourceQuery == q.name }
+                 ? "When you apply, the table “\(q.name)” is removed from the model, and visuals that use its fields will stop working."
+                 : "“\(q.name)” will be deleted when you apply.")
+        }
         .confirmationDialog("Disable load?", isPresented: Binding(get: { disablingLoad != nil }, set: { if !$0 { disablingLoad = nil } }), presenting: disablingLoad) { q in
             Button("Disable Load", role: .destructive) { session.setLoadEnabled(q.id, false) }
             Button("Cancel", role: .cancel) {}
@@ -123,7 +132,7 @@ struct QueriesPane: View {
     @ViewBuilder
     private func menu(_ q: QueryDefinition) -> some View {
         Button("Rename…") { session.dialog = .renameQuery(q.id) }
-        Button("Delete") { session.deleteQueries([q.id]) }
+        Button("Delete") { session.deleteRequest = q.id }
         Button("Duplicate") { session.duplicateQuery(q.id) }
         Button("Reference") { session.referenceQuery(q.id) }
         Divider()

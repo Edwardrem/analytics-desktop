@@ -89,7 +89,7 @@ enum EditorCommands {
         c("pq.refreshAll", "Refresh All", "arrow.triangle.2.circlepath") { $0.refreshAllPreviews() },
         c("pq.properties", "Properties…", "info.circle", Need.query) { s in s.selectedQueryID.map { s.dialog = .queryProperties($0) } },
         c("pq.advancedEditor", "Advanced Editor", "chevron.left.forwardslash.chevron.right", Need.query) { $0.dialog = .advancedEditor },
-        c("pq.deleteQuery", "Delete", "trash", Need.query) { s in s.selectedQueryID.map { _ = s.deleteQueries([$0]) } },
+        c("pq.deleteQuery", "Delete", "trash", Need.query) { $0.deleteRequest = $0.selectedQueryID },
         c("pq.duplicateQuery", "Duplicate", "plus.square.on.square", Need.query) { s in s.selectedQueryID.map(s.duplicateQuery) },
         c("pq.referenceQuery", "Reference", "arrow.turn.down.right", Need.query) { s in s.selectedQueryID.map(s.referenceQuery) },
         c("pq.chooseColumns", "Choose Columns…", "checklist", Need.table) { $0.dialog = .chooseColumns },

@@ -14,6 +14,8 @@ the Applied Steps editor and the UI transforms. Depends only on FacetCore; links
 | `ColumnFromExamples.infer(table:examples:columns:)` | the M expression that reproduces typed examples |
 | `ColumnProfiler.profile(_:)` → `[ColumnProfile]` | column quality (valid / error / empty), distribution (distinct, unique, value histogram) and statistics for a `QueryPreview` or `DataTable` |
 | `MInterpreter` | evaluates M text directly (`evaluate(_:)`), without queries |
+| `MSyntax` | M source text: `text`, `identifier`, `field`, `textList`, `number`, `literal(_:)` for M values and `literal(_:type:)` for FacetCore values of a column type |
+| `QueryEngine.dataSourcesAccessed` | the sources the latest evaluation read (kind + location), for Data source settings |
 
 ## Library areas (`Library/`)
 

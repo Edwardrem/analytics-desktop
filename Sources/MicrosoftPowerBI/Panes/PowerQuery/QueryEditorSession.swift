@@ -51,6 +51,8 @@ final class QueryEditorSession: ObservableObject {
     @Published var message: StatusMessage?
     /// Groups created in this window that have no queries yet.
     @Published var extraGroups: [String] = []
+    /// A query the user asked to delete, awaiting confirmation in the Queries pane.
+    @Published var deleteRequest: UUID?
     /// Set by Close & Apply / Close: the window closes itself (after applying or discarding).
     @Published var closeRequest: CloseRequest?
     enum CloseRequest { case apply, discard, ask }
