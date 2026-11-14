@@ -4,7 +4,8 @@ import FacetCore
 import FacetInterop
 
 /// The Modeling MCP server: lets AI agents and tools on this Mac read the open documents' models, run DAX, and —
-/// after the user confirms each change — add or change measures.
+/// after the user confirms each change — change the model (measures, calculated columns, relationships, names,
+/// visibility, descriptions, format strings) and add visuals and pages.
 ///
 /// Off by default. It listens on 127.0.0.1 only, on a port chosen at start, and every request must carry the session
 /// token, which is new on every start and never written to disk.
@@ -19,7 +20,7 @@ final class AgentBridge: ObservableObject {
     private var server: MCPServer?
 
     /// Asks the user before a tool changes a document. Replaced in tests.
-    var confirm: (_ change: AgentTools.MeasureChange) -> Bool = { change in
+    var confirm: (_ change: AgentTools.AgentChange) -> Bool = { change in
         NSApp.activate(ignoringOtherApps: true)
         return AgentTools.approvalAlert(for: change).runModal() == .alertFirstButtonReturn
     }
@@ -101,13 +102,13 @@ enum AgentTools {
                 let store = try await MainActor.run { try document(args) }
                 return try await setMeasure(store, args)
             },
-        ]
+        ] + writeTools
     }
 
-    private static func text(_ description: String) -> JSONValue {
+    static func text(_ description: String) -> JSONValue {
         .object(["type": .string("string"), "description": .string(description)])
     }
-    private static func schema(_ properties: [String: JSONValue], required: [String]) -> JSONValue {
+    static func schema(_ properties: [String: JSONValue], required: [String]) -> JSONValue {
         .object(["type": .string("object"), "properties": .object(properties), "required": .array(required.map { .string($0) })])
     }
 
@@ -173,6 +174,19 @@ enum AgentTools {
     }
 
     /// What an agent asks to change, as the user is shown it before anything happens.
+    struct AgentChange: Equatable {
+        struct Row: Equatable { var label: String; var value: String }
+        /// The question, in the app's own words: nothing the agent chose is part of it.
+        var title: String
+        var document: String
+        /// The object the change is about.
+        var name: String
+        /// What the agent chose, each value in a fixed one-line field.
+        var rows: [Row]
+        /// A DAX expression, shown read-only in a scrolling box.
+        var expression: String?
+    }
+
     struct MeasureChange: Equatable {
         var document: String
         var table: String
@@ -180,6 +194,13 @@ enum AgentTools {
         var expression: String
         var formatString: String?
         var replacing: Bool
+
+        var agentChange: AgentChange {
+            var rows = [AgentChange.Row(label: "Measure", value: name), AgentChange.Row(label: "Table", value: table)]
+            if let formatString { rows.append(AgentChange.Row(label: "Format", value: formatString)) }
+            return AgentChange(title: replacing ? "An agent wants to change a measure." : "An agent wants to add a measure.",
+                               document: document, name: name, rows: rows, expression: expression)
+        }
     }
 
     static let maxNameLength = 200
@@ -207,7 +228,7 @@ enum AgentTools {
         let replacing = store.model.measure(name) != nil
         let change = MeasureChange(document: store.displayName, table: tableName, name: name, expression: expression,
                                    formatString: format.flatMap { $0.isEmpty ? nil : $0 }, replacing: replacing)
-        guard AgentBridge.shared.confirm(change) else {
+        guard AgentBridge.shared.confirm(change.agentChange) else {
             throw ToolError(message: "The user didn't allow the change.")
         }
         store.updateModel(replacing ? "Change Measure" : "New Measure") { model in
@@ -224,13 +245,14 @@ enum AgentTools {
 
     /// The dialog that asks the user. What the agent chose (name, table, format) sits in fixed one-line fields, never
     /// in the dialog's own sentences, so it can't pose as part of the question.
-    @MainActor static func approvalAlert(for change: MeasureChange) -> NSAlert {
+    @MainActor static func approvalAlert(for change: MeasureChange) -> NSAlert { approvalAlert(for: change.agentChange) }
+
+    @MainActor static func approvalAlert(for change: AgentChange) -> NSAlert {
         let alert = NSAlert()
-        alert.messageText = change.replacing ? "An agent wants to change a measure." : "An agent wants to add a measure."
+        alert.messageText = change.title
         alert.informativeText = "In “\(change.document)”. Allow it only if you asked an agent for this change. You can undo it."
-        var rows: [[NSView]] = [[label("Measure"), fixedField(change.name)], [label("Table"), fixedField(change.table)]]
-        if let format = change.formatString { rows.append([label("Format"), fixedField(format)]) }
-        rows.append([label("Expression"), expressionView(change.expression)])
+        var rows: [[NSView]] = change.rows.map { [label($0.label), fixedField($0.value)] }
+        if let expression = change.expression { rows.append([label("Expression"), expressionView(expression)]) }
         let grid = NSGridView(views: rows)
         grid.rowSpacing = 6
         grid.columnSpacing = 8
