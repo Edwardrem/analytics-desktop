@@ -32,16 +32,16 @@
 <h2 id="network">When the app goes online</h2>
 <p>The app makes network requests only for these, and only to the hosts named:</p>
 <ul>
-  <li><b>Update checks</b> go only to GitHub (<code>api.github.com</code>, and <code>github.com</code> and <code>objects.githubusercontent.com</code> for downloads). They send nothing beyond the request itself. You can turn them off. See <a href="updates.html">Updates</a>.</li>
-  <li><b>Data sources you connect to</b>, such as a web page or OData feed, are read from wherever you point them.</li>
-  <li><b>Microsoft services</b>, only after you sign in: opening and saving in OneDrive or SharePoint, the OneLake catalog, Publish to the Power BI service, and sensitivity labels. Publish uploads the model and report definitions, without data. See <a href="microsoft-account.html">Microsoft account</a>.</li>
+  <li><b>Update checks</b> go only to GitHub (<code>api.github.com</code>, and <code>github.com</code>, <code>objects.githubusercontent.com</code> and <code>release-assets.githubusercontent.com</code> for downloads). They send nothing beyond the request itself. You can turn them off. See <a href="updates.html">Updates</a>.</li>
+  <li><b>Data sources you connect to</b>, such as a web page, OData feed or database server, are read from wherever you point them.</li>
+  <li><b>Microsoft services</b>, only after you sign in: opening and saving in OneDrive or SharePoint, the OneLake catalog, Publish to the Power BI service, sensitivity labels, and the Microsoft cloud data sources you connect to. Publish uploads the model and report definitions, without data. See <a href="microsoft-account.html">Microsoft account</a>.</li>
   <li><b>The assistant</b>, only if you add your own Anthropic API key and use it. Your question goes to Anthropic’s API with the parts of the report and model it needs to answer, which can include table and column names, formulas and query results.</li>
 </ul>
 <p>Nothing else leaves your Mac. In particular, data is never uploaded unless you publish, save to the cloud, or use the assistant.</p>
 
 <h2 id="on-device">On your Mac</h2>
 <ul>
-  <li>Microsoft sign-in tokens and your Anthropic API key are kept in the macOS Keychain. Microsoft tokens are sent only to Microsoft hosts.</li>
+  <li>Microsoft sign-in tokens, data source credentials and your Anthropic API key are kept in the macOS Keychain. Each Microsoft token is sent only to the hosts of the service it was issued for.</li>
   <li>Diagnostic tracing is off unless you turn it on in Settings ▸ Diagnostics. Traces record timings and row counts, never values, and stay in a local folder.</li>
   <li>Python and R scripts run on your own interpreter, and only after you allow scripts.</li>
   <li>The local agent server (Settings ▸ Developer) is off by default. When on, it listens only on your Mac and needs a token for each session.</li>

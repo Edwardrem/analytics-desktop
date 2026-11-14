@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Data sources · Analytics Desktop</title>
-<meta name="description" content="The data sources Analytics Desktop can read today, how refresh and privacy levels work, and which connectors are not available.">
+<meta name="description" content="The files, databases and Microsoft cloud sources Analytics Desktop can read, their limits, how credentials, refresh and privacy levels work, and which connectors are not available.">
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="../css/site.css">
 </head>
@@ -27,37 +27,87 @@
     <nav aria-label="Docs"><ul><li><a href="index.html">All docs</a></li><li><a href="getting-started.html">Getting started</a></li><li><a href="microsoft-account.html">Microsoft account</a></li><li><a href="data-sources.html" aria-current="page">Data sources</a></li><li><a href="updates.html">Updates</a></li><li><a href="privacy.html">Privacy</a></li></ul></nav>
     <article class="prose">
 <h1>Data sources</h1>
-<p>Choose <b>Get Data</b> on the Home tab of the ribbon. Sources the app can read are listed normally; sources it can’t read yet are shown dimmed with the reason, and can’t be started.</p>
+<p>Choose <b>Get Data</b> on the Home tab of the ribbon. The list has every connector Power BI Desktop offers. Those the app can read are listed normally. Those it can’t are dimmed, show the reason, and can’t be started.</p>
+<div class="note">
+  <p>The database and Microsoft cloud connectors are new in this beta. The cloud connectors have been tested only against local stand-in servers. SQL Server has been tested only against a stand-in server, and MySQL and MariaDB have never run against a real server. Please report problems on <a href="https://github.com/Edwardrem/analytics-desktop/issues">GitHub</a>.</p>
+</div>
 
-<h2 id="available">What you can connect to</h2>
+<h2 id="available">What works</h2>
 <table>
   <thead><tr><th>Source</th><th>Notes</th></tr></thead>
   <tbody>
     <tr><td>Excel workbook (<code>.xlsx</code>, <code>.xlsm</code>)</td><td>Navigator over sheets and tables</td></tr>
     <tr><td>Text / CSV</td><td>Delimiter and header detection</td></tr>
     <tr><td>XML, JSON</td><td>Records and lists expand in the Power Query Editor</td></tr>
-    <tr><td>Folder</td><td>Combine every file in a folder into one table</td></tr>
+    <tr><td>Folder</td><td>Combine every CSV, text, JSON, Excel or Parquet file in a folder into one table</td></tr>
     <tr><td>SQLite</td><td>Tables and views, or your own SQL statement after you approve it; Import or DirectQuery</td></tr>
     <tr><td>Web</td><td>CSV, JSON, XML, Excel files and HTML tables from a URL</td></tr>
-    <tr><td>OData feed</td><td></td></tr>
+    <tr><td>OData feed</td><td>JSON feeds (OData v4, or older services that answer in JSON)</td></tr>
     <tr><td>Python script, R script</td><td>Runs on your installed interpreter, once scripts are allowed in Settings ▸ Scripting</td></tr>
     <tr><td>Enter data, Blank query</td><td>Type or paste a table, or write M yourself</td></tr>
-    <tr><td>OneLake catalog</td><td>Needs a work or school <a href="microsoft-account.html">Microsoft account</a>. Semantic models import as a snapshot of up to 100,000 rows; lakehouse CSV, JSON and Excel files</td></tr>
     <tr><td><code>.pbids</code> files</td><td>Open one to start a new document at its connection</td></tr>
   </tbody>
 </table>
 <p><b>Recent sources</b> remembers your last 20 sources and reconnects with the location filled in.</p>
 
-<h2 id="credentials">Sign-in to sources</h2>
-<p>In this beta the app reads data sources without credentials: local files, and web and OData URLs that need no sign-in. It can’t yet pass a user name, key or Microsoft account to a source. This is listed among the <a href="../features.html#limits">known limits</a>.</p>
+<h2 id="partial">What works, with limits</h2>
+<h3 id="databases">Databases</h3>
+<p>The app talks to these servers with its own protocol clients, so you don’t install a driver. Each one offers Import or DirectQuery, folds Power Query steps into SQL, and runs a SQL statement you type only after you approve it.</p>
+<table>
+  <thead><tr><th>Source</th><th>Sign-in</th><th>Limits</th></tr></thead>
+  <tbody>
+    <tr><td>SQL Server, Azure SQL database, Azure Synapse Analytics SQL, Fabric warehouses</td><td>Database user and password, or your Microsoft account (the default for Azure and Fabric servers)</td><td>Always encrypted, TLS 1.2 or later. Type the database name: the form can’t browse a server’s databases. Windows authentication isn’t available on a Mac. Tested only against a stand-in server.</td></tr>
+    <tr><td>PostgreSQL, Azure Database for PostgreSQL</td><td>Database user, or your Microsoft account for Azure Database</td><td>Encrypted by default; you can turn encryption off, but a password is never sent in clear text.</td></tr>
+    <tr><td>Amazon Redshift</td><td>Database user</td><td>Redshift’s SHA-256 sign-in isn’t supported; use a user with SCRAM-SHA-256 or MD5.</td></tr>
+    <tr><td>MySQL, Azure Database for MySQL, MariaDB</td><td>Database user, or your Microsoft account for Azure Database</td><td>Never run against a real server yet. Without encryption, sign-ins that need an RSA key exchange aren’t supported. MariaDB’s ed25519 sign-in isn’t supported.</td></tr>
+  </tbody>
+</table>
+<p><b>Trust server certificate</b> skips checking a server’s certificate. It is set per server, and only for servers and networks you trust.</p>
+
+<h3 id="cloud">Microsoft cloud</h3>
+<p>These need a work or school <a href="microsoft-account.html">Microsoft account</a>. The first time you use one, Microsoft may ask you to consent to that service.</p>
+<table>
+  <thead><tr><th>Source</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>SharePoint folder</td><td>Every file in the site’s document libraries, ready to combine</td></tr>
+    <tr><td>SharePoint Online list</td><td>The site’s lists and their items</td></tr>
+    <tr><td>OneDrive or SharePoint file</td><td>Paste the file’s address. Excel, CSV, JSON and XML are recognised from the content.</td></tr>
+    <tr><td>Dataverse, Dynamics 365 (Dataverse)</td><td>The environment’s tables. Lookup columns load as their <code>_&lt;name&gt;_value</code> ids.</td></tr>
+    <tr><td>Azure Blob Storage, Azure Data Lake Storage Gen2</td><td>Containers and their files. Sign in with your organizational account, an account key, a shared access signature (SAS) or anonymously.</td></tr>
+    <tr><td>Lakehouses (Fabric)</td><td>Files in the lakehouse’s OneLake Files folder. Delta tables aren’t read.</td></tr>
+    <tr><td>Azure Data Explorer (Kusto)</td><td>Databases and tables, or a query you approve</td></tr>
+    <tr><td>Power BI semantic models</td><td>Imported as a snapshot through the Power BI <code>executeQueries</code> API, at most 100,000 rows per table or DAX query. Refresh to update it. There is no live connection.</td></tr>
+    <tr><td>OneLake catalog</td><td>Browse items with their endorsement and sensitivity. Semantic models import as a snapshot; lakehouse CSV, JSON, Excel and Parquet files load directly.</td></tr>
+  </tbody>
+</table>
+
+<h3 id="parquet">Parquet</h3>
+<p>Parquet files with a flat schema load from a file or a folder. Nested groups become dotted column names, and repeated columns aren’t supported. Pages must be uncompressed or compressed with Snappy or gzip.</p>
+
+<h2 id="credentials">Credentials</h2>
+<p>Sign-in methods are <b>Anonymous</b>, <b>Basic</b> (user name and password), <b>Web API</b> (a key sent in a header or query parameter), <b>Organizational account</b>, and, for Azure Storage, <b>Account key</b> and <b>Shared access signature (SAS)</b>. Which ones are offered depends on the source.</p>
+<ul>
+  <li>Credentials are kept in the macOS Keychain, one item per source. They are never written into your documents or shown again.</li>
+  <li>To add or change them, open <b>Data source settings</b>, select the source and choose <b>Edit Permissions…</b>. <b>Clear Permissions</b> forgets them.</li>
+  <li>When a source refuses during Get Data, the app asks for credentials and then tries again. During a refresh or in the Power Query Editor, the error names the source instead, and you edit it in Data source settings.</li>
+  <li>An organizational account’s token is sent only to the Microsoft service it was issued for, at the addresses the app allows for that service. Data source sign-in with a Microsoft account works only in the global Microsoft cloud.</li>
+</ul>
 
 <h2 id="not-available">What isn’t available</h2>
-<p>Connectors that need a database driver or an online service the app doesn’t include are listed but dimmed, with the reason in their tooltip. They include SQL Server, Oracle, PostgreSQL, MySQL and other databases, ODBC and OLE DB, Parquet, PDF, <code>.xls</code> and <code>.xlsb</code>, SharePoint lists and folders, Azure, Dataverse and Fabric sources, and custom <code>.mez</code> connectors. Typing one of their M functions fails with a message that it isn’t available.</p>
+<p>These are listed but dimmed, with the reason in their tooltip. Typing one of their M functions fails with a message that it isn’t available.</p>
+<ul>
+  <li>Databases that need a vendor driver: Oracle, IBM Db2, Teradata, SAP HANA and BW, Snowflake, Google BigQuery, Databricks, Analysis Services and others. Also ODBC, and the Windows-only Access, OLE DB and Active Directory.</li>
+  <li>PDF, and the binary Excel formats <code>.xls</code> and <code>.xlsb</code> (save as <code>.xlsx</code>).</li>
+  <li>Fabric dataflows, datamarts, SQL databases, mirrored databases and KQL databases, and Power Platform dataflows.</li>
+  <li>Azure Analysis Services, Table Storage, Cosmos DB, HDInsight, Databricks, Cost Management and Resource Graph.</li>
+  <li>Online services such as Salesforce, Google Analytics, Adobe Analytics, GitHub, Exchange, Outlook Mail and Business Central, and on-premises SharePoint lists.</li>
+  <li>SharePoint folder navigation (<code>SharePoint.Contents</code>), and custom <code>.mez</code> and <code>.pqx</code> connectors.</li>
+</ul>
 
 <h2 id="modes">Import and DirectQuery</h2>
 <ul>
   <li><b>Import</b> is the default. The rows are saved in your <code>.facet</code> file.</li>
-  <li><b>DirectQuery</b> works for SQLite. The table is read on load and on refresh, and visuals are computed on your Mac; it is not one SQL query per visual.</li>
+  <li><b>DirectQuery</b> works for SQLite and the database servers above. Rows aren’t saved in the file. The folded table is read on load and on refresh, up to 1,000,000 rows, and visuals are computed on your Mac, so it isn’t one SQL query per visual.</li>
   <li><b>Dual</b> can be chosen, and behaves as Import.</li>
 </ul>
 
@@ -67,7 +117,7 @@
 <h2 id="privacy-levels">Privacy levels and native queries</h2>
 <ul>
   <li>Each source can be given a privacy level (Private, Organizational or Public) in <b>Data source settings</b>. The query engine then refuses to combine data in a way that could send private data to another source, unless you choose to ignore privacy levels in Settings ▸ Security.</li>
-  <li>A SQL statement you type for SQLite runs only after you approve it. Approvals are remembered per source.</li>
+  <li>A SQL statement, Azure Data Explorer query or DAX query you type runs only after you approve it. Approvals are remembered per source until you clear them in Data source settings.</li>
 </ul>
     </article>
   </div>

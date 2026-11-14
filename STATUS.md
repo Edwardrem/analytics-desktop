@@ -8,14 +8,14 @@ How to read the statuses:
 - **Missing**: it isn't built.
 - **N/A**: it is Windows-only or service-only, so it doesn't apply to a Mac authoring app.
 
-Microsoft cloud features (sign-in, OneDrive and SharePoint, OneLake, Publish, sensitivity labels) have only been tested against local stand-in servers, never against live Microsoft services. Their rows say "not live-tested". The assistant features use the user's own Anthropic API key and have been tested only against an in-process stub. Their rows say "stub-tested".
+Microsoft cloud features (sign-in, OneDrive and SharePoint, OneLake, Publish, sensitivity labels, and the SharePoint, Dataverse, Azure and Fabric connectors) have only been tested against local stand-in servers, never against live Microsoft services. Their rows say "not live-tested". The SQL Server, PostgreSQL and MySQL clients are likewise tested against stand-in servers in the test suite; their rows say how far. The assistant features use the user's own Anthropic API key and have been tested only against an in-process stub. Their rows say "stub-tested".
 
 ## Summary
 
 | Section | Done | Partial | Missing | N/A | Total |
 | --- | --- | --- | --- | --- | --- |
 | 1. Overview and workspace | 23 | 3 | 0 | 10 | 36 |
-| 2. Getting data | 10 | 7 | 10 | 4 | 31 |
+| 2. Getting data | 11 | 14 | 10 | 4 | 39 |
 | 3. Power Query Editor | 27 | 2 | 1 | 0 | 30 |
 | 4. Data modeling | 21 | 6 | 3 | 0 | 30 |
 | 5. DAX and calculations | 21 | 1 | 0 | 0 | 22 |
@@ -23,23 +23,23 @@ Microsoft cloud features (sign-in, OneDrive and SharePoint, OneLake, Publish, se
 | 7. Report design and formatting | 20 | 7 | 0 | 0 | 27 |
 | 8. Interactivity and navigation | 24 | 4 | 1 | 0 | 29 |
 | 9. AI and Copilot | 15 | 5 | 1 | 1 | 22 |
-| 10. Security and governance | 7 | 3 | 3 | 0 | 13 |
+| 10. Security and governance | 8 | 3 | 2 | 0 | 13 |
 | 11. Performance and optimisation | 7 | 4 | 0 | 0 | 11 |
 | 12. Developer and pro-code features | 7 | 3 | 2 | 2 | 14 |
 | 13. Files, publishing, and export | 11 | 3 | 1 | 0 | 15 |
 | 14. Options, settings, and preview features | 12 | 10 | 2 | 1 | 25 |
 | 15. What Desktop does not do | 1 | 1 | 0 | 10 | 12 |
-| **All** | **223** | **66** | **27** | **29** | **345** |
+| **All** | **225** | **73** | **26** | **29** | **353** |
 
 Section 15 lists what Power BI Desktop itself does not do, so N/A there is the expected result. Its Done and Partial rows are extras.
 
 ## Not possible here
 
 These can't be built in this app, or can't be confirmed working:
-- **Live Microsoft services.** Without the user's own Entra app registration and credentials, sign-in, Graph, Power BI, Fabric and Purview can't be run end to end, so those features stay "not live-tested".
+- **Live Microsoft services.** The app's own Entra registration isn't set yet (Info.plist `AnalyticsEntraClientID` is empty in this build), and no live tenant has been used, so sign-in, Graph, Power BI, Fabric, Purview and the cloud connectors haven't run end to end. Those features stay "not live-tested".
 - **Custom `.pbiviz` visuals.** They need Power BI's JavaScript visual host and its APIs. The app has no host for them.
 - **`.mez` / `.pqx` custom connectors.** They need the Power Query SDK runtime. The M engine here can't load them.
-- **Database drivers.** SQL Server, Oracle, PostgreSQL, MySQL, ODBC, OLE DB, Access and the other databases need vendor drivers or Windows providers, which the app doesn't ship. SQLite is built into macOS.
+- **Database drivers.** Oracle, Db2, Teradata, SAP, Snowflake, BigQuery, ODBC, OLE DB, Access and the other databases need vendor drivers or Windows providers, which the app doesn't ship. SQL Server, PostgreSQL, Amazon Redshift, MySQL and MariaDB work without a driver because the app has its own wire-protocol clients for them. SQLite is built into macOS.
 - **Direct Lake and service-only features.** Direct Lake needs Fabric capacity. The features in section 15 run in the Power BI service.
 - **ArcGIS Maps.** It is a licensed Esri service and visual.
 
@@ -89,38 +89,46 @@ These can't be built in this app, or can't be confirmed working:
 | Feature | Status | Notes |
 | --- | --- | --- |
 | File: Excel (.xlsx, .xlsm), Text/CSV, XML, JSON, Folder | Done | Navigator over sheets and tables, delimiter and header detection, folder combine |
-| File: .xls/.xlsb, PDF, Parquet, SharePoint folder | Missing | Listed, dimmed with a reason, cannot be started; no reader or SharePoint access in the engine |
+| File: Parquet | Partial | `Parquet.Document`, also in folder combine; flat schemas only (repeated columns refused); uncompressed, Snappy and gzip pages only |
+| File: SharePoint folder, OneDrive or SharePoint file | Done | Through Microsoft Graph with a work or school account; folder lists every file of the site's libraries; not live-tested |
+| File: .xls/.xlsb, PDF | Missing | Listed, dimmed with a reason, cannot be started; no reader in the engine |
 | Database: SQLite | Done | Tables and views, optional SQL statement with approval, Import or DirectQuery |
-| Database: SQL Server, Oracle, PostgreSQL, MySQL, Db2, Teradata, SAP, Snowflake, Redshift, BigQuery, SSAS | Missing | Listed, dimmed: "Needs a database driver"; cannot be started |
+| Database: SQL Server | Partial | Own TDS 7.4/8.0 client: database user or Microsoft account (Windows authentication isn't possible on a Mac); folding, DirectQuery, approved native queries; always encrypted, TLS 1.2+, per-host Trust server certificate; database must be typed (no browsing in the form); tested only against a stand-in server |
+| Database: PostgreSQL, Amazon Redshift, MySQL, MariaDB | Partial | Own wire-protocol clients: folding, DirectQuery, approved native queries, TLS by default; MySQL and MariaDB never run against a real server; no RSA key exchange over plain TCP, no Redshift SHA-256 sign-in, no MariaDB ed25519 |
+| Database: Oracle, Db2, Teradata, SAP, Snowflake, BigQuery, SSAS and others | Missing | Listed, dimmed: "Needs a database driver"; cannot be started |
 | Database: Access | N/A | Listed, dimmed as a Windows-only provider |
-| Microsoft Fabric connectors | Missing | Listed and dimmed; no Fabric connector in the engine (see OneLake catalog) |
-| Power Platform (Dataverse, dataflows) | Missing | Listed, dimmed with a reason |
-| Azure connectors | Missing | Listed, dimmed with a reason |
-| Online services (SharePoint list, Dynamics 365, Salesforce, Google/Adobe Analytics, GitHub, Exchange, Outlook Mail) | Missing | Listed, dimmed with a reason |
-| Other: Web, OData feed, Python script, R script, Blank query | Done | Web reads CSV, JSON, XML, Excel and HTML tables; scripts need permission and a local interpreter |
+| Microsoft Fabric: semantic models, warehouses, lakehouses | Partial | Semantic models import an `executeQueries` snapshot (at most 100,000 rows per table or query, no live connection); warehouses use the SQL Server connector; lakehouses read OneLake Files only, not Delta tables; not live-tested |
+| Microsoft Fabric: dataflows, datamarts, SQL databases, mirrored and KQL databases | Missing | Listed and dimmed with a reason; KQL database addresses aren't supported yet |
+| Power Platform: Dataverse | Partial | Web API v9.2, public tables, paged; lookups load as `_x_value` ids; annotations dropped; import only; not live-tested |
+| Power Platform: dataflows | Missing | Listed, dimmed with a reason |
+| Azure: SQL Database, Synapse SQL, Database for PostgreSQL and MySQL, Blob Storage, ADLS Gen2, Data Explorer | Partial | SQL and PostgreSQL/MySQL as above, with a Microsoft account; Storage by organizational account, account key, SAS or anonymous; Data Explorer databases, tables and approved queries; not live-tested |
+| Azure: Analysis Services, Table Storage, Cosmos DB, HDInsight, Databricks, Cost Management, Resource Graph | Missing | Listed, dimmed with a reason |
+| Online services: SharePoint Online list, Dynamics 365 (Dataverse) | Partial | Lists through Microsoft Graph; Dynamics 365 is the Dataverse connector, with its limits; not live-tested |
+| Online services: Salesforce, Google/Adobe Analytics, GitHub, Exchange, Outlook Mail, Business Central and others | Missing | Listed, dimmed with a reason |
+| Other: Web, OData feed, Python script, R script, Blank query | Done | Web reads CSV, JSON, XML, Excel and HTML tables; Web and OData take Anonymous, Basic, Web API key or Organizational account credentials; scripts need permission and a local interpreter |
 | Other: ODBC, Spark, HDFS, Exchange, SharePoint list (on-premises) | Missing | Listed, dimmed: driver, cluster client or service needed |
 | Other: OLE DB, Active Directory | N/A | Listed, dimmed as Windows-only providers |
 | Enter data | Done | Type or paste a table, types detected; from Home or the editor |
-| OneLake catalog | Partial | Lists items with endorsement and sensitivity; models import as a 100,000-row snapshot; CSV, JSON, Excel lakehouse files; not live-tested |
+| OneLake catalog | Partial | Lists items with endorsement and sensitivity; models import as a 100,000-row snapshot; CSV, JSON, Excel and Parquet lakehouse files, not Delta tables; not live-tested |
 | Recent sources | Done | Up to 20 per user; reconnects with the location filled in |
-| Data source settings | Done | File and global scopes, privacy level per source, clear permissions, change source |
+| Data source settings | Done | File and global scopes, Edit Permissions (credentials and privacy level per source), clear permissions, change source |
 | Custom connectors (.mez, .pqx) | Missing | Listed, dimmed: needs the Power Query SDK runtime |
 | New Get Data experience (preview) | Partial | Categories, search, available count, dark mode; no keyboard navigation of the list |
 | Import Excel workbook contents / templates | Partial | .pbit opens as a new document; no Excel Power Query, Power Pivot or Power View import |
 | Import mode | Done | Default; rows saved in the file |
-| DirectQuery | Partial | SQLite only; the folded table is read on load and refresh (up to 1,000,000 rows) and computed locally, not one SQL query per visual |
+| DirectQuery | Partial | SQLite, SQL Server family, PostgreSQL, Redshift, MySQL, MariaDB; the folded table is read on load and refresh (up to 1,000,000 rows) and computed locally, not one SQL query per visual |
 | Dual | Partial | Selectable; behaves as Import, and the UI says so |
 | Direct Lake | N/A | Needs Fabric capacity; shown read-only if a model has it |
-| Live connection | Missing | Catalog models are imported, never connected live |
-| Composite model | Partial | Import and SQLite DirectQuery tables mix in one model; no DirectQuery to semantic models |
+| Live connection | Missing | Semantic models (Get Data and the catalog) are imported as snapshots, never connected live |
+| Composite model | Partial | Import and DirectQuery tables (SQLite and the database servers) mix in one model; no DirectQuery to semantic models |
 | Direct Lake authoring / live edit | N/A | Fabric service only |
 | Hybrid tables | Done | Saved as refreshPolicy `mode: hybrid` in TMDL and TMSL; the service makes partitions; not live-tested |
-| Native queries | Done | SQLite SQL statement and `Value.NativeQuery` with EnableFolding, after approval |
+| Native queries | Done | SQL statements for SQLite and the database servers, Data Explorer queries, DAX for semantic models, `Value.NativeQuery` with EnableFolding; all after approval |
 | Dynamic M query parameters | Missing | The engine accepts parameter overrides; no slicer or filter binds to one |
 | Refresh (model, table, visuals, previews) | Done | Refresh, Refresh table, Refresh visuals, Refresh Preview, Refresh All |
-| Authentication | Partial | Anonymous only; the engine supports basic, bearer and OAuth but the app passes no credentials |
+| Authentication | Partial | Anonymous, Basic, Web API key, Organizational account, and account key or SAS for Storage, kept in the Keychain; a refusal (401/403) asks for credentials in Get Data, elsewhere the error points to Data source settings; Windows authentication N/A; organizational account only to allow-listed Microsoft hosts in the global cloud; not live-tested |
 
-The 72 unavailable connector entries all behave the same way:
+The 53 unavailable connector entries all behave the same way:
 - Each one shows "Unavailable" and its reason, dimmed, with the reason also in its tooltip and accessibility label.
 - Selecting it and pressing Connect are both disabled.
 - `GetDataSession.choose` rejects it, so Recent sources, the editor's New Source and `.pbids` can't start it either. A `.pbids` file that names one shows the reason instead.
@@ -154,7 +162,7 @@ The 72 unavailable connector entries all behave the same way:
 | Custom functions | Done | Create Function from a query; invoke per row or from the preview |
 | Data profiling | Done | Column quality, distribution and profile; top 1,000 rows or the whole dataset |
 | Query dependencies | Done | Diagram of sources, queries, parameters and functions |
-| Folding indicators and View native query | Done | Per-step icon and native SQL; only SQLite folds |
+| Folding indicators and View native query | Done | Per-step icon and native SQL; SQLite, SQL Server, PostgreSQL, Redshift, MySQL and MariaDB fold |
 | Query diagnostics | Partial | Diagnose Step and Start/Stop record editor previews; refreshes are not recorded |
 | Privacy levels and firewall | Done | Per-source levels enforced by the engine; global ignore option |
 | Error handling | Done | Keep, remove, replace errors; `try … otherwise` in M |
@@ -359,13 +367,13 @@ The 72 unavailable connector entries all behave the same way:
 | Object-level security (OLS) | Done | Checklist per role; the engine hides the objects |
 | Sensitivity labels | Partial | Purview labels listed, saved, carried to .pbit and PBIP; no encryption; not live-tested |
 | Privacy levels | Done | Set per source in Data source settings; firewall on unless privacy levels are ignored |
-| Native query approval | Done | On by default; Get Data and the editor ask; approvals remembered per source |
+| Native query approval | Done | On by default; Get Data and the editor ask, for SQL, Data Explorer and DAX queries; approvals remembered per source |
 | Custom connector trust | Missing | No custom connectors can run; Settings states this |
 | Certificate revocation checks | Missing | No revocation policy set; macOS default TLS trust only |
 | Script and visual warnings | Partial | Scripts off until allowed, blocked steps say how to allow them; no per-run prompt; no custom visuals |
 | Group policy and registry controls | Partial | A configuration profile can lock any Settings option; no keys to disable sign-in or export (automatic update checks can be locked off) |
-| Entra ID sign-in incl. sovereign clouds | Done | PKCE and device code; Public, US Government and China; not live-tested |
-| Encrypted data-source credentials | Missing | No credentials reach the query engine; the Keychain store is used only by the self-check |
+| Entra ID sign-in incl. sovereign clouds | Done | PKCE and device code; the app's own registration (Info.plist client ID, empty in this build) or an override in Settings, authority `organizations` by default; tokens per resource with incremental consent, each bound to allow-listed hosts; Public, US Government and China; not live-tested |
+| Encrypted data-source credentials | Done | One Keychain item per source; secrets never written into documents or shown again; edited in Data source settings ▸ Edit Permissions |
 
 ## 11. Performance and optimisation
 
@@ -376,11 +384,11 @@ The 72 unavailable connector entries all behave the same way:
 | Query reduction settings | Done | Cross-highlight off; Apply buttons on slicers and Filters pane; also per file |
 | Automatic page refresh | Done | Fixed interval or change-detection measure |
 | DirectQuery options | Done | Max connections and skip relationship validation are read; no restricted-measures mode exists to lift |
-| Aggregations and Dual storage mode | Partial | Engine answers from aggregation tables; SQLite DirectQuery reads the table and aggregates locally; Dual acts as Import |
+| Aggregations and Dual storage mode | Partial | Engine answers from aggregation tables; DirectQuery reads the folded table and aggregates locally; Dual acts as Import |
 | Incremental refresh | Done | Written as TMDL/TMSL `refreshPolicy` and sent on Publish; not live-tested |
 | Data load options | Partial | Parallel table loading works; no background-preview or cache-size options |
 | Model size controls | Done | Auto date/time per file and for new files, disable load, remove columns, change types |
-| Query folding indicators and Query diagnostics | Partial | Folding icons and View Native Query (SQLite); diagnostics record editor previews only |
+| Query folding indicators and Query diagnostics | Partial | Folding icons and View Native Query (SQLite and the database servers); diagnostics record editor previews only |
 | String indexing and full-text search | Partial | TEXTSEARCH behind a Preview toggle scans each row; the word index is built but not used |
 
 ## 12. Developer and pro-code features
@@ -475,10 +483,10 @@ Power BI Desktop doesn't do any of these. N/A means this app doesn't either. "(e
 
 ## Known limits
 
-1. **DirectQuery and live connections.** DirectQuery works only for SQLite, and it isn't real pushdown: the folded table is read once, then the local engine computes every visual. Dual behaves as Import. There is no live connection, and no DirectQuery link to a semantic model.
-2. **Data source authentication is anonymous only.** The engine supports basic, bearer and OAuth credentials, but the app never gives it any.
+1. **DirectQuery and live connections.** DirectQuery works for SQLite, SQL Server and the PostgreSQL and MySQL families, and it isn't real pushdown: the folded table is read once, then the local engine computes every visual. Dual behaves as Import. There is no live connection, and no DirectQuery link to a semantic model.
+2. **Data source sign-in is not live-tested.** Credentials are kept in the Keychain and a refusing source opens the credentials dialog, but only in Get Data; at refresh or in the editor the error names the source, and you set its credentials in Data source settings. An organizational account is sent only to allow-listed Microsoft hosts, and only in the global cloud. Windows authentication isn't available on a Mac.
 3. **`.pbix` gives pages and queries only.** Its DataModel stream can't be decoded, and the app can't save `.pbix`.
-4. **Microsoft cloud features are not live-tested.** Sign-in, OneDrive, SharePoint, OneLake, Publish and labels have only run against stand-in servers. The assistant has only been tested against a stub.
+4. **Microsoft cloud features are not live-tested.** Sign-in, OneDrive, SharePoint, OneLake, Publish, labels and the SharePoint, Dataverse, Azure and Fabric connectors have only run against stand-in servers. The app's own client ID is not set in this build, so sign-in needs an application ID entered in Settings. The assistant has only been tested against a stub.
 5. **Sensitivity labels are stored and shown, but nothing is encrypted.**
 6. **Maps.** Filled and shape maps need GeoJSON or TopoJSON pasted into a text field. There are no built-in boundaries, reference layers or drive-time selection.
 7. **Tables and matrix differ.** URL and image cells work in tables only, and custom totals work in matrices only.
@@ -490,3 +498,8 @@ Power BI Desktop doesn't do any of these. N/A means this app doesn't either. "(e
     - Images come only from a file at insert time, though the empty image visual mentions a URL that can't be entered.
     - Buttons can't be given a custom icon image.
     - Shapes have no hover or pressed states.
+13. **Database connectors are partly tested.**
+    - SQL Server has been tested only against a stand-in server. It always encrypts (TLS 1.2 or later), and the database must be typed: the form can't browse a server's databases.
+    - MySQL and MariaDB have never run against a real server.
+    - Not supported: RSA key exchange for MySQL sign-in over an unencrypted connection, Redshift's SHA-256 sign-in, and MariaDB's ed25519 sign-in.
+14. **Cloud connectors have gaps.** Dataverse and Dynamics 365 load lookup columns as `_x_value` ids. Lakehouses read only OneLake Files, not Delta tables. Semantic models import a snapshot of at most 100,000 rows per table or query. KQL databases and `SharePoint.Contents` aren't available.
