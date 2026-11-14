@@ -177,6 +177,40 @@ final class GetDataConnectorTests: XCTestCase {
         XCTAssertEqual(editor.selectedQuery?.name, "t", "the editor selects the new query")
         XCTAssertEqual(editor.refreshPlan().refresh, ["t"], "Apply loads it")
     }
+
+    /// A `.pbids` data source file opens as a document whose queries the editor shows; Close & Apply loads them.
+    func testDataSourceFileQueriesLoadFromTheEditor() async throws {
+        let csv = dir.appendingPathComponent("regions.csv")
+        try Data("Region,Amount\nNorth,10\nSouth,20\nEast,5\n".utf8).write(to: csv)
+        let pbids = dir.appendingPathComponent("regions.pbids")
+        let json = #"{"version": "0.1", "connections": [{"details": {"protocol": "file", "address": {"path": "\#(csv.path)"}}, "mode": "Import"}]}"#
+        try Data(json.utf8).write(to: pbids)
+        let opened = try DataSourceFiles.document(from: pbids)
+        let store = DocumentStore(document: opened.document, services: .live())
+        let editor = QueryEditorSession(store: store, security: QuerySecurity(defaults: defaults))
+        XCTAssertEqual(editor.selectedQuery?.name, "regions")
+        editor.refreshPreview()
+        await editor.waitForPreview()
+        XCTAssertNil(editor.previewError)
+        XCTAssertEqual(editor.preview?.table.rowCount, 4, "the header row is still a row until it is promoted")
+        await runCommand("pq.promoteHeaders", editor)
+        XCTAssertEqual(editor.preview?.table.columnNames, ["Region", "Amount"])
+        XCTAssertEqual(editor.refreshPlan().refresh, ["regions"])
+        store.status = nil
+        editor.applyChanges()
+        let loaded = await Smoke.wait { store.status != nil }
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(store.status?.text, "Refreshed 1 table.")
+        XCTAssertEqual(store.doc.data["regions"]?.rowCount, 3)
+        XCTAssertEqual(store.doc.model.tables.map(\.name), ["regions"])
+    }
+
+    private func runCommand(_ id: String, _ s: QueryEditorSession) async {
+        guard let c = EditorCommands.command(id) else { return XCTFail("no command \(id)") }
+        XCTAssertNil(c.blocker(s), id)
+        c.run(s)
+        await s.waitForPreview()
+    }
 }
 
 /// ZIP archives with stored entries (enough for a hand-written .xlsx).
