@@ -43,7 +43,8 @@ enum CloudHTTP {
 
     /// Sends one request and returns any 2xx response; other statuses throw `DataSource.Error` naming `service`.
     static func send(_ ctx: MInterpreter, service: String, method: String = "GET", url: URL, headers: [String: String] = [:],
-                     body: Data? = nil, auth: Auth, limit: Int? = nil, timeout: TimeInterval? = nil, accept: Set<Int> = []) throws -> Response {
+                     body: Data? = nil, auth: Auth, limit: Int? = nil, timeout: TimeInterval? = nil, accept: Set<Int> = [],
+                     credentialSource: (kind: String, location: String)? = nil) throws -> Response {
         guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(), !host.isEmpty, url.user == nil else {
             throw MError.dataSource("\(service) is only reached over https; '\(display(url))' isn't an https address.")
         }
@@ -69,7 +70,11 @@ enum CloudHTTP {
                 attempt += 1
                 continue
             }
-            throw failure(service: service, url: url, response: r)
+            let error = failure(service: service, url: url, response: r)
+            if let source = credentialSource, [401, 403].contains(r.status) {
+                throw MError.credentials(kind: source.kind, location: source.location, error.message)
+            }
+            throw error
         }
     }
 

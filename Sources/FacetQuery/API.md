@@ -39,9 +39,21 @@ Binary, Lines, Csv), `LibJson`, `LibXml`, `LibExcel` (+ `ZipReader`), `LibSQL` (
 | `Web.Page` | tables of an HTML document (text or binary) via the system tidy parser: `Caption`, `Source`, `ClassName`, `Id`, `Data`; header rows, `colspan`/`rowspan` |
 | `OData.Feed` | JSON only (v4, or v2/v3 answering `Accept: application/json`): service document → `Name`/`Data` navigation table; entity sets follow `@odata.nextLink` / `__next` |
 | `Python.Execute`, `R.Execute` | need `allowScripts`; tables travel as CSV; Python needs pandas |
+| `Parquet.Document` | pure Swift (`Library/Parquet/`): flat schemas (nested groups as dotted names; repeated columns refused); PLAIN, RLE/bit-packed and dictionary encodings; data page v1 and v2; uncompressed, Snappy and gzip; logical/converted types (date, time, timestamp, decimal, INT96, UUID, float16); declared sizes checked against `maxSourceBytes` |
+| `SharePoint.Files`, `SharePoint.Tables` | Microsoft Graph with an Entra token for Graph: every file of the site's document libraries (`Folder.Files` columns, delta paging), or the site's visible lists and their items |
+| `Web.Contents` on `<tenant>.sharepoint.com` / `<tenant>-my.sharepoint.com` | with no options and no non-organizational credential, the file is read through Graph's shares API |
+| `CommonDataService.Database` | Dataverse Web API v9.2: public entities as a navigation table, rows paged with `odata.maxpagesize`; lookups appear as `_x_value`; annotations dropped |
+| `AzureStorage.Blobs`, `AzureStorage.DataLake` | containers / file systems and recursive file listings (`Folder.Files` columns); organizational account, SAS, account key (Shared Key) or anonymous; OneLake (`onelake.dfs.fabric.microsoft.com`) too |
+| `AzureDataExplorer.Contents` | Kusto v1 REST: databases → tables → rows; a hand-written query goes through `approveNativeQuery` (kind `AzureDataExplorer`) |
+| `AnalysisServices.Database` with `powerbi://api.powerbi.com/v1.0/myorg/<workspace>` | Power BI `executeQueries` DAX: tables of the model, or the `Query` option (approved as a native query, kind `AnalysisServices`). Import only: a snapshot at refresh, at most 100,000 rows per query |
 
-Every other Get Data connector (SQL Server, PostgreSQL, MySQL, Oracle, ODBC, SharePoint, Azure, Fabric, Parquet,
-PDF, …) and the `AI.*` functions are registered only to fail with a `DataSource.Error` that names the connector.
+Cloud connectors share `CloudHTTP`: https only, bounded bodies, no secret header carried across a redirect to another
+host, next-page links followed only on the same host, nothing about a request logged. A token is always requested for
+the host it will be sent to, so the provider can enforce its allow-list. A 401/403 from a source that takes stored
+credentials throws `MError.credentials(kind:location:_:)`, whose `credentialSource` names the source for the host app.
+
+Every other Get Data connector (SQL Server, PostgreSQL, MySQL, Oracle, ODBC, PDF, dataflows, …) and the `AI.*`
+functions are registered only to fail with a `DataSource.Error` that names the connector.
 
 ## Query folding (SQLite)
 

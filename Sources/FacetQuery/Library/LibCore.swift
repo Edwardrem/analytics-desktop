@@ -7,7 +7,7 @@ extension MLibrary {
         registerCore, registerRecord,
         registerTable, registerList, registerText, registerNumber, registerDateTime,
         registerFiles, registerSQL, registerWeb, registerWebTables, registerScripts, registerAI,
-        registerParquet,
+        registerParquet, registerSharePoint, registerDataverse, registerAzureStorage, registerKustoPowerBI,
     ]
 
     /// Build a date from calendar components, or throw M's out-of-range error.
@@ -282,7 +282,7 @@ extension MLibrary {
         "Sqlite.Database", "PostgreSQL.Database", "MySQL.Database", "Sql.Database", "Sql.Databases", "Odbc.Query", "Odbc.DataSource",
         "Excel.Workbook", "Csv.Document", "Json.Document", "Xml.Tables", "Parquet.Document", "Pdf.Tables",
         "PowerBI.Dataflows", "PowerPlatform.Dataflows", "SharePoint.Tables", "SharePoint.Files", "SharePoint.Contents",
-        "CommonDataService.Database", "AzureStorage.Blobs", "AzureStorage.DataLake", "AnalysisServices.Database",
+        "CommonDataService.Database", "AzureStorage.Blobs", "AzureStorage.DataLake", "AnalysisServices.Database", "AzureDataExplorer.Contents",
     ]
 
     static func stripMeta(_ v: MValue) -> MValue {
