@@ -277,6 +277,13 @@ struct VisualContainer: View {
             VisualView(spec: ReportRuntime.of(store).withPendingSlicer(store.mobileLayout ? MobileLayout.effectiveSpec(spec) : spec),
                        data: data, context: store.context(for: spec))
                 .frame(width: frame.width, height: frame.height)
+                .background {
+                    // While recording, times how long the visual takes to draw its new results.
+                    if let pending = store.eventAwaitingDisplay(spec.id) {
+                        DisplayProbe(token: pending) { [weak store] id, time in store?.visualDisplayed(id, at: time) }
+                            .allowsHitTesting(false).accessibilityHidden(true)
+                    }
+                }
                 .rotationEffect(.degrees(frame.rotation))
                 .opacity(store.editInteractionsFor != nil && store.editInteractionsFor != spec.id ? 0.92 : 1)
                 .opacity(spotlight != nil && spotlight != spec.id ? 0.18 : 1)

@@ -72,9 +72,15 @@ struct PerformanceEvent: Identifiable {
     var visualID: UUID
     var visualName: String
     var queryMilliseconds: Double
+    /// Query and processing time, plus the display time once the visual has been drawn.
     var totalMilliseconds: Double
     var dax: String
     var timestamp = Date()
+    /// From the results reaching the canvas to the visual being drawn with them; nil until then
+    /// (or when the visual isn't on screen to draw).
+    var displayMilliseconds: Double?
+    /// When the results reached the canvas.
+    var delivered: CFAbsoluteTime?
 }
 
 struct StatusMessage: Identifiable, Equatable {
@@ -460,13 +466,22 @@ final class DocumentStore: ObservableObject {
                     if recording {
                         self.performanceLog.append(PerformanceEvent(
                             visualID: spec.id, visualName: spec.name, queryMilliseconds: data.queryMilliseconds,
-                            totalMilliseconds: total, dax: data.daxQuery))
+                            totalMilliseconds: total, dax: data.daxQuery, delivered: CFAbsoluteTimeGetCurrent()))
                     }
                 }
             }
         }
     }
     func clearPerformanceLog() { performanceLog.removeAll() }
+
+    /// The visual was drawn with an event's results at `time`: that is its display time, added to the total once.
+    func visualDisplayed(_ eventID: UUID, at time: CFAbsoluteTime) {
+        guard let i = performanceLog.lastIndex(where: { $0.id == eventID }), performanceLog[i].displayMilliseconds == nil,
+              let delivered = performanceLog[i].delivered else { return }
+        let ms = max(0, (time - delivered) * 1000)
+        performanceLog[i].displayMilliseconds = ms
+        performanceLog[i].totalMilliseconds += ms
+    }
 
     /// Run work against the engine off the main thread.
     func withEngine<T>(_ work: @escaping (CalculationService) -> T) async -> T {
