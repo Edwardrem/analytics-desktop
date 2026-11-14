@@ -99,8 +99,13 @@ struct SourceSettingsDialog: View {
         DialogChrome(title: DataConnector.connector(for: request.kind)?.name ?? "Source", subtitle: "Change where this query reads its data.",
                      canCommit: problem == nil, width: 560, problem: problem, commit: done) {
             switch request.kind {
-            case .web, .odata:
-                PropertyRow("URL") { TextField("https://", text: $request.location).textFieldStyle(.roundedBorder) }
+            case .web, .odata, .oneDriveFile, .sharePointFolder, .sharePointList, .dataverse, .dynamics365, .azureBlobs, .azureDataLake, .lakehouse:
+                PropertyRow(request.kind == .dataverse ? "Environment" : request.kind == .azureBlobs ? "Account" : "URL") {
+                    TextField("https://", text: $request.location).textFieldStyle(.roundedBorder)
+                }
+            case .kusto, .semanticModel:
+                PropertyRow(request.kind == .kusto ? "Cluster" : "Workspace") { TextField("", text: $request.location).textFieldStyle(.roundedBorder) }
+                PropertyRow(request.kind == .kusto ? "Database" : "Semantic model") { TextField("", text: $request.database).textFieldStyle(.roundedBorder) }
             case .python, .r:
                 CodeEditor(text: $request.location, language: request.kind == .python ? LanguageSupport.python : LanguageSupport.m, fontSize: 12).frame(height: 180)
             case .blank:

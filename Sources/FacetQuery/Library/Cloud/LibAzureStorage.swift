@@ -141,12 +141,17 @@ enum AzureStorageSource {
         CloudSource.hasSuffix(host, ".dfs.core.windows.net") || host == "onelake.dfs.fabric.microsoft.com" || CloudSource.hasSuffix(host, ".dfs.fabric.microsoft.com")
     }
 
+    /// The recorded location: the account, or OneLake with its workspace.
+    static func dataLakeLocation(host: String, path: [String]) -> String {
+        "https://" + host + (host.contains("fabric") && !path.isEmpty ? "/" + path[0] : "")
+    }
+
     static func dataLake(_ ctx: MInterpreter, url address: String) throws -> MTable {
         let (host, path) = try CloudSource.parse(address, function: "AzureStorage.DataLake")
         guard isDataLakeHost(host) else {
             throw MError.dataSource("AzureStorage.DataLake needs an address such as https://contoso.dfs.core.windows.net/container or a OneLake address (https://onelake.dfs.fabric.microsoft.com/<workspace>/<item>); '\(host)' isn't one.")
         }
-        try ctx.noteDataSource(kind: "AzureDataLakeStorage", location: "https://" + host + (host.contains("fabric") && !path.isEmpty ? "/" + path[0] : ""))
+        try ctx.noteDataSource(kind: "AzureDataLakeStorage", location: dataLakeLocation(host: host, path: path))
         let access = try self.access(ctx, kind: "AzureDataLakeStorage", host: host)
         guard let filesystem = path.first else {
             let page = try JsonParser.parse(try send(ctx, service: "Azure Data Lake Storage", host: host, path: [], query: [URLQueryItem(name: "resource", value: "account")], access: access).data)

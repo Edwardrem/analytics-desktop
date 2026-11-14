@@ -29,13 +29,17 @@ enum SharePointSource {
         guard isSharePointHost(host) else {
             throw MError.dataSource("\(function) needs a SharePoint Online site address such as https://contoso.sharepoint.com/sites/Sales; '\(host)' isn't one.")
         }
-        try ctx.noteDataSource(kind: "SharePoint", location: "https://\(host)" + (path.isEmpty ? "" : "/" + path.joined(separator: "/")))
+        try ctx.noteDataSource(kind: "SharePoint", location: siteLocation(host: host, path: path))
         let encodedPath = path.map { $0.addingPercentEncoding(withAllowedCharacters: CloudSource.segmentAllowed) ?? $0 }.joined(separator: "/")
         let url = try graph("/sites/\(host)" + (path.isEmpty ? "" : ":/\(encodedPath)"), [URLQueryItem(name: "$select", value: "id,webUrl")])
         guard case .record(let r) = try CloudSource.json(ctx, service: service, url: url, auth: graphAuth), let id = CloudSource.text(r, "id") else {
             throw MError.dataSource("SharePoint didn't return the site '\(address)'.")
         }
         return (id, host, path)
+    }
+
+    static func siteLocation(host: String, path: [String]) -> String {
+        "https://\(host)" + (path.isEmpty ? "" : "/" + path.joined(separator: "/"))
     }
 
     static func segment(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: CloudSource.segmentAllowed) ?? s }

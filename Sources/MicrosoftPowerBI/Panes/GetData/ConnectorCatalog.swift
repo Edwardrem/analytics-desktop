@@ -3,6 +3,7 @@ import Foundation
 /// What a connector reads, for the ones this app implements.
 enum SourceKind: String, Codable, CaseIterable, Sendable {
     case csv, excel, json, xml, folder, sqlite, web, odata, python, r, blank
+    case parquet, sharePointFolder, sharePointList, oneDriveFile, dataverse, dynamics365, azureBlobs, azureDataLake, lakehouse, kusto, semanticModel
 }
 
 /// One entry of the Get Data catalog. The catalog lists everything Power BI Desktop offers; an entry is either
@@ -40,10 +41,11 @@ struct DataConnector: Identifiable, Hashable {
 
     enum Missing {
         static let driver = "Needs a database driver, which this app does not include."
-        static let parquet = "Needs a Parquet reader, which this app does not include."
         static let pdf = "Needs PDF table extraction, which this app does not include."
         static let legacyExcel = "Needs a reader for the binary .xls and .xlsb formats; save the workbook as .xlsx."
-        static let sharePoint = "Needs the SharePoint API with a Microsoft 365 sign-in, which the query engine does not have."
+        static let sharePointServer = "Needs SharePoint Server on your network (Windows authentication); SharePoint Online lists work with SharePoint Online list."
+        static let warehouse = "Warehouse tables are read through the SQL endpoint (TDS), which this connector doesn't use. Its files in OneLake can be read with Lakehouses."
+        static let fabricKusto = "Fabric KQL database query addresses (*.kusto.fabric.microsoft.com) aren't supported yet; Azure Data Explorer clusters are."
         static let fabric = "Needs the Microsoft Fabric service, which the query engine cannot connect to."
         static let powerPlatform = "Needs the Power Platform service, which the query engine cannot connect to."
         static let azure = "Needs the Azure service and its sign-in, which the query engine cannot connect to."
@@ -69,8 +71,9 @@ struct DataConnector: Identifiable, Hashable {
         works("folder", "Folder", .file, "folder", .folder),
         missing("excel-legacy", "Excel 97–2003 or binary workbook (.xls, .xlsb)", .file, "tablecells", Missing.legacyExcel),
         missing("pdf", "PDF", .file, "doc.richtext", Missing.pdf),
-        missing("parquet", "Parquet", .file, "square.stack.3d.up", Missing.parquet),
-        missing("sharepoint-folder", "SharePoint folder", .file, "folder.badge.gearshape", Missing.sharePoint),
+        works("parquet", "Parquet", .file, "square.stack.3d.up", .parquet),
+        works("sharepoint-folder", "SharePoint folder", .file, "folder.badge.gearshape", .sharePointFolder),
+        works("onedrive-file", "OneDrive or SharePoint file", .file, "doc.badge.ellipsis", .oneDriveFile),
         // Database
         works("sqlite", "SQLite database", .database, "cylinder", .sqlite),
         missing("sqlserver", "SQL Server database", .database, "cylinder.split.1x2", Missing.driver),
@@ -96,37 +99,37 @@ struct DataConnector: Identifiable, Hashable {
         missing("athena", "Amazon Athena", .database, "cylinder", Missing.driver),
         missing("databricks", "Databricks", .database, "cylinder", Missing.driver),
         // Microsoft Fabric
-        missing("fabric-models", "Power BI semantic models", .fabric, "chart.bar.doc.horizontal", Missing.fabric),
+        works("fabric-models", "Power BI semantic models", .fabric, "chart.bar.doc.horizontal", .semanticModel),
         missing("fabric-dataflows", "Dataflows", .fabric, "arrow.triangle.branch", Missing.fabric),
         missing("fabric-datamarts", "Datamarts", .fabric, "building.columns", Missing.fabric),
-        missing("fabric-warehouses", "Warehouses", .fabric, "building.2", Missing.fabric),
-        missing("fabric-lakehouses", "Lakehouses", .fabric, "water.waves", Missing.fabric),
+        missing("fabric-warehouses", "Warehouses", .fabric, "building.2", Missing.warehouse),
+        works("fabric-lakehouses", "Lakehouses", .fabric, "water.waves", .lakehouse),
         missing("fabric-sql", "SQL databases", .fabric, "cylinder", Missing.fabric),
         missing("fabric-mirrored", "Mirrored databases", .fabric, "cylinder.split.1x2", Missing.fabric),
-        missing("fabric-kql", "KQL databases", .fabric, "magnifyingglass", Missing.fabric),
+        missing("fabric-kql", "KQL databases", .fabric, "magnifyingglass", Missing.fabricKusto),
         // Power Platform
-        missing("dataverse", "Dataverse", .powerPlatform, "circle.hexagongrid", Missing.powerPlatform),
+        works("dataverse", "Dataverse", .powerPlatform, "circle.hexagongrid", .dataverse),
         missing("pp-dataflows", "Power Platform dataflows", .powerPlatform, "arrow.triangle.branch", Missing.powerPlatform),
         // Azure
         missing("azure-sql", "Azure SQL database", .azure, "cylinder", Missing.azure),
         missing("azure-synapse", "Azure Synapse Analytics SQL", .azure, "cylinder.split.1x2", Missing.azure),
         missing("azure-as", "Azure Analysis Services database", .azure, "cube", Missing.azure),
         missing("azure-postgres", "Azure Database for PostgreSQL", .azure, "cylinder", Missing.azure),
-        missing("azure-blob", "Azure Blob Storage", .azure, "shippingbox", Missing.azure),
+        works("azure-blob", "Azure Blob Storage", .azure, "shippingbox", .azureBlobs),
         missing("azure-table", "Azure Table Storage", .azure, "tablecells", Missing.azure),
         missing("azure-cosmos", "Azure Cosmos DB", .azure, "globe", Missing.azure),
-        missing("azure-adx", "Azure Data Explorer (Kusto)", .azure, "magnifyingglass", Missing.azure),
-        missing("azure-adls2", "Azure Data Lake Storage Gen2", .azure, "water.waves", Missing.azure),
+        works("azure-adx", "Azure Data Explorer (Kusto)", .azure, "magnifyingglass", .kusto),
+        works("azure-adls2", "Azure Data Lake Storage Gen2", .azure, "water.waves", .azureDataLake),
         missing("azure-hdinsight", "Azure HDInsight (HDFS)", .azure, "server.rack", Missing.azure),
         missing("azure-hdinsight-spark", "Azure HDInsight Spark", .azure, "sparkles", Missing.azure),
         missing("azure-databricks", "Azure Databricks", .azure, "cylinder", Missing.azure),
         missing("azure-cost", "Azure Cost Management", .azure, "creditcard", Missing.azure),
         missing("azure-resource-graph", "Azure Resource Graph", .azure, "point.3.connected.trianglepath.dotted", Missing.azure),
         // Online services
-        missing("sharepoint-list", "SharePoint Online list", .onlineServices, "list.bullet.rectangle", Missing.sharePoint),
+        works("sharepoint-list", "SharePoint Online list", .onlineServices, "list.bullet.rectangle", .sharePointList),
         missing("exchange-online", "Microsoft Exchange Online", .onlineServices, "envelope", Missing.service),
         missing("outlook-mail", "Outlook Mail", .onlineServices, "envelope.open", Missing.service),
-        missing("dynamics365", "Dynamics 365 (Dataverse)", .onlineServices, "circle.hexagongrid", Missing.service),
+        works("dynamics365", "Dynamics 365 (Dataverse)", .onlineServices, "circle.hexagongrid", .dynamics365),
         missing("dynamics-bc", "Dynamics 365 Business Central", .onlineServices, "briefcase", Missing.service),
         missing("dynamics-nav", "Dynamics NAV", .onlineServices, "briefcase", Missing.service),
         missing("salesforce-objects", "Salesforce objects", .onlineServices, "cloud", Missing.service),
@@ -149,7 +152,7 @@ struct DataConnector: Identifiable, Hashable {
         missing("hdfs", "Hadoop File (HDFS)", .other, "server.rack", Missing.cluster),
         missing("active-directory", "Active Directory", .other, "person.3", Missing.windowsOnly),
         missing("exchange", "Microsoft Exchange", .other, "envelope", Missing.service),
-        missing("sharepoint-onprem", "SharePoint list", .other, "list.bullet.rectangle", Missing.sharePoint),
+        missing("sharepoint-onprem", "SharePoint list", .other, "list.bullet.rectangle", Missing.sharePointServer),
         missing("custom-connector", "Custom connector (.mez, .pqx)", .other, "puzzlepiece.extension", Missing.customConnector),
     ]
 }

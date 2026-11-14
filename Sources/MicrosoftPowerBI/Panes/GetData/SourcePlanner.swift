@@ -17,6 +17,8 @@ struct SourceRequest: Equatable, Sendable {
     var nativeQuery = ""
     var directQuery = false
     var webContent: WebContentKind = .csv
+    /// The database, semantic model or other second part of the address (Azure Data Explorer, Power BI models).
+    var database = ""
 
     init(kind: SourceKind, location: String = "") { self.kind = kind; self.location = location }
 }
@@ -71,7 +73,9 @@ enum SourcePlanner {
         case .python: return "Python.Execute(\(MSyntax.text(r.location)))"
         case .r: return "R.Execute(\(MSyntax.text(r.location)))"
         case .blank: return "\"\""
-        case .web:
+        case .parquet, .sharePointFolder, .sharePointList, .dataverse, .dynamics365, .azureBlobs, .azureDataLake, .lakehouse, .kusto, .semanticModel:
+            return CloudSourcePlanner.sourceExpression(r) ?? "\"\""
+        case .web, .oneDriveFile:
             let contents = "Web.Contents(\(location))"
             switch r.webContent {
             case .csv: return csv(contents)
@@ -274,7 +278,7 @@ enum SourcePlanner {
             r.webContent = fn == "Excel.Workbook" ? .excel : fn == "Json.Document" ? .json : fn == "Web.Page" ? .html : .xml
             return r
         default:
-            return nil
+            return CloudSourcePlanner.request(fromSource: expression)
         }
     }
 
@@ -297,7 +301,9 @@ enum SourcePlanner {
         case .csv, .json, .xml, .excel, .sqlite:
             return ((location as NSString).lastPathComponent as NSString).deletingPathExtension
         case .folder: return (location as NSString).lastPathComponent
-        case .web, .odata:
+        case .parquet, .sharePointFolder, .sharePointList, .dataverse, .dynamics365, .azureBlobs, .azureDataLake, .lakehouse, .kusto, .semanticModel:
+            return CloudSourcePlanner.queryName(r) ?? "Query1"
+        case .web, .odata, .oneDriveFile:
             let parts = URLComponents(string: location)
             let last = ((parts?.path ?? "") as NSString).lastPathComponent
             let stem = (last as NSString).deletingPathExtension
@@ -318,7 +324,11 @@ enum SourcePlanner {
         case .web, .odata:
             guard let parts = URLComponents(string: location), let scheme = parts.scheme?.lowercased(), let host = parts.host else { return nil }
             return QueryDataSource(kind: r.kind == .web ? "Web" : "OData", location: "\(scheme)://\(host)")
+        case .oneDriveFile:
+            guard let parts = URLComponents(string: location), let host = parts.host?.lowercased() else { return nil }
+            return QueryDataSource(kind: "Web", location: "https://\(host)")
         case .python, .r, .blank: return nil
+        default: return CloudSourcePlanner.dataSource(r)
         }
     }
 
@@ -339,6 +349,8 @@ enum SourcePlanner {
                 return DataConnector.Missing.legacyExcel
             }
             return nil
+        default:
+            return CloudSourcePlanner.validationMessage(r)
         }
     }
 
@@ -348,13 +360,14 @@ enum SourcePlanner {
     /// that extension (the combine step keeps only those files). Nil when no file can be combined.
     static func combinePlan(extensions: [String], sampleText: (String) -> String?) -> (extension: String, format: CombineFilesFormat)? {
         var counts: [String: Int] = [:], order: [String] = []
-        for e in extensions.map({ $0.lowercased() }) where [".csv", ".txt", ".tsv", ".json", ".xlsx", ".xlsm"].contains(e) {
+        for e in extensions.map({ $0.lowercased() }) where [".csv", ".txt", ".tsv", ".json", ".xlsx", ".xlsm", ".parquet"].contains(e) {
             if counts[e] == nil { order.append(e) }
             counts[e, default: 0] += 1
         }
         guard let winner = order.max(by: { (counts[$0] ?? 0) < (counts[$1] ?? 0) }) else { return nil }
         switch winner {
         case ".json": return (winner, .json)
+        case ".parquet": return (winner, .parquet)
         case ".xlsx", ".xlsm": return (winner, .excel(sheet: nil))
         default:
             let delimiter = winner == ".tsv" ? "\t" : sampleText(winner).map(detectDelimiter) ?? ","

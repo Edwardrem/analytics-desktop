@@ -79,8 +79,8 @@ final class DataSourceFileTests: XCTestCase {
         XCTAssertTrue(sql.contains("SQL Server srv / Sales"), sql)
         XCTAssertTrue(sql.contains("SQL Server database"), sql)
         XCTAssertTrue(sql.contains(DataConnector.Missing.driver), sql)
-        guard case .unavailable(let parquet) = try plan(file("/data/t.parquet")) else { return XCTFail("parquet") }
-        XCTAssertTrue(parquet.contains(DataConnector.Missing.parquet), parquet)
+        guard case .navigator(let parquet, _, _) = try plan(file("/data/t.parquet")) else { return XCTFail("parquet opens Get Data") }
+        XCTAssertEqual(parquet.id, "parquet")
         guard case .unavailable(let unknown) = try plan(file("/data/archive.bin")) else { return XCTFail("unknown file type") }
         XCTAssertTrue(unknown.contains("can't read"), unknown)
     }

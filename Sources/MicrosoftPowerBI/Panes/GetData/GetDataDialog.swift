@@ -169,7 +169,7 @@ private struct ConnectionForm: View {
     @ViewBuilder
     private var fields: some View {
         switch kind {
-        case .csv, .excel, .json, .xml, .folder, .sqlite:
+        case .csv, .excel, .json, .xml, .folder, .sqlite, .parquet:
             HStack {
                 TextField(kind == .folder ? "Folder path" : "File path", text: $session.request.location).textFieldStyle(.roundedBorder)
                 Button("Browse…") { browse() }
@@ -196,6 +196,8 @@ private struct ConnectionForm: View {
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         case .blank:
             EmptyView()
+        case .sharePointFolder, .sharePointList, .oneDriveFile, .dataverse, .dynamics365, .azureBlobs, .azureDataLake, .lakehouse, .kusto, .semanticModel:
+            CloudSourceForm(request: $session.request)
         }
     }
 
@@ -238,6 +240,14 @@ private struct NativeQueryApproval: View {
     @ObservedObject var session: GetDataSession
     let cancel: () -> Void
 
+    private var note: String {
+        switch session.request.kind {
+        case .kusto: return "The query runs in the cluster with your account's permissions; management commands (starting with a dot) can change it."
+        case .semanticModel: return "The DAX query runs against the semantic model with your account's permissions; its result is imported as a snapshot."
+        default: return "\(AppIdentity.name) opens SQLite databases read-only."
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.m) {
             Label("Native Database Query", systemImage: "exclamationmark.shield").font(Design.Typeface.headline)
@@ -249,7 +259,7 @@ private struct NativeQueryApproval: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(Design.Space.s)
             }
             .background(Design.Palette.fill, in: RoundedRectangle(cornerRadius: Design.Radius.control))
-            Text("\(AppIdentity.name) opens SQLite databases read-only, and remembers this approval until you clear it in Data source settings.")
+            Text(note + " The approval is remembered until you clear it in Data source settings.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Back") { session.back() }
@@ -273,7 +283,7 @@ private struct NavigatorView: View {
         let needle = search.trimmingCharacters(in: .whitespaces).lowercased()
         return needle.isEmpty ? session.items : session.items.filter { $0.name.lowercased().contains(needle) }
     }
-    private var isText: Bool { session.request.kind == .csv || (session.request.kind == .web && session.request.webContent == .csv) }
+    private var isText: Bool { session.request.kind == .csv || (session.request.kind.readsWebContents && session.request.webContent == .csv) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -378,11 +388,11 @@ private struct NavigatorView: View {
             }
             Spacer()
             if session.isWorking { ProgressView().controlSize(.small) }
-            if session.request.kind == .folder {
+            if session.request.kind.listsFiles, session.items.isEmpty {
                 if session.insideEditor {
                     Button("Combine") { Task { await session.finish(.transform, combined: true) } }
                         .disabled(session.combine == nil || !session.canFinish)
-                        .help(session.combine == nil ? "The folder has no CSV, text, JSON or Excel files to combine" : "Append the \(session.combine?.extension ?? "") files into one table")
+                        .help(session.combine == nil ? "The folder has no CSV, text, JSON, Excel or Parquet files to combine" : "Append the \(session.combine?.extension ?? "") files into one table")
                 } else {
                     Menu("Combine") {
                         Button("Combine & Load") { Task { await session.finish(.load, combined: true) } }
@@ -390,7 +400,7 @@ private struct NavigatorView: View {
                     }
                     .fixedSize()
                     .disabled(session.combine == nil || !session.canFinish)
-                    .help(session.combine == nil ? "The folder has no CSV, text, JSON or Excel files to combine" : "Append the \(session.combine?.extension ?? "") files into one table")
+                    .help(session.combine == nil ? "The folder has no CSV, text, JSON, Excel or Parquet files to combine" : "Append the \(session.combine?.extension ?? "") files into one table")
                 }
             }
             Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)

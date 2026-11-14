@@ -107,12 +107,18 @@ final class GetDataSession: ObservableObject {
         combine = nil; scripts = [:]; headersDecided = false; promoteHeaders = false
     }
 
-    /// The database file a native query would run against, as the engine names it.
-    private var nativeQueryLocation: String { (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath }
+    /// The source a hand-written query would run against, named as the engine names it (nil: no query typed).
+    var nativeQuerySource: QueryDataSource? {
+        guard !pendingNativeQuery.isEmpty else { return nil }
+        if request.kind == .sqlite {
+            return QueryDataSource(kind: "SQLite", location: (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath)
+        }
+        return CloudSourcePlanner.nativeQuerySource(request)
+    }
     var pendingNativeQuery: String { request.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     func approveNativeQuery() async {
-        security.approve(query: pendingNativeQuery, kind: "SQLite", location: nativeQueryLocation)
+        if let s = nativeQuerySource { security.approve(query: pendingNativeQuery, kind: s.kind, location: s.location) }
         await connect()
     }
 
@@ -120,15 +126,15 @@ final class GetDataSession: ObservableObject {
     func connect() async {
         if let message = SourcePlanner.validationMessage(request) { error = message; return }
         reset()
-        if request.kind == .sqlite, !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
-           !security.isApproved(query: pendingNativeQuery, kind: "SQLite", location: nativeQueryLocation) {
+        if let s = nativeQuerySource, security.requiresNativeQueryApproval,
+           !security.isApproved(query: pendingNativeQuery, kind: s.kind, location: s.location) {
             stage = .approval
             return
         }
         isWorking = true
         defer { isWorking = false }
         do {
-            if request.kind == .web {
+            if request.kind.readsWebContents {
                 let probe = engine(with: "\"\"", named: Self.scratchName)
                 let address = request.location.trimmingCharacters(in: .whitespacesAndNewlines)
                 if case .binary(let data) = try await probe.evaluateExpression("Web.Contents(\(MSyntax.text(address)))") {
@@ -142,7 +148,7 @@ final class GetDataSession: ObservableObject {
             items = try SourcePlanner.navigatorItems(from: value) ?? []
             stage = .navigator
             if let first = items.first { checked = [first.id]; await focus(first.id) } else { await focus(nil) }
-            if request.kind == .folder { planCombine() }
+            if request.kind.listsFiles, items.isEmpty { planCombine() }
         } catch {
             self.error = MError.wrap(error).description
             askForCredentials(error)
@@ -174,7 +180,9 @@ final class GetDataSession: ObservableObject {
 
     private func planCombine() {
         guard let table = preview?.table, let ext = table.column("Extension") else { return }
-        combine = SourcePlanner.combinePlan(extensions: ext.values.map(\.asString)) { Self.sampleText(of: $0, in: table) }
+        // Cloud listings aren't sampled (that would download a file): their text files are read as comma-separated.
+        let local = request.kind == .folder
+        combine = SourcePlanner.combinePlan(extensions: ext.values.map(\.asString)) { local ? Self.sampleText(of: $0, in: table) : nil }
     }
 
     // MARK: Preview and scripts
@@ -195,8 +203,9 @@ final class GetDataSession: ObservableObject {
             script = MScript.script(from: steps)
             shown = try await sample(script)
         }
-        let textual = request.kind == .csv || (request.kind == .web && request.webContent == .csv)
-        let headerCandidate = textual || request.kind == .excel || (request.kind == .web && [.excel, .html].contains(request.webContent))
+        let web = request.kind.readsWebContents
+        let textual = request.kind == .csv || (web && request.webContent == .csv)
+        let headerCandidate = textual || request.kind == .excel || (web && [.excel, .html].contains(request.webContent))
         if headerCandidate, !combined {
             let looksLikeHeaders = SourcePlanner.looksLikeHeaderRow(shown.table)
             if textual, !headersDecided { promoteHeaders = detectTypes && looksLikeHeaders; headersDecided = true }
@@ -205,7 +214,7 @@ final class GetDataSession: ObservableObject {
                 shown = try await sample(script)
             }
         }
-        let typed = [.sqlite, .python, .r].contains(request.kind)
+        let typed = [.sqlite, .python, .r, .parquet, .kusto].contains(request.kind)
         if detectTypes, !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)

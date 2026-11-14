@@ -164,7 +164,7 @@ struct OneLakeCatalogSheet: View {
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button("Import Tables") { importModel(item) }.disabled(working != nil)
         case .lakehouse:
-            Text("Load a CSV, JSON or Excel file from the lakehouse's Files. Parquet files can't be read here, and Delta tables need the SQL analytics endpoint, which \(AppIdentity.name) can't connect to.")
+            Text("Load a CSV, JSON, Excel or Parquet file from the lakehouse's Files. Delta tables need the SQL analytics endpoint, which this sheet doesn't use; Get Data ▸ Lakehouses reads and combines the Files folder in place.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if lakeFiles.isEmpty {
                 Button("Browse Files") { listFiles(item) }.disabled(working != nil)
@@ -239,7 +239,7 @@ struct OneLakeCatalogSheet: View {
             do {
                 lakeFiles = try await fabric.oneLakePaths(workspaceID: item.workspaceID, directory: "\(item.id)/Files", recursive: true)
                     .filter { $0.isDirectory || LakeFile.mScript(for: URL(fileURLWithPath: $0.name)) != nil }
-                if lakeFiles.allSatisfy(\.isDirectory) { failure = "No CSV, JSON or Excel files in this lakehouse's Files. Parquet files can't be read here." }
+                if lakeFiles.allSatisfy(\.isDirectory) { failure = "No CSV, JSON, Excel or Parquet files in this lakehouse's Files." }
             } catch {
                 failure = AccountMessages.describe(error)
             }
@@ -302,6 +302,7 @@ enum LakeFile {
             return "let\n    Source = Csv.Document(File.Contents(\(path)), [Delimiter = \"#(tab)\", Encoding = 65001]),\n    Promoted = Table.PromoteHeaders(Source, [PromoteAllScalars = true])\nin\n    Promoted"
         case "json": source = "Table.FromRecords(Json.Document(File.Contents(\(path))))"
         case "xlsx", "xlsm": source = "Excel.Workbook(File.Contents(\(path)), null, true){0}[Data]"
+        case "parquet": source = "Parquet.Document(File.Contents(\(path)))"
         default: return nil
         }
         return "let\n    Source = \(source)\nin\n    Source"

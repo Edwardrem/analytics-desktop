@@ -11,7 +11,7 @@ struct RecentSource: Codable, Identifiable, Hashable {
 
     var displayName: String {
         switch kind {
-        case .web, .odata: return location
+        case .web, .odata, .oneDriveFile, .sharePointFolder, .sharePointList, .dataverse, .dynamics365, .azureBlobs, .azureDataLake, .lakehouse, .kusto, .semanticModel: return location
         case .python, .r: return location.split(whereSeparator: \.isNewline).first.map(String.init) ?? location
         default: return (location as NSString).lastPathComponent
         }

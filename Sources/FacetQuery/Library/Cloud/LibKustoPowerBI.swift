@@ -77,6 +77,8 @@ enum KustoSource {
         return negative ? -total : total
     }
 
+    static func queryLocation(host: String, database: String) -> String { "https://\(host);\(database)" }
+
     static func bracket(_ name: String) -> String { "['" + name.replacingOccurrences(of: "'", with: "\\'") + "']" }
 
     static func contents(_ ctx: MInterpreter, cluster: String, database: String?, query: String?) throws -> MTable {
@@ -89,7 +91,7 @@ enum KustoSource {
         }
         if let query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-            try ctx.approveNativeQuery(q, kind: "AzureDataExplorer", location: "https://\(host);\(database)")
+            try ctx.approveNativeQuery(q, kind: "AzureDataExplorer", location: queryLocation(host: host, database: database))
             return try run(ctx, host: host, database: database, csl: q, management: q.hasPrefix("."))
         }
         let tables = try run(ctx, host: host, database: database, csl: ".show tables", management: true)
