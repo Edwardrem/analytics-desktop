@@ -90,8 +90,11 @@ enum FormatCatalog {
                          title.bool("bold", "Bold", true),
                          title.color("color", "Text colour", .foreground)]
         if element { titleRows.removeAll { $0.key == "bold" || $0.key == "alignment" } }
-        // Page elements show no data, so they have no tooltip to replace.
+        // Page elements show no data, so they have no tooltip to replace and no visual header.
         let closing = element ? [altTextCard] : [tooltipCard, altTextCard]
+        let header = FormatCardBuilder(VisualHeaderOptions.card, "Header icons")
+        let headerRows = element ? [] : [header.bool("show", "Show visual header", true),
+                                         header.string("helpText", "Help text", "")]
         return [positionCard] + group(
             titleRows + [
                 subtitle.bool("show", "Show subtitle", false),
@@ -109,7 +112,7 @@ enum FormatCatalog {
                 border.number("radius", "Corner radius", nil, 0...200),
                 FormatCardBuilder("shadow", "Shadow").bool("show", "Show shadow", false),
                 FormatCardBuilder("padding", "Padding").number("all", "All sides", nil, 0...200),
-            ]) + closing
+            ] + headerRows) + closing
     }
 
     /// Position, size and rotation. Not format keys: the pane writes them to the frame.

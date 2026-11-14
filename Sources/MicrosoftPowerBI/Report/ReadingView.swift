@@ -98,7 +98,7 @@ private struct ReadingVisual: View {
             VisualView(spec: spec, data: runtime.data(for: saved), context: context(for: spec))
                 .frame(width: saved.frame.width, height: saved.frame.height)
                 .rotationEffect(.degrees(saved.frame.rotation))
-            if (hovering || personalizing), !saved.type.isPageElement, !store.report.settings.hideVisualHeaders {
+            if hovering || personalizing, VisualHeaderOptions.showsToReaders(saved, settings: store.report.settings) {
                 header(spec).offset(y: -26 / scale)
             }
         }
@@ -129,6 +129,7 @@ private struct ReadingVisual: View {
         let levels = TooltipActions.drillLevels(spec)
         let settings = store.report.settings
         return HStack(spacing: 2) {
+            if let help = VisualHeaderOptions.helpText(saved) { VisualHelpIcon(text: help) }
             if levels > 1 {
                 IconButton("arrow.up", help: "Drill up") { store.drill(.up, in: saved.id) }.disabled(spec.drillLevel == 0)
                 IconButton("arrow.down.to.line", help: "Go to the next level") { store.drill(.down(nil), in: saved.id) }

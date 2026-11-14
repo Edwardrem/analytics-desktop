@@ -3,6 +3,31 @@ import FacetCore
 import FacetDesign
 import FacetVisuals
 
+/// The visual header's author options (`format["visualHeader"]`): whether readers see it, and an
+/// information icon with the author's help text.
+enum VisualHeaderOptions {
+    static let card = "visualHeader"
+    /// The author's help text, when there is any.
+    static func helpText(_ spec: VisualSpec) -> String? {
+        let text = spec.fmtString(card, "helpText", "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+    /// Readers see the header unless the report hides every header or this visual hides its own.
+    static func showsToReaders(_ spec: VisualSpec, settings: ReportSettings) -> Bool {
+        !spec.type.isPageElement && !settings.hideVisualHeaders && spec.fmtBool(card, "show", true)
+    }
+}
+
+/// The information icon of a visual header: the author's help text on hover.
+struct VisualHelpIcon: View {
+    let text: String
+    var body: some View {
+        Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(.secondary)
+            .frame(width: 22, height: 22).contentShape(Rectangle())
+            .help(text).accessibilityLabel("Help").accessibilityValue(text)
+    }
+}
+
 /// The quiet strip above a visual: a grip to move it, drill controls, focus and more.
 struct VisualHeader: View {
     @EnvironmentObject var store: DocumentStore
@@ -23,6 +48,7 @@ struct VisualHeader: View {
                 IconButton("arrow.triangle.branch", help: "Expand all down one level") { store.drill(.expandAll, in: spec.id) }
                     .disabled(spec.drillLevel >= levels - 1)
             }
+            if let help = VisualHeaderOptions.helpText(spec) { VisualHelpIcon(text: help) }
             if !spec.type.isPageElement {
                 if !(store.filters(for: spec, on: store.currentPage).isEmpty) {
                     Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10)).foregroundStyle(.secondary)
