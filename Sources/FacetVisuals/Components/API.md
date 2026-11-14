@@ -109,7 +109,7 @@ Conditional formatting (`spec.conditionalFormats`, matched by `appliesToKey == F
 - `webURL`: the cell becomes a link to the driver column's value. Independently, text values starting with `http://`/`https://` are shown as links (`values.detectURLs`).
 - `image`: the cell (or `basedOn` column) holds an http(s)/file URL or a `data:` URI and is drawn as an image. `FieldRef` has no data-category flag, so image columns are declared with this conditional format or with `format["imageColumns"][<column name>] = true`.
 
-**Sparkline contract**: `format["sparklines"][<column name>] = { "type": "line" | "column", "by": <axis column name> }`.
+**Sparkline contract**: `format["sparklines"][<column name>] = { "type": "line" | "column", "by": <axis column name> }`. In a matrix, each detail row's cell is `MatrixSparkline.encode(_:)` of its value at every point of the shared axis (`"10.0||30.0"`, blank where it has none); subtotal and total cells combine the rows under them point by point with the value's `totals` aggregate.
 The query must return, for that column, one delimited numeric string per row — `"1|2|3"` (also `,` `;` or spaces) — ordered along the `by` axis.
 `by` is informational for the query builder; the renderer only reads the string. Cells that do not parse are shown as text.
 
@@ -186,7 +186,7 @@ Presets carry `.null` for keys they reset to the theme. The public signature has
 
 - Word wrap uses one uniform row height (lines needed by the first 200 rows, capped at `values.maxWrapLines`), not per-row heights.
 - Automatic column widths are measured from the first 300 rows.
-- Matrix: no click-to-sort on headers (order follows the query / `spec.sort` applied by the host); `webURL`/`image` targets and sparklines are table-only.
+- Matrix: no click-to-sort on headers (order follows the query / `spec.sort` applied by the host); `webURL`/`image` targets are table-only.
 - Exclude on a multi-field point adds one inverted filter per field (FilterSpec is single-field), which excludes more than the exact combination.
 - Accessibility exposes visible rows as row elements, not individual cells.
 - `heatmap` type is not handled here (Charts).

@@ -44,6 +44,8 @@ final class CmpMxSource: CmpTblGridSource {
     private var ranges: [Int: (min: Double, max: Double)?] = [:]
     private var selectedKeys: Set<String> = []
     private var lastContextKeys: Set<String> = []
+    /// Value indices drawn as sparklines, and whether each draws columns instead of a line.
+    private var sparkValues: [Int: Bool] = [:]
 
     init(env: CmpEnv, previous: CmpTblGridSource?) {
         spec = env.spec; data = env.data; context = env.context; f = env.f
@@ -58,6 +60,7 @@ final class CmpMxSource: CmpTblGridSource {
             return CmpMxAggregate(rawValue: name) ?? .sum
         }
         pivot = CmpMxPivot(data: env.data, rowCols: rowCols, colCols: colCols, valueCols: valueCols, aggregates: aggregates)
+        sparkValues = MatrixSparkline.kinds(env, valueCols: valueCols)
         evaluator = CmpConditionalFormat(spec: env.spec, iconSet: env.f.string("conditionalIcons", "set", "arrows"))
         super.init()
         isInteractive = env.isInteractive
@@ -242,6 +245,7 @@ final class CmpMxSource: CmpTblGridSource {
                 let cell = ri < min(rows.count, 60) ? bodyCell(ri, frozenCols + ci) : valueCell(entry, ce, isFooter: true)
                 if !cell.text.isEmpty { w = max(w, CmpFit.width(cell.text, font: style.bodyBoldFont) + (cell.icon != nil ? 18 : 0)) }
             }
+            if let v = ce.valueIdx, sparkValues[v] != nil { w = max(w, 96) }
             perValue[slot] = w
         }
         for ce in cols {
@@ -374,6 +378,12 @@ final class CmpMxSource: CmpTblGridSource {
             cell.selected = cellSel && ce.node.depth > 0
             cell.dimmed = !cellSel && !rowSel
         }
+        if let columns = sparkValues[v] {
+            cell.text = ""
+            cell.spark = sparkPoints(row: entry.node, col: ce.node, v: v)
+            cell.sparkColumns = columns
+            return cell
+        }
         guard !isTotal, !value.isNull else { return cell }
         let field = data.fields[safe: valueCols[v]] ?? nil
         if let cf = evaluator.rule(.background, field: field) ?? heatmap,
@@ -387,6 +397,12 @@ final class CmpMxSource: CmpTblGridSource {
         if let cf = evaluator.rule(.dataBars, field: field) { cell.bar = evaluator.dataBar(cf, value: value, range: range(for: v)) }
         if let cf = evaluator.rule(.icons, field: field) { cell.icon = evaluator.icon(cf, value: value, range: range(for: v)) }
         return cell
+    }
+
+    /// A sparkline cell's points (nil for a value that isn't a sparkline); see `MatrixSparkline.points`.
+    func sparkPoints(row: CmpMxNode, col: CmpMxNode, v: Int) -> [Double]? {
+        guard sparkValues[v] != nil else { return nil }
+        return MatrixSparkline.points(pivot, data.table, row: row, col: col, v: v)
     }
 
     private func headerCell(_ entry: RowEntry, _ col: Int, isFooter: Bool) -> CmpTblCell {

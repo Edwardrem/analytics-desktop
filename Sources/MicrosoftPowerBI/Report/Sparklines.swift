@@ -1,8 +1,10 @@
 import SwiftUI
 import FacetCore
 import FacetDesign
+import FacetVisuals
 
-/// Sparklines in table cells: a value (Y axis) drawn along a field (X axis) for every row of the table.
+/// Sparklines in table and matrix cells: a value (Y axis) drawn along a field (X axis) for every
+/// row of the table, or every row and column of the matrix (with its subtotals and totals).
 ///
 /// Each sparkline is an extra column of the table. Its definition lives in the table renderer's
 /// contract, `format["sparklines"][<column name>] = { type, by }`, with the value and axis fields
@@ -53,8 +55,7 @@ struct Sparkline: Equatable, Identifiable {
 }
 
 enum Sparklines {
-    /// Tables draw sparklines (the matrix renderer does not).
-    static func supports(_ type: VisualType) -> Bool { type == .table }
+    static func supports(_ type: VisualType) -> Bool { type == .table || type == .matrix }
 
     /// The sparklines a visual defines, in name order.
     static func list(_ spec: VisualSpec) -> [Sparkline] {
@@ -92,6 +93,25 @@ enum Sparklines {
         return points.mapValues { $0.sorted { $0.order < $1.order }.map(\.value) }
     }
 
+    /// The series of every row group at each point of the axis across the whole result (nil where
+    /// the group has no value there), so a matrix can combine the rows under a subtotal point by
+    /// point. Points are ordered along the axis as in `series`.
+    static func alignedSeries(_ table: DataTable, keys: Int, axis: Int, sort: Int?, value: Int) -> [[Value]: [Double?]] {
+        guard table.columnCount > max(keys - 1, axis, sort ?? 0, value) else { return [:] }
+        func order(_ r: Int) -> Value { sort.map { table[r, $0] }.flatMap { $0.isNull ? nil : $0 } ?? table[r, axis] }
+        var orders = Set<Value>()
+        for r in 0..<table.rowCount where table[r, value].asDouble?.isFinite == true { orders.insert(order(r)) }
+        let position = Dictionary(uniqueKeysWithValues: orders.sorted().enumerated().map { ($1, $0) })
+        var out: [[Value]: [Double?]] = [:]
+        for r in 0..<table.rowCount {
+            guard let v = table[r, value].asDouble, v.isFinite, let p = position[order(r)] else { continue }
+            let key = (0..<keys).map { table[r, $0] }
+            if out[key] == nil { out[key] = [Double?](repeating: nil, count: position.count) }
+            out[key]?[p] = v
+        }
+        return out
+    }
+
     /// The cell text the table renderer draws as a sparkline: "1.0|2.5|3.0".
     static func cell(_ values: [Double]) -> Value {
         .string(values.map { "\($0)" }.joined(separator: "|"))
@@ -124,8 +144,14 @@ enum Sparklines {
             args += [ModelDAX.string("__sparkline"), ModelDAX.aggregate(s.value, model: model)]
             let dax = "EVALUATE\n    SUMMARIZECOLUMNS(\n" + args.map { "        " + $0 }.joined(separator: ",\n") + "\n    )"
             let table = try query(dax) ?? DataTable()
-            let byRow = series(table, keys: groups.count, axis: axis, sort: sort, value: value)
-            let values = (0..<result.rowCount).map { r in cell(byRow[(0..<groups.count).map { result[r, $0] }] ?? []) }
+            let values: [Value]
+            if spec.type == .matrix {
+                let byRow = alignedSeries(table, keys: groups.count, axis: axis, sort: sort, value: value)
+                values = (0..<result.rowCount).map { r in MatrixSparkline.encode(byRow[(0..<groups.count).map { result[r, $0] }] ?? []) }
+            } else {
+                let byRow = series(table, keys: groups.count, axis: axis, sort: sort, value: value)
+                values = (0..<result.rowCount).map { r in cell(byRow[(0..<groups.count).map { result[r, $0] }] ?? []) }
+            }
             roles[Well.values.rawValue, default: []].append(result.columnCount)
             result.columns.append(DataColumn(name: s.name, type: .text, values: values))
             fields.append(nil)
@@ -159,7 +185,9 @@ struct SparklineSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.m) {
             Text(editing == nil ? "Add a sparkline" : "Edit sparkline").font(Design.Typeface.headline)
-            PaneNote("A small chart in every row of the table: the value along the axis, for that row.")
+            PaneNote(spec?.type == .matrix
+                     ? "A small chart in every cell of the matrix: the value along the axis, for that row and column, with totals."
+                     : "A small chart in every row of the table: the value along the axis, for that row.")
             PropertyRow("Y-axis") {
                 FieldPickerButton(selection: value, placeholder: "Choose a value", allowsClear: false) { picked in
                     guard var f = picked else { return }
@@ -204,7 +232,7 @@ struct SparklineSheet: View {
     @ViewBuilder private var existing: some View {
         if let spec, !Sparklines.list(spec).isEmpty {
             VStack(alignment: .leading, spacing: Design.Space.xxs) {
-                SectionLabel("Sparklines in this table")
+                SectionLabel(spec.type == .matrix ? "Sparklines in this matrix" : "Sparklines in this table")
                 ForEach(Sparklines.list(spec)) { s in
                     HStack(spacing: Design.Space.xs) {
                         Image(systemName: s.kind == .line ? "chart.xyaxis.line" : "chart.bar").font(.system(size: 10)).foregroundStyle(.secondary)

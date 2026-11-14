@@ -127,6 +127,9 @@ final class CmpMxPivot {
         return acc
     }
 
+    /// The column leaf a data row falls under.
+    func colLeaf(of row: Int) -> CmpMxNode? { colLeafOfRow[safe: row] }
+
     /// True when the cell (row × col) is a detail cell rather than a subtotal.
     func isDetail(row: CmpMxNode, col: CmpMxNode) -> Bool { row.isLeaf && col.isLeaf }
 
