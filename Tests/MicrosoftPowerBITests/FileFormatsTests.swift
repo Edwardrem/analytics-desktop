@@ -148,8 +148,10 @@ final class FileFormatsTests: XCTestCase {
     // MARK: Lakehouse files and publishing
 
     func testLakehouseFilesBecomeFileQueries() {
-        XCTAssertEqual(LakeFile.mScript(for: URL(fileURLWithPath: "/tmp/a \"b\".parquet")),
-                       "let\n    Source = Parquet.Document(File.Contents(\"/tmp/a \"\"b\"\".parquet\"))\nin\n    Source")
+        // The query engine has no Parquet reader, so Parquet files are not offered rather than failing on refresh.
+        XCTAssertNil(LakeFile.mScript(for: URL(fileURLWithPath: "/tmp/sales.parquet")))
+        XCTAssertEqual(LakeFile.mScript(for: URL(fileURLWithPath: "/tmp/a \"b\".json")),
+                       "let\n    Source = Table.FromRecords(Json.Document(File.Contents(\"/tmp/a \"\"b\"\".json\")))\nin\n    Source")
         XCTAssertTrue(LakeFile.mScript(for: URL(fileURLWithPath: "/tmp/s.csv"))?.contains("Table.PromoteHeaders") == true)
         XCTAssertNil(LakeFile.mScript(for: URL(fileURLWithPath: "/tmp/model.delta")))
         XCTAssertEqual(LakeFile.queryName(for: URL(fileURLWithPath: "/x/Sales.csv"), existing: ["sales", "Sales (2)"]), "Sales (3)")
