@@ -176,6 +176,57 @@ final class DirectQueryTests: XCTestCase {
         XCTAssertEqual(store.doc.data["Orders"]?.rowCount, 1)
     }
 
+    func testLeavingDirectQueryIsOneUndoStepWithItsImport() async throws {
+        let path = try database()
+        let store = DocumentStore(services: .live())
+        store.replaceDocument(document(path), url: nil)
+        try await waitForRows(store, "Orders", count: 3)
+        StorageModeLogic.set(.import, table: "Orders", store: store)
+        for _ in 0..<250 where store.doc.data["Orders"] == nil { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(store.doc.data["Orders"]?.rowCount, 3, "leaving DirectQuery imports the table")
+        XCTAssertEqual(store.undoName, "Storage Mode")
+
+        store.undo()
+        XCTAssertEqual(store.model.table("Orders")?.storageMode, .directQuery)
+        XCTAssertNil(store.doc.data["Orders"], "the import is undone with the switch")
+        XCTAssertNil(store.undoName, "one step")
+        store.redo()
+        XCTAssertEqual(store.model.table("Orders")?.storageMode, .import)
+        XCTAssertEqual(store.doc.data["Orders"]?.rowCount, 3)
+    }
+
+    /// Dual, as this app states it: imported, saved and refreshed like Import, and visuals use the imported rows even
+    /// beside a DirectQuery table on the same source (where Power BI would read the Dual table from the source).
+    func testDualIsImportedSavedAndRefreshedAndVisualsUseItsRows() async throws {
+        let path = try database()
+        var doc = document(path, mode: .dual)
+        doc.data["Orders"] = DataTable(name: "Orders", columnNames: ["id", "item", "amount"], rows: [[1, "Pen", 10]], types: [.integer, .text, .integer])
+        doc.queries.append(QueryDefinition(name: "Live", mScript: script(path)))
+        var live = ModelTable(name: "Live", columns: doc.model.tables[0].columns)
+        live.sourceQuery = "Live"
+        live.storageMode = .directQuery
+        doc.model.tables.append(live)
+        let store = DocumentStore(services: .live())
+        store.replaceDocument(doc, url: nil)
+        try await waitForRows(store, "Live", count: 3)
+        XCTAssertEqual(store.computedData["Orders"]?.rowCount, 1, "the Dual table answers from its imported rows")
+        let first = await total(store)
+        XCTAssertEqual(first, 10)
+        XCTAssertEqual(store.doc.withoutDirectQueryRows.data["Orders"]?.rowCount, 1, "and they are saved")
+        XCTAssertNil(store.doc.withoutDirectQueryRows.data["Live"])
+
+        store.refreshData()
+        for _ in 0..<250 where store.doc.data["Orders"]?.rowCount != 3 { try await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(store.doc.data["Orders"]?.rowCount, 3, "Refresh imports a Dual table again")
+        XCTAssertNil(store.doc.data["Live"], "and only reads the DirectQuery one")
+        try await waitForRows(store, "Orders", count: 3)
+        let second = await total(store)
+        XCTAssertEqual(second, 60)
+
+        let note = StorageModeLogic.note(for: .dual)
+        for words in ["imported", "saved", "Refresh", "DirectQuery"] { XCTAssertTrue(note.contains(words), note) }
+    }
+
     func testRelationshipChecksCanSkipDirectQueryTables() {
         let suite = "DirectQueryTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite) ?? .standard

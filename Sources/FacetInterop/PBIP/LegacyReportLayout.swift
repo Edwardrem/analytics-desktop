@@ -130,6 +130,12 @@ public enum LegacyReportLayout {
             let inner = String(s[s.index(after: open)..<s.index(before: s.endIndex)])
             return split(inner).map { .column($0.table, $0.member, agg) }
         }
+        // "Sales.Order Date.Variation.Date Hierarchy.Year": a level of the column's auto date/time hierarchy.
+        let marker = ".\(PBIExpr.dateVariation).\(PBIExpr.dateHierarchy)."
+        if let r = s.range(of: marker, options: .backwards), let column = split(String(s[..<r.lowerBound])) {
+            let level = String(s[r.upperBound...])
+            if !level.isEmpty { return .dateLevel(column.table, column.member, level) }
+        }
         return split(s).map { .column($0.table, $0.member) }
     }
 

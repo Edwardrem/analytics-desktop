@@ -341,21 +341,24 @@ final class QueryEditorSession: ObservableObject {
     // MARK: Apply and discard
 
     /// Close & Apply / Apply: write the pending queries to the document, rename or remove the model tables they
-    /// feed, and load the changed queries into the model.
+    /// feed, and load the changed queries into the model, all as one undo step ("Apply Query Changes"): the load,
+    /// which finishes later, joins the step unless something else changed the document first.
     func applyChanges() {
         guard hasPendingChanges || !refreshPlan().refresh.isEmpty else { return }
         let after = queries
         let plan = refreshPlan()
         applying = true
         defer { applying = false }
-        for r in plan.renames { ModelOps.renameTable(store, r.from, to: r.to) }
-        store.mutate("Apply Query Changes", invalidates: .model) { d in
-            d.queries = after
-            for t in plan.removedTables { ModelRefactor.deleteTable(&d, name: t) }
+        let group = store.undoGroup("Apply Query Changes") {
+            for r in plan.renames { ModelOps.renameTable(store, r.from, to: r.to) }
+            store.mutate("Apply Query Changes", invalidates: .model) { d in
+                d.queries = after
+                for t in plan.removedTables { ModelRefactor.deleteTable(&d, name: t) }
+            }
         }
         baseline = store.doc.queries
         queries = store.doc.queries
-        if !plan.refresh.isEmpty { store.refreshData(only: plan.refresh) }
+        if !plan.refresh.isEmpty { store.refreshData(only: plan.refresh, joiningUndo: group) }
         message = StatusMessage(kind: .success, text: plan.refresh.isEmpty ? "Applied the query changes." : "Applied the query changes; loading \(plan.refresh.count) quer\(plan.refresh.count == 1 ? "y" : "ies").")
     }
 

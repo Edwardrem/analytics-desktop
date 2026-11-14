@@ -152,8 +152,10 @@ final class DocumentStore: ObservableObject {
     private var engineGeneration = 0
 
     // MARK: Undo
-    private struct UndoEntry { var name: String; var doc: FacetDocument; var key: String?; var time: Date }
+    private struct UndoEntry { var name: String; var doc: FacetDocument; var key: String?; var time: Date; var group: UUID? = nil }
     private var undoStack: [UndoEntry] = []
+    /// The group `undoGroup(_:_:)` has open: its writes share one step under its name.
+    private var openUndoGroup: (id: UUID, name: String)?
     private var redoStack: [UndoEntry] = []
     @Published private(set) var undoName: String?
     @Published private(set) var redoName: String?
@@ -191,16 +193,21 @@ final class DocumentStore: ObservableObject {
     /// - Parameters:
     ///   - name: Undo menu title ("Move Visual").
     ///   - coalesce: Consecutive mutations with the same key within a second share one undo step (dragging, typing).
-    func mutate(_ name: String, coalesce: String? = nil, invalidates: Invalidation = .visuals(nil),
+    ///   - group: An undo group (from `undoGroup(_:_:)`) this write belongs to. While the group's step is still the
+    ///     latest one, the write joins it; after another change it becomes a step of its own.
+    func mutate(_ name: String, coalesce: String? = nil, joining group: UUID? = nil, invalidates: Invalidation = .visuals(nil),
                 _ body: (inout FacetDocument) -> Void) {
         let before = doc
         var after = doc
         body(&after)
         let now = Date()
-        if let key = coalesce, let last = undoStack.last, last.key == key, now.timeIntervalSince(last.time) < 1.2 {
+        let group = group ?? openUndoGroup?.id
+        if let group, let last = undoStack.last, last.group == group {
+            undoStack[undoStack.count - 1].time = now
+        } else if let key = coalesce, let last = undoStack.last, last.key == key, now.timeIntervalSince(last.time) < 1.2 {
             undoStack[undoStack.count - 1].time = now
         } else {
-            undoStack.append(UndoEntry(name: name, doc: before, key: coalesce, time: now))
+            undoStack.append(UndoEntry(name: openUndoGroup?.name ?? name, doc: before, key: coalesce, time: now, group: group))
             if undoStack.count > 200 { undoStack.removeFirst(undoStack.count - 200) }
         }
         redoStack.removeAll()
@@ -237,6 +244,19 @@ final class DocumentStore: ObservableObject {
         reloadEngine()
     }
     private func syncUndoNames() { undoName = undoStack.last?.name; redoName = redoStack.last?.name }
+
+    /// Runs `body` so that every write it makes is one undo step named `name`, and returns the group, which a later
+    /// write (a load that finishes afterwards) can join with `mutate(_:joining:)`. Groups don't nest: an inner call
+    /// joins the outer group.
+    @discardableResult
+    func undoGroup(_ name: String, _ body: () -> Void) -> UUID {
+        if let open = openUndoGroup { body(); return open.id }
+        let id = UUID()
+        openUndoGroup = (id, name)
+        defer { openUndoGroup = nil }
+        body()
+        return id
+    }
 
     /// Keep transient state pointing at things that still exist.
     private func validateWorkspace() {
@@ -1016,8 +1036,9 @@ final class DocumentStore: ObservableObject {
 
     /// Install freshly loaded tables and make sure the model has matching table metadata. Tables new to the
     /// model get the relationships autodetect finds, in the same undo step, when the option is on.
-    func installTables(_ tables: [DataTable], sourceQueries: [String: String] = [:], actionName: String = "Load Data") {
-        mutate(actionName, invalidates: .model) { d in
+    func installTables(_ tables: [DataTable], sourceQueries: [String: String] = [:], actionName: String = "Load Data",
+                       joiningUndo group: UUID? = nil) {
+        mutate(actionName, joining: group, invalidates: .model) { d in
             var added = Set<String>()
             for t in tables {
                 d.data[t.name] = t
@@ -1066,8 +1087,9 @@ final class DocumentStore: ObservableObject {
         return m
     }
 
-    /// Refresh data by re-running Power Query queries (all, or only the named ones).
-    func refreshData(only names: [String]? = nil) {
+    /// Refresh data by re-running Power Query queries (all, or only the named ones). With `group`, the loaded tables
+    /// join that undo step (Close & Apply, a storage mode switch) instead of adding a "Refresh Data" step.
+    func refreshData(only names: [String]? = nil, joiningUndo group: UUID? = nil) {
         let queries = doc.queries
         guard !queries.isEmpty else {
             status = StatusMessage(kind: .info, text: "This document has no queries to refresh.")
@@ -1096,7 +1118,7 @@ final class DocumentStore: ObservableObject {
             self.refreshProgress = nil
             if !tables.isEmpty {
                 self.installTables(tables, sourceQueries: Dictionary(uniqueKeysWithValues: tables.map { ($0.name, $0.name) }),
-                                   actionName: "Refresh Data")
+                                   actionName: "Refresh Data", joiningUndo: group)
             } else if !direct.isEmpty {
                 self.reloadEngine()
             }

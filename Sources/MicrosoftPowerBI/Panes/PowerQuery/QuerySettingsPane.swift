@@ -65,6 +65,10 @@ struct QuerySettingsPane: View {
                 Text(step.name).lineLimit(1).truncationMode(.middle).help(step.name)
             }
             Spacer(minLength: 0)
+            let description = step.description
+            if !description.isEmpty {
+                Image(systemName: "info.circle").font(.system(size: 10)).foregroundStyle(.secondary).help(description)
+            }
             if let settings {
                 Button { session.selectStep(i); session.dialog = settings } label: { Image(systemName: "gearshape").font(.system(size: 11)) }
                     .buttonStyle(.plain).help("Edit the settings of “\(step.name)”")
@@ -82,6 +86,8 @@ struct QuerySettingsPane: View {
             Button("Delete") { if i == count - 1 { session.deleteStep(at: i) } else { deleting = i } }.disabled(count <= 1)
             Button("Delete Until End") { session.deleteUntilEnd(from: i) }.disabled(i == 0)
             Button("Insert Step After") { session.selectStep(i); session.insertCustomStep() }
+            Divider()
+            Button("Properties…") { session.dialog = .stepProperties(index: i) }
             Divider()
             Button("Move Before") { session.moveStep(at: i, by: -1) }.disabled(i == 0)
             Button("Move After") { session.moveStep(at: i, by: 1) }.disabled(i >= count - 1)

@@ -1,11 +1,48 @@
 import Foundation
 import FacetCore
 
-/// One applied step of a query: a `let` binding's name and the exact source text of its expression.
+/// One applied step of a query: a `let` binding's name and the exact source text of its expression, with the
+/// comments written around it.
 public struct MStep: Equatable, Sendable {
     public var name: String
     public var expression: String
-    public init(name: String, expression: String) { self.name = name; self.expression = expression }
+    /// The comments on the lines just above the step, as written (`// …` or `/* … */`). Power Query keeps a step's
+    /// description there.
+    public var comments: [String]
+    /// Comments after the step on the line where it ends (`Source = …, // note`), as written.
+    public var trailingComment: String?
+    public init(name: String, expression: String, comments: [String] = [], trailingComment: String? = nil) {
+        self.name = name; self.expression = expression; self.comments = comments; self.trailingComment = trailingComment
+    }
+
+    /// The step's description (Step Properties ▸ Description): the text of the comments above it. Setting it
+    /// writes one `// ` line per line of text, as Power Query does; an empty description removes them.
+    public var description: String {
+        get { comments.map(Self.commentText).joined(separator: "\n") }
+        set {
+            let text = newValue.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            comments = text.isEmpty ? [] : text.components(separatedBy: "\n").map { line in
+                let l = line.trimmingCharacters(in: .whitespaces)
+                return l.isEmpty ? "//" : "// " + l
+            }
+        }
+    }
+
+    /// The text of one comment, without its markers.
+    static func commentText(_ comment: String) -> String {
+        if comment.hasPrefix("//") {
+            let body = comment.dropFirst(2)
+            return String(body.hasPrefix(" ") ? body.dropFirst() : body).trimmingCharacters(in: .whitespaces)
+        }
+        if comment.hasPrefix("/*") {
+            var body = comment.dropFirst(2)
+            if body.hasSuffix("*/") { body = body.dropLast(2) }
+            return body.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                .joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return comment
+    }
 }
 
 /// Classification of a token for syntax colouring.
@@ -15,37 +52,87 @@ public enum MTokenClass: String, Sendable {
 
 /// Tools for reading and editing a query's M script. The script (`let … in …`) is the source of truth;
 /// the Power Query Editor lists its top-level `let` bindings as Applied Steps and edits by rewriting the script.
-/// Edit operations re-emit the script in canonical layout (comments between steps are not preserved).
+/// Edit operations re-emit the script in canonical layout and keep its comments: those above a step (its
+/// description) and at the end of its line travel with the step, comments inside a step stay in its expression,
+/// and comments above `let` or after the last step stay there.
 public enum MScript {
     // MARK: Steps
 
-    /// The applied steps of a script: its top-level `let` bindings in order. A script that is not a `let`
-    /// (or does not parse) is a single step named "Source". When the `in` expression is not simply the last
-    /// step's name, it becomes a final step so that `script(from:)` preserves meaning.
-    public static func steps(of script: String) -> [MStep] {
+    /// A script read as steps, with the comments that belong to no step.
+    struct Parsed {
+        var steps: [MStep]
+        /// Comments above `let`.
+        var header: [String] = []
+        /// Comments on their own lines after the last step (before `in`, or after it when the result is a step name).
+        var footer: [String] = []
+
+        /// The script for `steps` (edited), keeping this script's header and footer.
+        func script(_ steps: [MStep], result: String? = nil) -> String {
+            MScript.script(from: steps, result: result, header: header, footer: footer)
+        }
+    }
+
+    static func parsed(_ script: String) -> Parsed {
         let trimmed = script.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let ast = try? MParser.parse(script), case .letIn(let bindings, let body) = ast, !bindings.isEmpty else {
-            return [MStep(name: "Source", expression: trimmed)]
+            return Parsed(steps: [MStep(name: "Source", expression: trimmed)])
         }
         let u = Array(script.utf16)
         func slice(_ r: Range<Int>) -> String { String(utf16CodeUnits: Array(u[r]), count: r.count) }
-        var steps = bindings.map { MStep(name: $0.name, expression: slice($0.exprRange)) }
-        if case .identifier(let n, _) = body, n == bindings.last?.name { return steps }
-        // find the top-level `in` after the last binding
-        let (toks, _) = MLexer.tokenize(script)
+        var p = Parsed(steps: bindings.map { MStep(name: $0.name, expression: slice($0.exprRange)) })
+        let (toks, _) = MLexer.tokenize(script, includeTrivia: true)
         let lastEnd = bindings[bindings.count - 1].exprRange.upperBound
-        if let inTok = toks.first(where: { $0.location >= lastEnd && $0.kind == .keyword && $0.text == "in" }) {
+        let inTok = toks.first { $0.location >= lastEnd && $0.kind == .keyword && $0.text == "in" }
+        let resultIsStep: Bool = { if case .identifier(let n, _) = body { return bindings.contains { $0.name == n } }; return false }()
+        placeComments(toks.filter { $0.kind == .comment }, bindings: bindings, in: toks, inAt: inTok?.location,
+                      keepAfterIn: resultIsStep, script: u, into: &p)
+        if case .identifier(let n, _) = body, n == bindings.last?.name { return p }
+        // The `in` expression isn't the last step's name: it becomes a final step so that nothing is lost.
+        if let inTok {
             let bodyText = slice((inTok.location + inTok.length)..<u.count).trimmingCharacters(in: .whitespacesAndNewlines)
-            if case .identifier(let n, _) = body, let i = steps.firstIndex(where: { $0.name == n }) {
-                // result is an earlier step: keep the steps and remember via a trailing reference step
-                _ = i
-            }
             var name = "Result", k = 1
-            while steps.contains(where: { $0.name == name }) { name = "Result\(k)"; k += 1 }
-            steps.append(MStep(name: name, expression: bodyText))
+            while p.steps.contains(where: { $0.name == name }) { name = "Result\(k)"; k += 1 }
+            p.steps.append(MStep(name: name, expression: bodyText))
         }
-        return steps
+        return p
     }
+
+    /// Gives each comment outside the steps' expressions its place: above a step (that step's), at the end of a
+    /// step's line, above `let` (header) or after the last step (footer). Comments after `in` are kept only when the
+    /// result is a step name; otherwise they are part of the final step's expression.
+    private static func placeComments(_ comments: [MToken], bindings: [MBinding], in toks: [MToken], inAt: Int?, keepAfterIn: Bool,
+                                      script u: [UInt16], into p: inout Parsed) {
+        let letAt = toks.first { $0.kind == .keyword && $0.text == "let" }?.location ?? 0
+        func sameLine(_ from: Int, _ to: Int) -> Bool {
+            from <= to && !u[from..<to].contains { $0 == 10 || $0 == 13 }
+        }
+        func trail(_ i: Int, _ text: String) { p.steps[i].trailingComment = p.steps[i].trailingComment.map { $0 + " " + text } ?? text }
+        for c in comments {
+            let at = c.location
+            if at < letAt { p.header.append(c.text); continue }
+            if bindings.contains(where: { $0.exprRange.contains(at) }) { continue }   // inside a step: part of its expression
+            if let i = bindings.firstIndex(where: { $0.nameRange.lowerBound > at }) {
+                if i > 0, at < bindings[i - 1].exprRange.upperBound {
+                    p.steps[i - 1].comments.append(c.text)                            // between a step's name and its expression
+                } else if i > 0, sameLine(bindings[i - 1].exprRange.upperBound, at) {
+                    trail(i - 1, c.text)
+                } else {
+                    p.steps[i].comments.append(c.text)
+                }
+                continue
+            }
+            let last = bindings.count - 1
+            if at < bindings[last].exprRange.lowerBound { p.steps[last].comments.append(c.text) }
+            else if sameLine(bindings[last].exprRange.upperBound, at) { trail(last, c.text) }
+            else if let inAt, at > inAt, !keepAfterIn { continue }
+            else { p.footer.append(c.text) }
+        }
+    }
+
+    /// The applied steps of a script: its top-level `let` bindings in order, each with its comments. A script that
+    /// is not a `let` (or does not parse) is a single step named "Source". When the `in` expression is not simply
+    /// the last step's name, it becomes a final step so that `script(from:)` preserves meaning.
+    public static func steps(of script: String) -> [MStep] { parsed(script).steps }
 
     /// The name of the step the script returns (nil when the `in` expression is not a plain step reference).
     public static func resultName(of script: String) -> String? {
@@ -53,11 +140,41 @@ public enum MScript {
         return n
     }
 
-    /// Build a script in canonical layout. `result` defaults to the last step.
+    /// Build a script in canonical layout, with each step's comments. `result` defaults to the last step.
     public static func script(from steps: [MStep], result: String? = nil) -> String {
+        script(from: steps, result: result, header: [], footer: [])
+    }
+
+    static func script(from steps: [MStep], result: String?, header: [String], footer: [String]) -> String {
         guard !steps.isEmpty else { return "let\n    Source = \"\"\nin\n    Source" }
-        let lines = steps.map { "    " + MSyntax.identifier($0.name) + " = " + $0.expression }
-        return "let\n" + lines.joined(separator: ",\n") + "\nin\n    " + MSyntax.identifier(result ?? steps[steps.count - 1].name)
+        var out = header.map { $0 + "\n" }.joined() + "let\n"
+        for (i, step) in steps.enumerated() {
+            for c in step.comments { out += "    " + c + "\n" }
+            var line = "    " + MSyntax.identifier(step.name) + " = " + step.expression
+            // A line comment at the end of an expression would swallow the comma after it.
+            if endsWithLineComment(step.expression) { line += "\n   " }
+            if i < steps.count - 1 { line += "," }
+            if let t = step.trailingComment { line += " " + t }
+            out += line + "\n"
+        }
+        for c in footer { out += "    " + c + "\n" }
+        return out + "in\n    " + MSyntax.identifier(result ?? steps[steps.count - 1].name)
+    }
+
+    private static func endsWithLineComment(_ expression: String) -> Bool {
+        guard expression.contains("//") else { return false }
+        let last = MLexer.tokenize(expression, includeTrivia: true).tokens.last { $0.kind != .whitespace && $0.kind != .eof }
+        return last?.kind == .comment && last?.text.hasPrefix("//") == true
+    }
+
+    /// Set a step's description (the comment lines above it, as Power Query keeps it).
+    public static func settingStepDescription(_ name: String, to description: String, in script: String) -> String {
+        let p = parsed(script)
+        var s = p.steps
+        guard let i = s.firstIndex(where: { $0.name == name }) else { return script }
+        s[i].description = description
+        guard s[i] != p.steps[i] else { return script }
+        return p.script(s, result: resultIfPresent(resultName(of: script), s))
     }
 
     /// A step name not yet used in the script: "Filtered Rows", "Filtered Rows1", "Filtered Rows2", …
@@ -71,10 +188,11 @@ public enum MScript {
 
     /// Append a step. `expression` receives the M identifier text of the current last step (quoted when needed).
     public static func appendingStep(named base: String, expression: (_ previous: String) -> String, to script: String) -> String {
-        var s = steps(of: script)
+        let p = parsed(script)
+        var s = p.steps
         let prev = MSyntax.identifier(s.last?.name ?? "Source")
         s.append(MStep(name: uniqueStepName(base, in: script), expression: expression(prev)))
-        return self.script(from: s)
+        return p.script(s)
     }
 
     /// Append a UI transformation as a new, uniquely named step.
@@ -84,17 +202,19 @@ public enum MScript {
 
     /// Rename a step and every later reference to it.
     public static func renamingStep(_ old: String, to new: String, in script: String) -> String {
-        var s = steps(of: script)
+        let p = parsed(script)
+        var s = p.steps
         guard let i = s.firstIndex(where: { $0.name == old }), !s.contains(where: { $0.name == new }) else { return script }
         let result = resultName(of: script)
         s[i].name = new
         for j in s.indices where j != i { s[j].expression = replacingIdentifier(old, with: new, in: s[j].expression) }
-        return self.script(from: s, result: result == old ? new : resultIfPresent(result, s))
+        return p.script(s, result: result == old ? new : resultIfPresent(result, s))
     }
 
     /// Delete a step. Later references to it are re-pointed to its predecessor.
     public static func deletingStep(_ name: String, in script: String) -> String {
-        var s = steps(of: script)
+        let p = parsed(script)
+        var s = p.steps
         guard let i = s.firstIndex(where: { $0.name == name }), s.count > 1 else { return script }
         let result = resultName(of: script)
         s.remove(at: i)
@@ -102,12 +222,13 @@ public enum MScript {
             let pred = s[i - 1].name
             for j in i..<s.count { s[j].expression = replacingIdentifier(name, with: pred, in: s[j].expression) }
         }
-        return self.script(from: s, result: result == name ? nil : resultIfPresent(result, s))
+        return p.script(s, result: result == name ? nil : resultIfPresent(result, s))
     }
 
     /// Move a step to a new position. In a linear chain, each step's reference to its predecessor follows the new order.
     public static func movingStep(_ name: String, to index: Int, in script: String) -> String {
-        let old = steps(of: script)
+        let p = parsed(script)
+        let old = p.steps
         guard let from = old.firstIndex(where: { $0.name == name }) else { return script }
         let to = max(0, min(index, old.count - 1))
         if to == from { return script }
@@ -127,21 +248,23 @@ public enum MScript {
                 s[i].expression = replacingIdentifier(oldPred, with: s[i - 1].name, in: s[i].expression)
             }
         }
-        return self.script(from: s, result: wasLast ? nil : resultIfPresent(result, s))
+        return p.script(s, result: wasLast ? nil : resultIfPresent(result, s))
     }
 
     /// Replace the expression of a step (formula-bar edit).
     public static func replacingStepExpression(_ name: String, with expression: String, in script: String) -> String {
-        var s = steps(of: script)
+        let p = parsed(script)
+        var s = p.steps
         guard let i = s.firstIndex(where: { $0.name == name }) else { return script }
         let result = resultName(of: script)
         s[i].expression = expression.trimmingCharacters(in: .whitespacesAndNewlines)
-        return self.script(from: s, result: resultIfPresent(result, s))
+        return p.script(s, result: resultIfPresent(result, s))
     }
 
     /// Insert a step after `name` (nil = at the start). The step that followed `name` and referenced it now references the new step.
     public static func insertingStep(_ step: MStep, after name: String?, in script: String) -> String {
-        var s = steps(of: script)
+        let p = parsed(script)
+        var s = p.steps
         let result = resultName(of: script)
         var new = step
         var n = new.name, k = 1
@@ -149,19 +272,19 @@ public enum MScript {
         new.name = n
         guard let name, let i = s.firstIndex(where: { $0.name == name }) else {
             s.insert(new, at: 0)
-            return self.script(from: s, result: resultIfPresent(result, s))
+            return p.script(s, result: resultIfPresent(result, s))
         }
         s.insert(new, at: i + 1)
         if i + 2 < s.count { s[i + 2].expression = replacingIdentifier(name, with: new.name, in: s[i + 2].expression) }
         let wasLast = i + 2 == s.count && (result == nil || result == name)
-        return self.script(from: s, result: wasLast ? nil : resultIfPresent(result, s))
+        return p.script(s, result: wasLast ? nil : resultIfPresent(result, s))
     }
 
-    /// A script that evaluates only steps `0...index` (for previewing an intermediate step).
+    /// A script that evaluates only steps `0...index` (for previewing an intermediate step, or Delete Until End).
     public static func truncating(_ script: String, upToStep index: Int) -> String {
-        let s = steps(of: script)
-        guard index >= 0, index < s.count - 1 else { return script }
-        return self.script(from: Array(s.prefix(index + 1)))
+        let p = parsed(script)
+        guard index >= 0, index < p.steps.count - 1 else { return script }
+        return p.script(Array(p.steps.prefix(index + 1)))
     }
 
     private static func resultIfPresent(_ result: String?, _ steps: [MStep]) -> String? {

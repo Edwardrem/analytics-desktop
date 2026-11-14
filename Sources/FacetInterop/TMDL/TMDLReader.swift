@@ -238,9 +238,9 @@ struct TMDLBuilder {
         if let v = node.facet("autodetectRelationships")?.boolValue { model.autodetectRelationships = v }
         if let v = node.facet("fieldParameters", as: [FieldParameter].self) { model.fieldParameters = v }
         if let v = node.facet("whatIfParameters", as: [WhatIfParameter].self) { model.whatIfParameters = v }
-        if let v = node.facet("aggregations", as: [AggregationMapping].self) {
+        if let v = node.facet(TMDLAggregations.annotationName, as: [AggregationMapping].self) {
             model.aggregations = v
-            aggregationState.flagged.formUnion(TMDLAggregations.flagged(in: node.facet("aggregations")))
+            aggregationState.flagged.formUnion(TMDLAggregations.flagged(in: node.facet(TMDLAggregations.annotationName)))
         }
         if let v = node.facet("layouts", as: [ModelLayout].self) { model.layouts = v }
         if let v = node.facet("aiExcludedFields", as: [String].self) { model.aiExcludedFields = v }

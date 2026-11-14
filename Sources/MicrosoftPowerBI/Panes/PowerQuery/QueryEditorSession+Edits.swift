@@ -68,17 +68,33 @@ extension QueryEditorSession {
         changeScript("Rename Step") { MScript.renamingStep(step.name, to: trimmed, in: $0) }
     }
 
+    /// Step Properties: the step's name and its description (the comment lines above the step, where Power Query
+    /// keeps it), changed as one step. Returns why it couldn't, if it couldn't.
+    @discardableResult
+    func setStepProperties(at index: Int, name: String, description: String) -> String? {
+        guard let step = steps[safe: index] else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "A step needs a name." }
+        if trimmed != step.name, steps.contains(where: { $0.name == trimmed }) {
+            return "The query already has a step named “\(trimmed)”."
+        }
+        changeScript("Step Properties") { script in
+            let described = MScript.settingStepDescription(step.name, to: description, in: script)
+            return trimmed == step.name ? described : MScript.renamingStep(step.name, to: trimmed, in: described)
+        }
+        return nil
+    }
+
     func deleteStep(at index: Int) {
         guard let step = steps[safe: index], steps.count > 1 else { return }
         changeScript("Delete Step", refresh: false) { MScript.deletingStep(step.name, in: $0) }
         selectStep(index == 0 ? 0 : index - 1)
     }
 
-    /// "Delete Until End": the step and every step after it.
+    /// "Delete Until End": the step and every step after it. The remaining steps keep their comments.
     func deleteUntilEnd(from index: Int) {
-        let all = steps
-        guard index > 0, index < all.count else { return }
-        changeScript("Delete Steps", refresh: false) { _ in MScript.script(from: Array(all.prefix(index))) }
+        guard index > 0, index < steps.count else { return }
+        changeScript("Delete Steps", refresh: false) { MScript.truncating($0, upToStep: index - 1) }
         selectStep(nil)
     }
 

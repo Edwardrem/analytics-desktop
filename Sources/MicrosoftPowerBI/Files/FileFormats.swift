@@ -6,7 +6,7 @@ import FacetInterop
 
 /// Power BI file formats and the document's file lifecycle: PBIP projects (open, save, reload on external edits),
 /// `.pbit` templates (export, import), `.pbix` reports (pages and queries only — the data model can't be decoded),
-/// `.pbids` data source files (handed to the Power Query Editor), TMDL, themes, recent files and auto-recovery.
+/// `.pbids` data source files (opened in Get Data's navigator), TMDL, themes, recent files and auto-recovery.
 @MainActor
 enum FileFormatsFeature {
     static func register() {
@@ -96,29 +96,86 @@ enum TMDLFiles {
     }
 }
 
-/// `.pbids` files: a new document whose queries open the named sources. Opening one shows the Power Query Editor so
-/// the data can be chosen and loaded, as Power BI shows its navigator.
+/// `.pbids` files, opened as Power BI Desktop opens them: a new, empty document with Get Data's navigator for the
+/// file's connection (preview, pick objects, Load or Transform Data), with the usual header and type detection.
 enum DataSourceFiles {
+    /// Reads the file (so a broken one is refused before a window opens) and starts an empty document; `adopt` then
+    /// opens Get Data for it.
     static func document(from url: URL) throws -> FileOperations.ImportResult {
-        let connections = try PBIDS.read(from: url)
-        var doc = FacetDocument()
-        doc.queries = queries(for: connections, existing: [])
-        var notes = ["Added \(connections.count) data source\(connections.count == 1 ? "" : "s") from “\(url.lastPathComponent)”: " +
-                     connections.map(\.summary).joined(separator: "; ") + ". Choose the data in the Power Query Editor, then Close & Apply."]
-        if connections.contains(where: \.isDirectQuery) {
-            notes.append("The file asks for DirectQuery; the queries are set up to import, which works for every source here.")
-        }
-        return FileOperations.ImportResult(document: doc, warnings: notes)
+        _ = try PBIDS.read(from: url)
+        return FileOperations.ImportResult(document: FacetDocument())
     }
 
-    /// One query per connection, named so none clashes with `existing` or with each other.
-    static func queries(for connections: [PBIDS.Connection], existing: Set<String>) -> [QueryDefinition] {
-        var taken = Set(existing.map { $0.lowercased() })
-        return connections.map { c in
-            var name = c.queryName, n = 2
-            while taken.contains(name.lowercased()) { name = "\(c.queryName) (\(n))"; n += 1 }
-            taken.insert(name.lowercased())
-            return QueryDefinition(name: name, mScript: c.mScript)
+    /// What opening a data source file does.
+    enum Plan: Equatable {
+        /// Get Data for `connector` at `location`, straight to the navigator; `notes` say what of the file was set aside.
+        case navigator(connector: DataConnector, location: String, notes: [String])
+        /// The connection names a source this app can't connect to.
+        case unavailable(String)
+    }
+
+    /// The Get Data connector a connection opens with (it may be one this app lists as unavailable), or nil when
+    /// the catalog has none for it.
+    static func connectorID(for c: PBIDS.Connection) -> String? {
+        switch c.protocolName {
+        case "file":
+            switch (c.location as NSString).pathExtension.lowercased() {
+            case "csv", "txt", "tsv": return "csv"
+            case "xlsx", "xlsm": return "excel"
+            case "xls", "xlsb": return "excel-legacy"
+            case "json": return "json"
+            case "xml": return "xml"
+            case "parquet": return "parquet"
+            case "pdf": return "pdf"
+            default: return nil
+            }
+        case "folder": return "folder"
+        case "http": return "web"
+        case "odata": return "odata"
+        case "tds": return "sqlserver"
+        case "postgresql": return "postgresql"
+        case "mysql": return "mysql"
+        case "oracle": return "oracle"
+        case "analysis-services": return "ssas"
+        case "odbc": return "odbc"
+        case "sharepoint-list": return "sharepoint-list"
+        default: return nil
+        }
+    }
+
+    /// Power BI Desktop reads one connection per data source file; a file with more opens its first and names the rest.
+    static func plan(for connections: [PBIDS.Connection], file: String) -> Plan {
+        guard let first = connections.first else { return .unavailable("“\(file)” lists no connections.") }
+        guard let connector = connectorID(for: first).flatMap(DataConnector.connector) else {
+            return .unavailable("“\(file)” opens \(first.summary), which \(AppIdentity.name) can't read. Use Get Data to connect to the data another way.")
+        }
+        guard connector.isAvailable else {
+            return .unavailable("“\(file)” opens \(first.summary) with the \(connector.name) connector, which isn't available in \(AppIdentity.name): "
+                                + (connector.unavailableReason ?? "it isn't supported."))
+        }
+        var notes: [String] = []
+        if connections.count > 1 {
+            notes.append("“\(file)” lists \(connections.count) connections; a data source file opens one, so only \(first.summary) was opened. "
+                         + "Use Get Data for " + connections.dropFirst().map(\.summary).joined(separator: "; ") + ".")
+        }
+        if first.isDirectQuery {
+            notes.append("“\(file)” asks for DirectQuery, which a \(connector.name) source doesn't support; its data is imported.")
+        }
+        return .navigator(connector: connector, location: first.location, notes: notes)
+    }
+
+    /// Opens Get Data in `store`'s window for the data source file at `url`.
+    @MainActor
+    static func startGetData(from url: URL, in store: DocumentStore) {
+        let plan: Plan
+        do { plan = Self.plan(for: try PBIDS.read(from: url), file: url.lastPathComponent) }
+        catch { store.status = StatusMessage(kind: .error, text: "Couldn't open “\(url.lastPathComponent)”. \(error.localizedDescription)"); return }
+        switch plan {
+        case .navigator(let connector, let location, let notes):
+            store.present { GetDataDialog(store: store, connector: connector, location: location, connectNow: true) }
+            if !notes.isEmpty { store.status = StatusMessage(kind: .warning, text: notes.joined(separator: "\n")) }
+        case .unavailable(let message):
+            store.status = StatusMessage(kind: .error, text: message)
         }
     }
 }
