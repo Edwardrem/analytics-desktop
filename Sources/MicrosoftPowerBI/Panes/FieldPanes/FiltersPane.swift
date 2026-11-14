@@ -2,22 +2,34 @@ import SwiftUI
 import FacetCore
 import FacetDesign
 
-/// The Filters pane: visual-level, page-level, report-level and drillthrough filters, with the
-/// filter types Power BI offers. Filters are added from the Data pane's field menu.
+/// The Filters pane, laid out as Power BI's: a search over every card, then Filters on this
+/// visual, on this page and on all pages (and Drillthrough), each a stack of filter cards. Filters
+/// are added from the Data pane's field menu.
 struct FiltersPane: View {
     @EnvironmentObject var store: DocumentStore
+    @State private var query = ""
 
     var body: some View {
+        let visual = store.selectedVisual
+        let lists: [(scope: FilterSpec.Scope, filters: [FilterSpec])] = (visual.map { [(.visual, $0.filters)] } ?? [])
+            + [(.page, store.currentPage.filters), (.report, store.doc.report.filters), (.drillthrough, store.drillthroughDisplay)]
+        let searching = !query.trimmingCharacters(in: .whitespaces).isEmpty
+        let found = lists.reduce(0) { $0 + FilterCardLogic.listed($1.filters, query: query).count }
         VStack(spacing: 0) {
+            SearchField(text: $query, prompt: "Search filters")
+                .padding(.horizontal, Design.Space.m).padding(.vertical, Design.Space.s)
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if let visual = store.selectedVisual {
-                        FiltersSection(visual: visual, scope: .visual, title: "Filters on this visual", filters: visual.filters)
+                VStack(alignment: .leading, spacing: Design.Space.l) {
+                    ForEach(lists, id: \.scope) { list in
+                        if !searching || !FilterCardLogic.listed(list.filters, query: query).isEmpty {
+                            FiltersSection(scope: list.scope, filters: list.filters, query: query)
+                        }
                     }
-                    FiltersSection(scope: .page, title: "Filters on this page", filters: store.currentPage.filters)
-                    FiltersSection(scope: .report, title: "Filters on all pages", filters: store.doc.report.filters)
-                    FiltersSection(scope: .drillthrough, title: "Drillthrough", filters: store.drillthroughDisplay)
+                    if searching && found == 0 {
+                        PaneNote("No filter matches “\(query.trimmingCharacters(in: .whitespaces))”.")
+                    }
                 }
+                .padding(.horizontal, Design.Space.m).padding(.top, Design.Space.xs).padding(.bottom, Design.Space.m)
             }
             Hairline()
             FilterPaneFooter(runtime: ReportRuntime.of(store))
@@ -28,38 +40,41 @@ struct FiltersPane: View {
 // MARK: Section
 
 private struct FiltersSection: View {
-    var visual: VisualSpec?
     let scope: FilterSpec.Scope
-    let title: String
     let filters: [FilterSpec]
+    let query: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: Design.Space.xs) {
             HStack(spacing: Design.Space.xs) {
-                Text(title).font(Design.Typeface.bodyStrong).lineLimit(1)
+                Text(title).font(Design.Typeface.captionStrong).foregroundStyle(.secondary).lineLimit(1)
                 if !filters.isEmpty {
                     Text("\(filters.count)").font(Design.Typeface.caption).foregroundStyle(.tertiary).monospacedDigit()
                 }
                 Spacer(minLength: 0)
             }
-            .frame(height: 30)
             if filters.isEmpty {
-                Text(hint).font(Design.Typeface.caption).foregroundStyle(.tertiary)
-                    .padding(.bottom, Design.Space.m)
+                Text(hint).font(Design.Typeface.caption).foregroundStyle(.tertiary).fixedSize(horizontal: false, vertical: true)
             } else {
-                ForEach(Array(filters.enumerated()), id: \.element.id) { i, f in
-                    FilterRow(filter: f, scope: scope, position: i, count: filters.count)
+                ForEach(FilterCardLogic.listed(filters, query: query), id: \.filter.id) { item in
+                    FilterCard(filter: item.filter, scope: scope, position: item.position, count: filters.count)
                 }
-                .padding(.bottom, Design.Space.s)
             }
-            Hairline()
         }
-        .padding(.horizontal, Design.Space.m)
+    }
+
+    private var title: String {
+        switch scope {
+        case .visual: return "Filters on this visual"
+        case .page: return "Filters on this page"
+        case .report: return "Filters on all pages"
+        case .drillthrough: return "Drillthrough"
+        }
     }
 
     private var hint: String {
         switch scope {
-        case .visual: return "Select a visual, then add a filter from the Data pane's field menu."
+        case .visual: return "Add a filter for this visual from the Data pane's field menu."
         case .page: return "Add a page filter from the Data pane's field menu."
         case .report: return "Add a filter that applies to every page from the Data pane."
         case .drillthrough: return "Add a column from the Data pane’s field menu to make this page a drillthrough destination."
@@ -67,104 +82,10 @@ private struct FiltersSection: View {
     }
 }
 
-// MARK: Row
-
-private struct FilterRow: View {
-    let filter: FilterSpec
-    let scope: FilterSpec.Scope
-    let position: Int
-    let count: Int
-    @EnvironmentObject var store: DocumentStore
-    @State private var expanded = false
-    @State private var renaming = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Design.Space.xs) {
-            HStack(spacing: Design.Space.xs) {
-                if renaming {
-                    InlineRename(text: filter.displayName ?? filter.field.caption, isEditing: $renaming, font: Design.Typeface.bodyStrong) { name in
-                        store.renameFilter(id: filter.id, scope: scope, to: name)
-                    }
-                    .padding(.leading, 14)
-                    Spacer(minLength: 0)
-                } else {
-                    Button { withAnimation(Design.Motion.quick) { expanded.toggle() } } label: {
-                        HStack(spacing: Design.Space.xs) {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .rotationEffect(.degrees(expanded ? 90 : 0))
-                                .foregroundStyle(.tertiary).frame(width: 10)
-                            Text(filter.displayName ?? filter.field.caption).font(Design.Typeface.bodyStrong).lineLimit(1)
-                            Text(typeName).font(Design.Typeface.caption).foregroundStyle(.secondary)
-                            Spacer(minLength: 0)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
-                }
-                if filter.isLocked {
-                    Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.tertiary)
-                }
-                if filter.isHidden {
-                    Image(systemName: "eye.slash").font(.system(size: 9)).foregroundStyle(.tertiary)
-                }
-                Menu {
-                    Button("Rename") { renaming = true }
-                    if filter.displayName != nil {
-                        Button("Use the Field's Name") { store.renameFilter(id: filter.id, scope: scope, to: "") }
-                    }
-                    Button("Move Up") { store.moveFilter(id: filter.id, scope: scope, by: -1) }.disabled(position == 0)
-                    Button("Move Down") { store.moveFilter(id: filter.id, scope: scope, by: 1) }.disabled(position >= count - 1)
-                    Divider()
-                    Button(filter.isLocked ? "Unlock" : "Lock") { toggle { $0.isLocked.toggle() } }
-                    Button(filter.isHidden ? "Show" : "Hide") { toggle { $0.isHidden.toggle() } }
-                    if filter.kind == .basic {
-                        Button(filter.requireSingleSelection ? "Allow multiple selections" : "Require single selection") {
-                            toggle { $0 = FilterTools.requiringSingleSelection($0, !$0.requireSingleSelection) }
-                        }
-                        Button(filter.isInverted ? "Keep selected values" : "Exclude selected values") { toggle { $0.isInverted.toggle() } }
-                    }
-                    if filter.kind == .advanced {
-                        Button(filter.conditionsUseOr ? "Match all conditions" : "Match any condition") { toggle { $0.conditionsUseOr.toggle() } }
-                    }
-                    Button("Clear filter") { toggle { $0 = FilterTools.cleared($0) } }
-                    Button("Remove", role: .destructive) { store.removeFilter(id: filter.id, scope: scope) }
-                } label: {
-                    Image(systemName: "ellipsis").font(.system(size: 12)).frame(width: 22, height: 20).contentShape(Rectangle())
-                }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("Filter options")
-            }
-            Text(FilterTools.summary(filter)).font(Design.Typeface.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.leading, 14)
-            if expanded {
-                FilterEditor(filter: filter, scope: scope)
-                    .padding(.leading, 14)
-            }
-            Hairline()
-        }
-        .padding(.vertical, Design.Space.xs)
-    }
-
-    private var typeName: String {
-        switch filter.kind {
-        case .basic: return filter.isInverted ? "Exclude" : "List"
-        case .advanced: return "Advanced"
-        case .topN: return "Top N"
-        case .relativeDate: return "Relative date"
-        case .relativeTime: return "Relative time"
-        }
-    }
-
-    private func toggle(_ body: (inout FilterSpec) -> Void) {
-        store.updateFilter(id: filter.id, scope: scope, body)
-    }
-}
-
 // MARK: Editor
 
-private struct FilterEditor: View {
+/// A filter card's editor: the filter type, then what that type asks for.
+struct FilterEditor: View {
     let filter: FilterSpec
     let scope: FilterSpec.Scope
     @EnvironmentObject var store: DocumentStore
@@ -186,8 +107,6 @@ private struct FilterEditor: View {
             case .relativeDate, .relativeTime: RelativeEditor(filter: filter, scope: scope)
             }
         }
-        .padding(Design.Space.s)
-        .background(RoundedRectangle(cornerRadius: Design.Radius.control).fill(Design.Palette.fill))
     }
 
     private var kind: Binding<FilterSpec.Kind> {
@@ -241,9 +160,13 @@ private struct BasicValuesEditor: View {
     @EnvironmentObject var store: DocumentStore
     @State private var options: [Value] = []
     @State private var loadedFor: UUID?
+    @State private var search = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if options.count > 10 {
+                SearchField(text: $search, prompt: "Search values").padding(.bottom, Design.Space.xs)
+            }
             if filter.values.isEmpty {
                 Text("Nothing is selected, so the filter is inactive.").font(Design.Typeface.caption).foregroundStyle(.tertiary)
                     .padding(.bottom, 2)
@@ -268,7 +191,9 @@ private struct BasicValuesEditor: View {
     private var selected: Set<Value> { Set(filter.values) }
     private var displayed: [Value] {
         let base = options.isEmpty ? filter.values : options
-        return Array(base.prefix(200))
+        let term = search.trimmingCharacters(in: .whitespaces)
+        let shown = term.isEmpty ? base : base.filter { $0.asString.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
+        return Array(shown.prefix(200))
     }
 
     private func toggleValue(_ value: Value) {

@@ -300,6 +300,9 @@ private struct ReaderFilterRow: View {
                 }
             }
         }
+        .padding(Design.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: Design.Radius.control, style: .continuous).fill(Design.Palette.fill))
         .task(id: filter.id) {
             guard filter.kind == .basic, filter.field.kind == .column else { return }
             let field = filter.field
