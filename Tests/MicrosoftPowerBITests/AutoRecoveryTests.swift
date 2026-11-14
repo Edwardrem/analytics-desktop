@@ -65,6 +65,28 @@ final class AutoRecoveryTests: XCTestCase {
         XCTAssertEqual(left.first?.original, URL(fileURLWithPath: "/Users/me/Budget.facet"))
     }
 
+    func testCopiesKeptByAnotherRunningInstanceAreNotOffered() throws {
+        let other = AutoRecovery(directory: dir, defaults: defaults)
+        let edited = editedStore()
+        try other.write(edited)
+        let id = try XCTUnwrap(other.recoveryID(of: edited))
+        let pid = ProcessInfo.processInfo.processIdentifier
+
+        var asked: [Int32] = []
+        let whileItRuns = AutoRecovery(directory: dir, defaults: defaults, isAppRunning: { asked.append($0); return true })
+        XCTAssertTrue(whileItRuns.leftovers().isEmpty, "the other window still has the document open")
+        XCTAssertEqual(asked, [pid], "the copy records the process that wrote it")
+
+        let afterItQuit = AutoRecovery(directory: dir, defaults: defaults, isAppRunning: { _ in false })
+        XCTAssertEqual(afterItQuit.leftovers().map(\.id), [id])
+        XCTAssertFalse(AutoRecovery.isAppRunning(pid), "this process is never 'another' instance")
+
+        // Copies written before the process was recorded are still offered.
+        let legacy = dir.appendingPathComponent("\(id).json")
+        try Data(#"{"id":"\#(id)","name":"Untitled","savedAt":"2026-01-01T00:00:00Z"}"#.utf8).write(to: legacy)
+        XCTAssertEqual(whileItRuns.leftovers().map(\.id), [id])
+    }
+
     func testRestoringReopensTheCopyAsUnsavedWorkForItsOriginalFile() throws {
         let recovery = AutoRecovery(directory: dir, defaults: defaults)
         let edited = editedStore()
