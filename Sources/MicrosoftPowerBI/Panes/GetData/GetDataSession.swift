@@ -51,8 +51,18 @@ final class GetDataSession: ObservableObject {
     private var generation = 0
 
     let security: QuerySecurity
+    /// Settings ▸ Data load: promote headers and detect column types for files and web content; add the
+    /// relationships that like-named key columns suggest once the tables are loaded.
+    var detectTypes: Bool
+    var detectRelationships: Bool
 
-    init(store: DocumentStore, security: QuerySecurity = .shared) { self.store = store; self.security = security }
+    init(store: DocumentStore, security: QuerySecurity = .shared, options: UserDefaults = AppSettings.defaults) {
+        self.store = store
+        self.security = security
+        func option(_ key: AppSettings.Key) -> Bool { options.object(forKey: key.rawValue) as? Bool ?? AppSettings.initial[key.rawValue] as? Bool ?? false }
+        detectTypes = option(.detectTypes)
+        detectRelationships = option(.autodetectRelationships)
+    }
 
     var environment: QueryEnvironment { security.environment(baseDirectory: store.fileURL?.deletingLastPathComponent()) }
 
@@ -108,7 +118,7 @@ final class GetDataSession: ObservableObject {
     func connect() async {
         if let message = SourcePlanner.validationMessage(request) { error = message; return }
         reset()
-        if request.kind == .sqlite, !pendingNativeQuery.isEmpty,
+        if request.kind == .sqlite, !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
            !security.isApproved(query: pendingNativeQuery, kind: "SQLite", location: nativeQueryLocation) {
             stage = .approval
             return
@@ -172,14 +182,14 @@ final class GetDataSession: ObservableObject {
         let headerCandidate = textual || request.kind == .excel || (request.kind == .web && [.excel, .html].contains(request.webContent))
         if headerCandidate, !combined {
             let looksLikeHeaders = SourcePlanner.looksLikeHeaderRow(shown.table)
-            if textual, !headersDecided { promoteHeaders = looksLikeHeaders; headersDecided = true }
-            if textual ? promoteHeaders : looksLikeHeaders {
+            if textual, !headersDecided { promoteHeaders = detectTypes && looksLikeHeaders; headersDecided = true }
+            if textual ? promoteHeaders : detectTypes && looksLikeHeaders {
                 script = MScript.appending(.promoteHeaders, to: script)
                 shown = try await sample(script)
             }
         }
         let typed = [.sqlite, .python, .r].contains(request.kind)
-        if !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
+        if detectTypes, !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)
         }
@@ -267,6 +277,8 @@ final class GetDataSession: ObservableObject {
             let directQuery = request.kind == .sqlite && request.directQuery
             // Routed before the write, so an editor that is already open selects the new query as it appears.
             if destination == .transform { QueryEditorRouting.select(first.name, in: store) }
+            var related: [Relationship] = []
+            // One write, so one undo step takes the queries, tables, relationships and source records away together.
             store.mutate(destination == .load ? "Get Data" : "Add Queries", invalidates: .model) { d in
                 d.queries.append(contentsOf: definitions)
                 for table in tables {
@@ -275,6 +287,12 @@ final class GetDataSession: ObservableObject {
                     model.sourceQuery = table.name
                     if directQuery { model.storageMode = .directQuery }
                     d.model.tables.append(model)
+                }
+                if detectRelationships, !tables.isEmpty {
+                    let loaded = Set(tables.map { $0.name.lowercased() })
+                    related = RelationshipLogic.autodetect(d.model, data: d.data)
+                        .filter { loaded.contains($0.fromTable.lowercased()) || loaded.contains($0.toTable.lowercased()) }
+                    d.model.relationships += related
                 }
                 for s in sources {
                     if let i = d.dataSources.firstIndex(where: { $0.kind == s.kind && $0.location == s.location }) {
@@ -292,7 +310,8 @@ final class GetDataSession: ObservableObject {
             case .load:
                 let rows = tables.reduce(0) { $0 + $1.rowCount }
                 let what = tables.count == 1 ? first.name : "\(tables.count) tables"
-                store.status = StatusMessage(kind: .success, text: "Loaded \(what) (\(rows) row\(rows == 1 ? "" : "s"))\(directQuery ? " in DirectQuery mode" : "").")
+                let found = related.isEmpty ? "" : " Found \(related.count) relationship\(related.count == 1 ? "" : "s")."
+                store.status = StatusMessage(kind: .success, text: "Loaded \(what) (\(rows) row\(rows == 1 ? "" : "s"))\(directQuery ? " in DirectQuery mode" : "").\(found)")
             case .transform:
                 if !insideEditor { NotificationCenter.default.post(name: .facetOpenQueryEditor, object: store) }
             }

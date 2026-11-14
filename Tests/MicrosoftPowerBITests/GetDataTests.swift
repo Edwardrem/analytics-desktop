@@ -270,6 +270,38 @@ final class QuerySecurityTests: XCTestCase {
         XCTAssertFalse(security.environment(baseDirectory: nil).allowScripts)
     }
 
+    /// The privacy, native query, scripting and import locale options in Settings are the ones the engine runs with.
+    func testSettingsOptionsReachTheEnvironment() {
+        let security = QuerySecurity(defaults: defaults)
+        var env = security.environment(baseDirectory: nil)
+        XCTAssertTrue(env.enforcePrivacyFirewall)
+        XCTAssertTrue(env.requireNativeQueryApproval, "asking is on until Settings turns it off")
+        XCTAssertFalse(env.allowScripts)
+        XCTAssertNil(env.pythonPath)
+        XCTAssertEqual(env.culture, "en-US")
+
+        defaults.set("ignore", forKey: AppSettings.Key.privacyMode.rawValue)
+        defaults.set(false, forKey: AppSettings.Key.requireNativeQueryApproval.rawValue)
+        defaults.set(true, forKey: AppSettings.Key.allowScripts.rawValue)
+        defaults.set("/opt/homebrew/bin/python3", forKey: AppSettings.Key.pythonPath.rawValue)
+        defaults.set("  ", forKey: AppSettings.Key.rPath.rawValue)
+        defaults.set("de-DE", forKey: AppSettings.Key.importLocale.rawValue)
+        env = security.environment(baseDirectory: nil)
+        XCTAssertTrue(security.ignorePrivacyLevels)
+        XCTAssertFalse(env.enforcePrivacyFirewall)
+        XCTAssertFalse(env.requireNativeQueryApproval)
+        XCTAssertTrue(env.allowScripts)
+        XCTAssertEqual(env.pythonPath, "/opt/homebrew/bin/python3")
+        XCTAssertNil(env.rPath, "a blank path means the usual places")
+        XCTAssertEqual(env.culture, "de-DE")
+
+        // Turning the toggle back writes the Settings choice.
+        security.ignorePrivacyLevels = false
+        XCTAssertEqual(defaults.string(forKey: AppSettings.Key.privacyMode.rawValue), "combine")
+        defaults.set("file", forKey: AppSettings.Key.privacyMode.rawValue)
+        XCTAssertTrue(security.environment(baseDirectory: nil).enforcePrivacyFirewall, "per-file combining still applies privacy levels")
+    }
+
     func testRecentSourcesAreNewestFirstWithoutDuplicates() {
         let security = QuerySecurity(defaults: defaults)
         security.noteRecent(kind: .csv, location: "/a.csv", at: Date(timeIntervalSince1970: 1))

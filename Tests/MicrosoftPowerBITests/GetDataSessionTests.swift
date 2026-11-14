@@ -179,6 +179,108 @@ final class GetDataSessionTests: XCTestCase {
         XCTAssertEqual(first.store.doc.dataSources.count, 1, "one record per source")
     }
 
+    /// Load writes the query, its table, its model table and the source record as one undo step, so a single
+    /// undo never leaves a table without its query; redo puts all of them back.
+    func testLoadIsOneUndoStep() async throws {
+        let path = try write("sales.csv", "Region,Amount\nNorth,10\nSouth,20\n")
+        let s = try session("csv", path)
+        let store = s.store
+        let undoBefore = store.undoName
+        await s.connect()
+        XCTAssertEqual(store.undoName, undoBefore, "connecting writes nothing")
+        let closed = await s.finish(.load)
+        XCTAssertTrue(closed)
+        XCTAssertEqual(store.undoName, "Get Data")
+        let loaded = store.doc
+        XCTAssertEqual(loaded.queries.map(\.name), ["sales"])
+        XCTAssertEqual(loaded.model.tables.map(\.name), ["sales"])
+
+        store.undo()
+        XCTAssertEqual(store.undoName, undoBefore, "one step, not one for the table and one for the query")
+        XCTAssertEqual(store.doc.queries.map(\.name), [])
+        XCTAssertNil(store.doc.data["sales"])
+        XCTAssertEqual(store.doc.model.tables.map(\.name), [])
+        XCTAssertEqual(store.doc.dataSources.count, 0)
+
+        store.redo()
+        XCTAssertEqual(store.undoName, "Get Data")
+        XCTAssertEqual(store.doc.queries, loaded.queries)
+        XCTAssertEqual(store.doc.data["sales"]?.rowCount, 2)
+        XCTAssertEqual(store.doc.model.tables.map(\.name), ["sales"])
+        XCTAssertEqual(store.doc.model.tables.first?.sourceQuery, "sales")
+    }
+
+    /// Transform Data adds every chosen query in one undo step too.
+    func testTransformAddsTheQueriesInOneUndoStep() async throws {
+        let s = try session("sqlite", try database())
+        await s.connect()
+        s.checked = Set(s.items.map(\.id))
+        _ = await s.finish(.transform)
+        XCTAssertEqual(Set(s.store.doc.queries.map(\.name)), ["orders", "big_orders"])
+        XCTAssertEqual(s.store.undoName, "Add Queries")
+        s.store.undo()
+        XCTAssertEqual(s.store.doc.queries.count, 0)
+        XCTAssertNil(s.store.undoName)
+        _ = QueryEditorRouting.takeSelection(for: s.store)
+    }
+
+    /// Settings ▸ Data load ▸ "Detect column types and headers for unstructured sources" off: the file loads as it is.
+    func testWithoutDetectionAFileLoadsAsItIs() async throws {
+        let path = try write("plain.csv", "Region,Amount\nNorth,10\n")
+        let s = try session("csv", path)
+        s.detectTypes = false
+        await s.connect()
+        XCTAssertFalse(s.promoteHeaders, "headers are not promoted for you")
+        XCTAssertEqual(s.preview?.table.columnNames, ["Column1", "Column2"])
+        _ = await s.finish(.load)
+        XCTAssertEqual(MScript.steps(of: s.store.doc.queries[0].mScript).map(\.name), ["Source"])
+        XCTAssertEqual(s.store.doc.data["plain"]?.column("Column2")?.values, [.string("Amount"), .string("10")])
+    }
+
+    /// Settings ▸ Data load ▸ "Autodetect new relationships after data is loaded": related in the same undo step.
+    func testLoadingRelatedTablesAddsTheirRelationshipInTheSameStep() async throws {
+        let products = try write("products.csv", "ProductID,Name\n1,Pen\n2,Ink\n")
+        let sales = try write("sales.csv", "ProductID,Units\n1,3\n1,4\n2,5\n")
+        let first = try session("csv", products)
+        first.detectRelationships = true
+        await first.connect()
+        _ = await first.finish(.load)
+        XCTAssertTrue(first.store.doc.model.relationships.isEmpty)
+        let second = GetDataSession(store: first.store, security: first.security)
+        second.detectRelationships = true
+        second.choose(try XCTUnwrap(DataConnector.connector("csv")), location: sales)
+        await second.connect()
+        _ = await second.finish(.load)
+        let store = first.store
+        XCTAssertEqual(store.doc.model.relationships.count, 1)
+        let r = try XCTUnwrap(store.doc.model.relationships.first)
+        XCTAssertEqual([r.fromTable, r.fromColumn, r.toTable, r.toColumn], ["sales", "ProductID", "products", "ProductID"], "many sales rows to one product")
+        XCTAssertEqual(store.status?.text, "Loaded sales (3 rows). Found 1 relationship.")
+        store.undo()
+        XCTAssertTrue(store.doc.model.relationships.isEmpty)
+        XCTAssertEqual(store.doc.model.tables.map(\.name), ["products"])
+
+        // Turned off, nothing is related.
+        let third = GetDataSession(store: store, security: first.security)
+        third.detectRelationships = false
+        third.choose(try XCTUnwrap(DataConnector.connector("csv")), location: sales)
+        await third.connect()
+        _ = await third.finish(.load)
+        XCTAssertTrue(store.doc.model.relationships.isEmpty)
+    }
+
+    /// With "Ask before running native database queries" off, a native query goes straight to the navigator.
+    func testNativeQueryApprovalFollowsTheSetting() async throws {
+        let path = try database()
+        defaults.set(false, forKey: AppSettings.Key.requireNativeQueryApproval.rawValue)
+        let s = try session("sqlite", path)
+        s.request.nativeQuery = "select item from orders where id < 3"
+        await s.connect()
+        XCTAssertNil(s.error)
+        XCTAssertEqual(s.stage, .navigator)
+        XCTAssertEqual(s.preview?.table.rowCount, 2)
+    }
+
     func testBlankQueryOpensTheEditorOnANewQuery() async throws {
         let s = GetDataSession(store: DocumentStore(services: .live()), security: QuerySecurity(defaults: defaults))
         s.request = SourceRequest(kind: .blank)

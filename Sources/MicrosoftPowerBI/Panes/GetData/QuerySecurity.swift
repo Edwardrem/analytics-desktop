@@ -19,7 +19,8 @@ struct RecentSource: Codable, Identifiable, Hashable {
 }
 
 /// Per-user data source permissions, as Power BI keeps them outside the report file: privacy levels, approved
-/// native database queries, the script permission and the recent sources list. Backed by `UserDefaults`.
+/// native database queries, the script permission and the recent sources list. Backed by `UserDefaults`; the
+/// privacy, native query, scripting and import locale options are the ones Settings shows.
 final class QuerySecurity: @unchecked Sendable {
     static let shared = QuerySecurity()
 
@@ -27,10 +28,15 @@ final class QuerySecurity: @unchecked Sendable {
     private let lock = NSLock()
     private enum Key {
         static let privacy = "query.privacyLevels"
-        static let ignorePrivacy = "query.ignorePrivacyLevels"
         static let nativeQueries = "query.approvedNativeQueries"
-        static let scripts = "query.allowScripts"
         static let recent = "query.recentSources"
+        // Shared with Settings ▸ Security, Scripting and Regional.
+        static let privacyMode = AppSettings.Key.privacyMode.rawValue
+        static let nativeApproval = AppSettings.Key.requireNativeQueryApproval.rawValue
+        static let scripts = AppSettings.Key.allowScripts.rawValue
+        static let python = AppSettings.Key.pythonPath.rawValue
+        static let r = AppSettings.Key.rPath.rawValue
+        static let importLocale = AppSettings.Key.importLocale.rawValue
     }
     static let maxRecentSources = 20
 
@@ -60,13 +66,19 @@ final class QuerySecurity: @unchecked Sendable {
         all[Self.sourceKey(kind: kind, location: location)] = level == .none ? nil : level
         privacyLevels = all
     }
-    /// "Ignore the Privacy Levels and potentially improve performance".
+    /// "Ignore the Privacy Levels and potentially improve performance" (Settings ▸ Security ▸ Combining data).
     var ignorePrivacyLevels: Bool {
-        get { defaults.bool(forKey: Key.ignorePrivacy) }
-        set { defaults.set(newValue, forKey: Key.ignorePrivacy) }
+        get { defaults.string(forKey: Key.privacyMode) == "ignore" }
+        set { defaults.set(newValue ? "ignore" : "combine", forKey: Key.privacyMode) }
     }
 
     // MARK: Native queries
+
+    /// "Ask before running native database queries" (on unless turned off in Settings).
+    var requiresNativeQueryApproval: Bool {
+        get { defaults.object(forKey: Key.nativeApproval) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.nativeApproval) }
+    }
 
     private static func queryKey(_ query: String, kind: String, location: String) -> String {
         sourceKey(kind: kind, location: location) + "\n" + query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -92,6 +104,16 @@ final class QuerySecurity: @unchecked Sendable {
     var allowScripts: Bool {
         get { defaults.bool(forKey: Key.scripts) }
         set { defaults.set(newValue, forKey: Key.scripts) }
+    }
+
+    /// The interpreters chosen in Settings ▸ Scripting (nil: the engine looks in the usual places).
+    var pythonPath: String? { Self.nonEmpty(defaults.string(forKey: Key.python)) }
+    var rPath: String? { Self.nonEmpty(defaults.string(forKey: Key.r)) }
+    /// Settings ▸ Regional ▸ Locale for import: the culture text and dates are read with.
+    var importLocale: String { Self.nonEmpty(defaults.string(forKey: Key.importLocale)) ?? "en-US" }
+    private static func nonEmpty(_ s: String?) -> String? {
+        guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+        return t
     }
 
     // MARK: Clearing
@@ -149,12 +171,15 @@ final class QuerySecurity: @unchecked Sendable {
         var env = QueryEnvironment(baseDirectory: baseDirectory)
         env.privacyLevels = privacyLevels
         env.enforcePrivacyFirewall = !ignorePrivacyLevels
-        env.requireNativeQueryApproval = true
+        env.requireNativeQueryApproval = requiresNativeQueryApproval
         let approved = approvedQueries
         env.approveNativeQuery = { request in
             approved.contains(Self.queryKey(request.query, kind: request.sourceKind, location: request.sourceLocation))
         }
         env.allowScripts = allowScripts
+        env.pythonPath = pythonPath
+        env.rPath = rPath
+        env.culture = importLocale
         return env
     }
 

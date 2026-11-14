@@ -105,6 +105,18 @@ struct PreviewArea: View {
             Label(session.currentStep.map { "Error in step “\($0.name)”" } ?? "Error", systemImage: "exclamationmark.triangle.fill")
                 .font(Design.Typeface.bodyStrong).foregroundStyle(Design.Palette.caution)
             Text(error).font(Design.Typeface.mono).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            if let request = session.permissionRequest {
+                Hairline()
+                Text("Native Database Query").font(Design.Typeface.bodyStrong)
+                Text("Running this query against \(request.sourceKind) “\(request.sourceLocation)” could change the database. Run it only if you trust it.")
+                    .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ScrollView {
+                    Text(request.query).font(Design.Typeface.mono).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 160)
+                Button("Run") { session.approvePermissionRequest() }
+                    .help("Approve this exact query for this database and evaluate the step again")
+            }
             if session.selectedStep != nil {
                 Button("Go to Last Step") { session.selectStep(nil) }.controlSize(.small)
             }

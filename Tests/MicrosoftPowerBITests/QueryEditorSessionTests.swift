@@ -368,6 +368,68 @@ final class QueryEditorSessionTests: XCTestCase {
         XCTAssertEqual(s.folding["Added Index"]?.indicator, .notFolded)
     }
 
+    /// A native query typed in the editor waits for Edit Permission ▸ Run, then evaluates; the approval is kept.
+    func testANativeQueryInTheEditorAsksForPermission() async throws {
+        let path = dir.appendingPathComponent("perm.sqlite").path
+        var db: OpaquePointer?
+        guard sqlite3_open(path, &db) == SQLITE_OK else { throw XCTSkip("could not create the test database") }
+        sqlite3_exec(db, "create table t (n integer); insert into t values (1), (2), (3);", nil, nil, nil)
+        sqlite3_close(db)
+        let sql = "select n from t where n > 1"
+        let script = "let\n    Source = Value.NativeQuery(Sqlite.Database(\(MSyntax.text(path))), \(MSyntax.text(sql)))\nin\n    Source"
+        let s = await session([QueryDefinition(name: "Q", mScript: script)])
+        XCTAssertNotNil(s.previewError)
+        let request = try XCTUnwrap(s.permissionRequest)
+        XCTAssertEqual(request.query, sql)
+        XCTAssertEqual(request.sourceLocation, path)
+        XCTAssertNotNil(s.queryErrors[try XCTUnwrap(s.selectedQueryID)], "the Queries pane marks the query")
+        s.approvePermissionRequest()
+        await s.waitForPreview()
+        XCTAssertNil(s.previewError)
+        XCTAssertNil(s.permissionRequest)
+        XCTAssertEqual(s.preview?.table.column("n")?.values, [.int(2), .int(3)])
+        XCTAssertTrue(s.queryErrors.isEmpty)
+        XCTAssertTrue(s.security.isApproved(query: sql, kind: request.sourceKind, location: path))
+    }
+
+    /// Refresh All marks every failing query; fixing one clears its mark when its preview evaluates.
+    func testFailingQueriesAreMarkedUntilTheyEvaluate() async throws {
+        let s = await session([QueryDefinition(name: "Good", mScript: Self.table),
+                               QueryDefinition(name: "Bad", mScript: "let\n    Source = error \"broken\"\nin\n    Source")])
+        s.refreshAllPreviews()
+        let marked = await Smoke.wait { !s.queryErrors.isEmpty }
+        XCTAssertTrue(marked)
+        let bad = try XCTUnwrap(s.query(named: "Bad")?.id)
+        XCTAssertEqual(Array(s.queryErrors.keys), [bad])
+        XCTAssertEqual(s.queryErrors[bad], "Expression.Error: broken")
+        s.selectedQueryID = bad
+        XCTAssertNil(s.setScript(Self.table))
+        await s.waitForPreview()
+        XCTAssertNil(s.queryErrors[bad])
+    }
+
+    /// The View tab starts as Settings ▸ Data ▸ Power Query Editor sets it.
+    func testViewOptionsStartFromSettings() async throws {
+        let options = try XCTUnwrap(UserDefaults(suiteName: suite + "-options"))
+        defer { options.removePersistentDomain(forName: suite + "-options") }
+        let store = DocumentStore(services: .live())
+        let initial = QueryEditorSession(store: store, security: QuerySecurity(defaults: defaults), options: options)
+        XCTAssertTrue(initial.showFormulaBar)
+        XCTAssertTrue(initial.showQuality, "column quality is on by default")
+        XCTAssertFalse(initial.showDistribution)
+        XCTAssertFalse(initial.profileWholeDataset)
+        for key in [AppSettings.Key.pqColumnDistribution, .pqColumnProfile, .pqProfilingWholeDataset, .pqMonospaced] { options.set(true, forKey: key.rawValue) }
+        options.set(false, forKey: AppSettings.Key.pqFormulaBar.rawValue)
+        options.set(false, forKey: AppSettings.Key.pqColumnQuality.rawValue)
+        let chosen = QueryEditorSession(store: store, security: QuerySecurity(defaults: defaults), options: options)
+        XCTAssertFalse(chosen.showFormulaBar)
+        XCTAssertFalse(chosen.showQuality)
+        XCTAssertTrue(chosen.showDistribution)
+        XCTAssertTrue(chosen.showProfile)
+        XCTAssertTrue(chosen.profileWholeDataset)
+        XCTAssertTrue(chosen.monospaced)
+    }
+
     func testDiagnosticsRecordWhatTheEngineEvaluated() async throws {
         let s = await session([QueryDefinition(name: "T", mScript: Self.table)])
         s.startDiagnostics()

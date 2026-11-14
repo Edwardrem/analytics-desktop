@@ -105,6 +105,10 @@ struct QueriesPane: View {
                 Text(QueryCellText.text(p.currentValue, type: p.type)).font(Design.Typeface.caption).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer(minLength: 0)
+            if let error = session.queryErrors[q.id] {
+                Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(Design.Palette.caution)
+                    .help("This query has an error: \(error)")
+            }
             if q.kind == .table, !q.loadEnabled {
                 Image(systemName: "eye.slash").font(.system(size: 10)).foregroundStyle(.tertiary).help("Load is disabled: the query is connection only")
             } else if q.kind == .table, !q.includeInRefresh {

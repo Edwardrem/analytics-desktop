@@ -29,6 +29,10 @@ final class QueryEditorSession: ObservableObject {
     @Published private(set) var folding: [String: StepFoldingInfo] = [:]
     @Published private(set) var previewTime: Date?
     @Published private(set) var lastEvents: [QueryDiagnosticEvent] = []
+    /// The error of each query whose last evaluation failed (warning icons in the Queries pane).
+    @Published private(set) var queryErrors: [UUID: String] = [:]
+    /// A native database query the last preview needed but the user has not approved yet (Edit Permission).
+    @Published private(set) var permissionRequest: NativeQueryRequest?
 
     // View options (View tab)
     @Published var showQuerySettings = true
@@ -70,9 +74,17 @@ final class QueryEditorSession: ObservableObject {
     private var previewTask: Task<Void, Never>?
     private var observation: AnyCancellable?
 
-    init(store: DocumentStore, security: QuerySecurity = .shared) {
+    init(store: DocumentStore, security: QuerySecurity = .shared, options: UserDefaults = AppSettings.defaults) {
         self.store = store
         self.security = security
+        // The View tab starts as Settings ▸ Data ▸ Power Query Editor sets it.
+        func option(_ key: AppSettings.Key) -> Bool { options.object(forKey: key.rawValue) as? Bool ?? AppSettings.initial[key.rawValue] as? Bool ?? false }
+        showFormulaBar = option(.pqFormulaBar)
+        showQuality = option(.pqColumnQuality)
+        showDistribution = option(.pqColumnDistribution)
+        showProfile = option(.pqColumnProfile)
+        profileWholeDataset = option(.pqProfilingWholeDataset)
+        monospaced = option(.pqMonospaced)
         queries = store.doc.queries
         baseline = store.doc.queries
         selectedQueryID = Self.initialSelection(store: store, queries: store.doc.queries)
@@ -113,6 +125,17 @@ final class QueryEditorSession: ObservableObject {
     var environment: QueryEnvironment { security.environment(baseDirectory: store.fileURL?.deletingLastPathComponent()) }
     func makeEngine(_ queries: [QueryDefinition]? = nil) -> QueryEngine {
         QueryEngine(queries: queries ?? self.queries, environment: environment)
+    }
+    /// An engine that also reports the native query it was refused (for Edit Permission).
+    private func previewEngine() -> (QueryEngine, NativeQueryRefusals) {
+        var env = environment
+        let refusals = NativeQueryRefusals(), approve = env.approveNativeQuery
+        env.approveNativeQuery = { request in
+            let ok = approve?(request) ?? false
+            if !ok { refusals.note(request) }
+            return ok
+        }
+        return (QueryEngine(queries: queries, environment: env), refusals)
     }
 
     // MARK: Changes
@@ -194,7 +217,7 @@ final class QueryEditorSession: ObservableObject {
             preview = nil; previewError = nil; profiles = []; folding = [:]; isEvaluating = false
             return
         }
-        let engine = makeEngine(), name = q.name, step = selectedStep, whole = profileWholeDataset
+        let (engine, refusals) = previewEngine(), name = q.name, step = selectedStep, whole = profileWholeDataset
         let wantsFolding = Self.mayFold(q, in: queries)
         isEvaluating = true
         previewTask = Task {
@@ -209,6 +232,8 @@ final class QueryEditorSession: ObservableObject {
                 guard mine == generation else { return }
                 preview = shown
                 previewError = nil
+                permissionRequest = nil
+                if step == nil { queryErrors[q.id] = nil }
                 profiles = profiled
                 folding = foldingInfo
                 previewTime = Date()
@@ -221,6 +246,8 @@ final class QueryEditorSession: ObservableObject {
                 preview = nil
                 profiles = []
                 previewError = MError.wrap(error).description
+                permissionRequest = refusals.last
+                if step == nil { queryErrors[q.id] = previewError }
                 lastEvents = engine.diagnostics
                 if isRecordingDiagnostics { recordedDiagnostics += engine.diagnostics }
             }
@@ -264,15 +291,27 @@ final class QueryEditorSession: ObservableObject {
         isEvaluating = true
         Task {
             let results = await engine.refreshAll(only: names) { _ in }
+            var errors: [UUID: String] = [:]
             let failures = names.compactMap { n -> String? in
-                if case .failure(let e)? = results[n] { return "\(n): \(MError.wrap(e).description)" }
-                return nil
+                guard case .failure(let e)? = results[n] else { return nil }
+                let text = MError.wrap(e).description
+                if let id = queries.first(where: { $0.name == n })?.id { errors[id] = text }
+                return "\(n): \(text)"
             }
+            queryErrors = errors
             message = failures.isEmpty
                 ? StatusMessage(kind: .success, text: "Refreshed the previews of \(names.count) quer\(names.count == 1 ? "y" : "ies").")
                 : StatusMessage(kind: .error, text: failures.joined(separator: "\n"))
             refreshPreview()
         }
+    }
+
+    /// Edit Permission ▸ Run: approve the native query the preview asked for, then evaluate again.
+    func approvePermissionRequest() {
+        guard let r = permissionRequest else { return }
+        security.approve(query: r.query, kind: r.sourceKind, location: r.sourceLocation)
+        permissionRequest = nil
+        refreshPreview()
     }
 
     // MARK: Diagnostics
@@ -351,4 +390,12 @@ final class QueryEditorSession: ObservableObject {
             selectedQueryID = q.id
         }
     }
+}
+
+/// Native queries an evaluation was refused, collected from the engine's threads.
+private final class NativeQueryRefusals: @unchecked Sendable {
+    private let lock = NSLock()
+    private var requests: [NativeQueryRequest] = []
+    func note(_ r: NativeQueryRequest) { lock.lock(); requests.append(r); lock.unlock() }
+    var last: NativeQueryRequest? { lock.lock(); defer { lock.unlock() }; return requests.last }
 }
