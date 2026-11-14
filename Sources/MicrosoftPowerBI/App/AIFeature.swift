@@ -2,9 +2,11 @@ import SwiftUI
 import FacetCore
 import FacetAnalytics
 import FacetCloud
+import FacetQuery
 
 /// Wires the AI features into the shell: the four AI visuals (Key influencers, Decomposition tree,
-/// Narrative, Q&A), the Assistant pane and its settings tab.
+/// Narrative, Q&A), the Assistant pane and its settings tab, the assistant in DAX query view, and the
+/// on-device AI Insights functions of Power Query.
 @MainActor
 enum AIFeature {
     static func register() {
@@ -15,6 +17,7 @@ enum AIFeature {
             AnyView(AssistantPane(store: store))
         }
         DAXAssistant.install()
+        AIInsights.provider = OnDeviceAIInsights()
         AppCommands.register(commands)
         if !SettingsSections.extra.contains(where: { $0.title == "Assistant" }) {
             SettingsSections.extra.append(SettingsSections.Section(
