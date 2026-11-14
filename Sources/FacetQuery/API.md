@@ -35,12 +35,20 @@ Binary, Lines, Csv), `LibJson`, `LibXml`, `LibExcel` (+ `ZipReader`), `LibSQL` (
 | `Xml.Tables`, `Xml.Document` | attributes become `Attribute:name` columns in name order |
 | `Excel.Workbook` | .xlsx/.xlsm: sheets, tables, defined names, shared/inline strings, dates (1900 and 1904), booleans, error cells |
 | `Sqlite.Database`, `Value.NativeQuery` | tables and views; read-only; parameters; folding (below) |
+| `PostgreSQL.Database`, `AmazonRedshift.Database` | PostgreSQL protocol 3.0 in Swift (`Connectors/PostgreSQL`): TLS by default (verified; `TrustServerCertificate = true` accepts any certificate, `EncryptConnection = false` turns TLS off), SCRAM-SHA-256(-PLUS), MD5, cleartext only over TLS; extended query with binary results; `CommandTimeout` cancels the statement; navigation `Name` (`schema.table`), `Data`, `Schema`, `Item`, `Kind`; `Query` option |
+| `MySQL.Database`, `MariaDB.Contents` | MySQL client/server protocol in Swift (`Connectors/MySQL`): TLS by default, `caching_sha2_password` (full authentication only over TLS), `mysql_native_password`, `mysql_clear_password` over TLS; text protocol, or prepared statements (binary protocol) when parameters are given; `LOAD DATA LOCAL` is refused |
 | `Web.Contents` | http/https with `Query`, `Headers`, `RelativePath`, `Timeout`, `Content`, `ManualStatusHandling` and stored credentials |
 | `Web.Page` | tables of an HTML document (text or binary) via the system tidy parser: `Caption`, `Source`, `ClassName`, `Id`, `Data`; header rows, `colspan`/`rowspan` |
 | `OData.Feed` | JSON only (v4, or v2/v3 answering `Accept: application/json`): service document → `Name`/`Data` navigation table; entity sets follow `@odata.nextLink` / `__next` |
 | `Python.Execute`, `R.Execute` | need `allowScripts`; tables travel as CSV; Python needs pandas |
 
-Every other Get Data connector (SQL Server, PostgreSQL, MySQL, Oracle, ODBC, SharePoint, Azure, Fabric, Parquet,
+Server credentials come from `CredentialProvider.credential(kind:location:)` with kind `PostgreSQL`, `AmazonRedshift`, `MySQL` or
+`MariaDB` and location `server;database`: `.basic` (user, password), or `.oauth` (organizational account: an Entra token for
+`EntraResource.ossRDBMS`, sent as the password; the user is the token's `upn`). Every read is bounded (`WireLimits`: message size,
+column count, result size from `maxSourceBytes`, connect and command timeouts). `Value.NativeQuery` against a server binds a list
+positionally (`$1` / `?`) or a record by `@name`; with `[EnableFolding = true]` later steps fold onto it.
+
+Every other Get Data connector (SQL Server, Oracle, ODBC, SharePoint, Azure, Fabric, Parquet,
 PDF, …) and the `AI.*` functions are registered only to fail with a `DataSource.Error` that names the connector.
 
 ## Query folding (SQLite)
@@ -51,6 +59,14 @@ comparers, `List.Contains` over literals, `+ - * &`, parameters and other scalar
 `Table.RowCount`, and `Value.NativeQuery` with `[EnableFolding = true]`. Equality uses SQLite's null-safe `is` so
 results match M (`null <> 1` is true). Division, conditionals and other functions are not folded: from that step on
 the query runs locally on the rows the folded prefix returned.
+
+## Query folding (PostgreSQL, Redshift, MySQL, MariaDB)
+
+Everything SQLite folds, plus `Table.Group` (global, without a comparer) with `Table.RowCount`, `List.Sum/Min/Max/Average/Count/NonNullCount`
+and `List.Count(List.Distinct(…))` (null counts as one value, as in M), `Table.Join` and `Table.NestedJoin` + `Table.ExpandTableColumn`
+(inner, left, right and, except on MySQL, full outer) between tables of the same server, database and user. Keys match null-safely
+(`IS NOT DISTINCT FROM`, `<=>`), as M's joins do. Text comparisons follow the server's collation (MySQL's default collations ignore case),
+as in Power BI. A nested join that isn't expanded reads both tables and nests them locally.
 
 ## Behaviour chosen where Power Query does not document it
 

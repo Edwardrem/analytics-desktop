@@ -170,6 +170,8 @@ final class SQLiteSource: MTableSource {
             q.columns = ["Count"]; q.types = [.int64]; q.order = []
             q.selectList = "count(*) as \"Count\""
             return next(q)
+        case .group, .nestedJoin, .join, .expandTableColumn:
+            return nil
         }
     }
 }

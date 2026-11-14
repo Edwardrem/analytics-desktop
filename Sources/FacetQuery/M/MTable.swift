@@ -17,6 +17,14 @@ public enum MFoldOperation {
     case rowCount
     /// `Table.Distinct` over all columns.
     case distinct
+    /// `Table.Group` (global, ordinal keys): key columns and (new column, aggregate function, type).
+    case group(keys: [String], aggregates: [(name: String, function: MFunction, type: MType)])
+    /// `Table.NestedJoin` with another table: keys, the right table, the new column and the `JoinKind` number.
+    case nestedJoin(leftKeys: [String], right: MTable, rightKeys: [String], newColumn: String, kind: Int)
+    /// `Table.Join` (flat) with another table and the `JoinKind` number.
+    case join(leftKeys: [String], right: MTable, rightKeys: [String], kind: Int)
+    /// `Table.ExpandTableColumn` with explicit columns and new names.
+    case expandTableColumn(column: String, fields: [String], newNames: [String])
 }
 
 /// A lazily loaded table backing store (SQL sources). Schema is known up front; rows load on demand.

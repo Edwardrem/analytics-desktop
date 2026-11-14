@@ -30,8 +30,9 @@ extension MLibrary {
             return .table(nav)
         }
         lib.fn("Value.NativeQuery", 2...4) { a, ctx in
+            if let server = try serverNativeQuery(a, ctx) { return server }
             guard case .table(let target) = a[0], let path = try target.meta?.text(sqlitePathField) else {
-                throw MError("Value.NativeQuery needs a database from a connector that supports native queries (Sqlite.Database).")
+                throw MError("Value.NativeQuery needs a database from a connector that supports native queries (Sqlite.Database, PostgreSQL.Database, MySQL.Database, …).")
             }
             let sql = try a.text(1)
             var parameters: [(name: String?, value: MValue)] = []
@@ -53,7 +54,7 @@ extension MLibrary {
         }
         // Connectors that need a client driver this build does not ship: fail with an actionable message.
         let unavailable: [(String, String)] = [
-            ("Sql.Database", "SQL Server"), ("Sql.Databases", "SQL Server"), ("PostgreSQL.Database", "PostgreSQL"), ("MySQL.Database", "MySQL"),
+            ("Sql.Database", "SQL Server"), ("Sql.Databases", "SQL Server"),
             ("Oracle.Database", "Oracle"), ("Odbc.DataSource", "ODBC"), ("Odbc.Query", "ODBC"), ("OleDb.DataSource", "OLE DB"),
             ("AnalysisServices.Database", "Analysis Services"), ("Snowflake.Databases", "Snowflake"), ("GoogleBigQuery.Database", "Google BigQuery"),
         ]

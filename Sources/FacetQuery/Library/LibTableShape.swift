@@ -92,8 +92,12 @@ extension MLibrary {
                                           out, rows: ordered.count))
         }
         lib.fn("Table.Group", 3...5) { a, ctx in
-            let t = try a.table(0), keys = try t.requiredIndices(try a.textList(1)), cols = try t.columns
+            let t = try a.table(0), keyNames = try a.textList(1), keys = try t.requiredIndices(keyNames)
             let local = (try a.optInt(3) ?? 1) == 0, ignoreCase = MLib.ignoresCase(a[4])
+            if t.isLazy, !local, !a.has(4) || a[4].isNull, let folded = t.folded(.group(keys: keyNames, aggregates: try groupAggregates(a[2])), ctx) {
+                return .table(folded)
+            }
+            let cols = try t.columns
             var groups: [MKey: Int] = [:], groupRows: [[Int]] = [], lastKey: MKey?
             for r in 0..<(try t.rowCount) {
                 let k = MLib.rowKey(cols, keys, r, ignoreCase: ignoreCase)
@@ -112,6 +116,16 @@ extension MLibrary {
                 out.append(subTables.map { sub in MValue.capturing { try ctx.call(f, [sub]) } })
             }
             return .table(try MTable.make(names, types, out, rows: groupRows.count))
+        }
+    }
+
+    /// The aggregations of `Table.Group` as `(name, function, type)`, for folding.
+    static func groupAggregates(_ v: MValue) throws -> [(name: String, function: MFunction, type: MType)] {
+        try MLib.specList(v).map { spec in
+            guard spec.count >= 2, case .text(let name) = spec[0], case .function(let f) = spec[1] else {
+                throw MError("Table.Group: each aggregation must be {name, function} or {name, function, type}.")
+            }
+            return (name, f, spec.count > 2 ? spec[2].typeValue ?? .any : .any)
         }
     }
 
@@ -148,8 +162,12 @@ extension MLibrary {
                 }
             })
         }
-        lib.fn("Table.ExpandTableColumn", 2...4) { a, _ in
+        lib.fn("Table.ExpandTableColumn", 2...4) { a, ctx in
             let t = try a.table(0), i = try t.requireColumn(try a.text(1))
+            if t.isLazy, a.has(2) {
+                let fields = try a.textList(2), names = a.has(3) ? try a.textList(3) : fields
+                if let folded = t.folded(.expandTableColumn(column: try a.text(1), fields: fields, newNames: names), ctx) { return .table(folded) }
+            }
             var wanted: [String]
             if a.has(2) { wanted = try a.textList(2) } else {
                 wanted = []

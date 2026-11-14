@@ -179,14 +179,22 @@ extension MLibrary {
             return (t, try t.requiredIndices(try a.textList(key)))
         }
         for name in ["Table.NestedJoin", "Table.AddJoinColumn"] {
-            lib.fn(name, 5...7) { a, _ in
-                let (l, lk) = try keys(a, 0, 1), (r, rk) = try keys(a, 2, 3)
-                return .table(try nestedJoin(l, r, try exactMatches(l, lk, r, rk), newColumn: try a.text(4), kind: try a.optInt(5) ?? 1))
+            lib.fn(name, 5...7) { a, ctx in
+                let (l, lk) = try keys(a, 0, 1), (r, rk) = try keys(a, 2, 3), kind = try a.optInt(5) ?? 1
+                if l.isLazy, !a.has(6) || a[6].isNull,
+                   let folded = l.folded(.nestedJoin(leftKeys: try a.textList(1), right: r, rightKeys: try a.textList(3), newColumn: try a.text(4), kind: kind), ctx) {
+                    return .table(folded)
+                }
+                return .table(try nestedJoin(l, r, try exactMatches(l, lk, r, rk), newColumn: try a.text(4), kind: kind))
             }
         }
-        lib.fn("Table.Join", 4...8) { a, _ in
-            let (l, lk) = try keys(a, 0, 1), (r, rk) = try keys(a, 2, 3)
-            return .table(try flatJoin(l, lk, r, rk, try exactMatches(l, lk, r, rk), kind: try a.optInt(4) ?? 0))
+        lib.fn("Table.Join", 4...8) { a, ctx in
+            let (l, lk) = try keys(a, 0, 1), (r, rk) = try keys(a, 2, 3), kind = try a.optInt(4) ?? 0
+            if l.isLazy, !a.has(6) || a[6].isNull,
+               let folded = l.folded(.join(leftKeys: try a.textList(1), right: r, rightKeys: try a.textList(3), kind: kind), ctx) {
+                return .table(folded)
+            }
+            return .table(try flatJoin(l, lk, r, rk, try exactMatches(l, lk, r, rk), kind: kind))
         }
         lib.fn("Table.FuzzyNestedJoin", 5...7) { a, _ in
             let (l, lk) = try keys(a, 0, 1), (r, rk) = try keys(a, 2, 3)
