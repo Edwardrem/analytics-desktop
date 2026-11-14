@@ -202,8 +202,8 @@ struct RelationshipEditor: View {
     private func detect() async {
         let probe = draft
         guard !probe.fromColumn.isEmpty, !probe.toColumn.isEmpty else { uniqueness = .init(); return }
-        let data = DialogTarget.data(store)
-        let found = await Task.detached(priority: .userInitiated) { RelationshipEditLogic.uniqueness(probe, data: data) }.value
+        let data = DialogTarget.data(store), skipping = RelationshipEditLogic.unvalidatedTables(store.model)
+        let found = await Task.detached(priority: .userInitiated) { RelationshipEditLogic.uniqueness(probe, data: data, skipping: skipping) }.value
         if Task.isCancelled { return }
         uniqueness = found
         let columnsChanged = probe.fromColumn != original.fromColumn || probe.toColumn != original.toColumn

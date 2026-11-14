@@ -10,6 +10,7 @@ import FacetDesign
 enum FieldGlyph {
     static let measure = "function"
     static let hierarchy = "list.bullet.indent"
+    static let dateLevel = "calendar.day.timeline.left"
     static let folder = "folder"
 
     static func symbol(column c: ModelColumn) -> String {

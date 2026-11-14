@@ -186,7 +186,7 @@ struct ModelPropertiesPanel: View {
                 problem(.table(name))
             }
             InspectorSection("Advanced") {
-                PropertyRow("Storage mode") { Text(ModelGlyph.label(for: table.storageMode)).font(Design.Typeface.caption) }
+                PropertyRow("Storage mode") { StorageModeControl(table: table) }
                 PropertyRow("Source") {
                     Text(table.isCalculated ? "Calculated table" : table.sourceQuery.map { "Query “\($0)”" } ?? "Loaded data")
                         .font(Design.Typeface.caption)
@@ -320,8 +320,11 @@ struct ModelPropertiesPanel: View {
             }
             InspectorSection("Formatting") {
                 PropertyRow("Format") {
-                    FormatControls(format: ModelProperties.shared(measures.map(\.measure.formatString)), dataType: .decimal) { format in
-                        set("Format Measure", coalesce: "format-measures", invalidates: .model) { $0.formatString = format }
+                    FormatControls(format: ModelProperties.shared(measures.map(\.measure.formatString)), dataType: .decimal,
+                                   dynamic: single.map { s in .init(isOn: s.measure.formatExpression != nil) {
+                                       DynamicFormat.edit(store, table: s.table, measure: s.measure.name)
+                                   } }) { format in
+                        set("Format Measure", coalesce: "format-measures", invalidates: .model) { $0.formatString = format; $0.formatExpression = nil }
                     }
                 }
                 PropertyRow("Data category") {

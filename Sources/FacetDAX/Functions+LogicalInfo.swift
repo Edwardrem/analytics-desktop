@@ -82,6 +82,9 @@ extension DAXEngine {
             return .scalar(.bool(false))
         }
         d["TEXTSEARCH"] = { e, a, c, _ in
+            guard e.features.textSearch else {
+                throw DAXError("TEXTSEARCH belongs to string indexing and full-text search, a preview feature that is turned off.")
+            }
             let cid = try e.columnArg(a[0], c, "TEXTSEARCH")
             let query = try e.scalar(a[1], c).asString
             let words = ColumnStore.words(query)
@@ -95,20 +98,27 @@ extension DAXEngine {
                             ("CUSTOMDATA", \DAXEngine.customData)] {
             d[name] = { e, _, _, _ in .scalar(.string(e[keyPath: key])) }
         }
+        // FORMAT uses the model's culture unless a locale is given.
+        d["FORMAT"] = { e, a, c, _ in
+            let args = try a.map { try e.scalar($0, c) }
+            let culture = args.count > 2 && !args[2].isNull ? FormatCulture(identifier: args[2].asString) : e.formatCulture
+            return .scalar(PureText.format(args, culture: culture))
+        }
         d["SELECTEDMEASURE"] = { e, _, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURE can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURE can only be used inside a calculation item or a dynamic format string.") }
             return .scalar(try e.evalMeasure(m, c))
         }
         d["SELECTEDMEASURENAME"] = { _, _, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURENAME can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURENAME can only be used inside a calculation item or a dynamic format string.") }
             return .scalar(.string(m.name))
         }
         d["SELECTEDMEASUREFORMATSTRING"] = { e, _, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASUREFORMATSTRING can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASUREFORMATSTRING can only be used inside a calculation item or a dynamic format string.") }
+            if c.formattingMeasure { return .scalar(.string(m.formatString)) }
             return .scalar(.string(e.formatString(for: m, c)))
         }
         d["ISSELECTEDMEASURE"] = { e, a, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("ISSELECTEDMEASURE can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("ISSELECTEDMEASURE can only be used inside a calculation item or a dynamic format string.") }
             for arg in a {
                 if case .column(let table, let name, _) = (e.deref(arg, c)).0.kind {
                     if name.caseInsensitiveCompare(m.name) == .orderedSame { return .scalar(.bool(true)) }
@@ -120,7 +130,7 @@ extension DAXEngine {
         d["COLUMNSTATISTICS"] = { e, _, _, _ in
             var rows: [[Value]] = []
             for t in e.db.tables {
-                for c in t.columns {
+                for (i, c) in t.columns.enumerated() where !t.variationColumns.contains(i) {
                     let dict = c.dict
                     let minMax = c.values.filter { !$0.isNull }.min(by: { $0 < $1 })
                     let max = c.values.filter { !$0.isNull }.max(by: { $0 < $1 })
@@ -273,7 +283,7 @@ extension DAXEngine {
         case "INFO.COLUMNS", "INFO.VIEW.COLUMNS":
             var rows: [[Value]] = []
             for t in db.tables {
-                for (i, c) in t.columns.enumerated() {
+                for (i, c) in t.columns.enumerated() where !t.variationColumns.contains(i) {
                     let hidden = t.model?.columns[safe: i]?.isHidden ?? false
                     rows.append([.string(t.name), .string(c.name), .string(c.type.rawValue), .bool(hidden)])
                 }

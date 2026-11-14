@@ -337,6 +337,10 @@ public struct ChartInteractionLayer: View {
                 }
             }
             if let see = context.onSeeRecords { Button("See records") { see(sel) } }
+            let analyze = context.analyzeActions(sel)
+            if !analyze.isEmpty {
+                Menu("Analyze") { ForEach(analyze) { a in Button(a.title, action: a.perform) } }
+            }
         }
         Divider()
         Button("Show as a table") { context.onDrill(.showAsTable) }

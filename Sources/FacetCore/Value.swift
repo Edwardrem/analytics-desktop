@@ -252,6 +252,19 @@ public enum DateParsing {
         iso.dateFormat = format
         return iso.string(from: d)
     }
+    private static var localized: [String: DateFormatter] = [:]
+    /// Formats in a culture: its month and day names and AM/PM symbols.
+    public static func string(_ d: Date, format: String, locale: Locale) -> String {
+        lock.lock(); defer { lock.unlock() }
+        let df: DateFormatter
+        if let cached = localized[locale.identifier] { df = cached } else {
+            df = DateFormatter()
+            df.locale = locale; df.timeZone = TimeZone(identifier: "UTC")
+            localized[locale.identifier] = df
+        }
+        df.dateFormat = format
+        return df.string(from: d)
+    }
 }
 
 /// Loosely typed JSON, used for format property bags and theme files.

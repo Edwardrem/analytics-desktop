@@ -30,6 +30,10 @@ public final class DAXEngine {
     var userObjectID = ""
     var customData = ""
     var roleNames: [String] = []
+    /// Preview features this engine honours; new engines take `DAXFeatures.current`.
+    public var features = DAXFeatures.current
+    /// The culture FORMAT uses without a locale argument: the user's culture, which is the model's.
+    var formatCulture = FormatCulture.enUS
     private var sourceData = DataStore()
     var model = SemanticModel()
     /// Source data plus computed calculated tables, columns and groupings.
@@ -49,6 +53,7 @@ public final class DAXEngine {
         self.userName = userName
         self.userPrincipalName = userPrincipalName.isEmpty ? userName : userPrincipalName
         self.userCulture = culture ?? model.culture
+        formatCulture = FormatCulture(identifier: userCulture)
         sourceData = source
 
         // Data tables. Calculated tables have no source data yet; their columns arrive below.
@@ -203,6 +208,11 @@ public final class DAXEngine {
         var issues: [DAXObjectError] = []
         suspendObjectSecurity()
         defer { applyObjectSecurity() }
+        // Without user-context-aware calculated columns, calculated objects are computed as at refresh:
+        // with no View-as identity, so they don't change with the user viewing the report.
+        let identity = (userName, userPrincipalName)
+        if !features.userContextColumns { userName = ""; userPrincipalName = "" }
+        defer { (userName, userPrincipalName) = identity }
 
         // User-defined functions, so measures and columns can call them.
         for f in model.functions {
@@ -284,6 +294,9 @@ public final class DAXEngine {
             }
         }
 
+        // Date hierarchies of stored columns first, so calculated columns can use them.
+        buildAutoDateColumns(calculated: false)
+
         // Calculated columns and groupings.
         for ti in db.tables.indices {
             guard let mt = db.tables[ti].model else { continue }
@@ -318,7 +331,7 @@ public final class DAXEngine {
         }
 
         // Custom calendars for calendar-based time intelligence.
-        for t in model.tables {
+        for t in model.tables where features.calendarTimeIntelligence {
             guard let ti = db.tableIndex[t.name.daxKey] else { continue }
             for cal in t.calendars {
                 guard let dateName = cal.columnsByUnit["date"] ?? t.dateColumn,
@@ -327,8 +340,8 @@ public final class DAXEngine {
             }
         }
 
-        // Auto date/time hierarchies.
-        buildAutoDateColumns()
+        // Date hierarchies of calculated date columns.
+        buildAutoDateColumns(calculated: true)
         rebuildDataStore()
         return issues
     }
@@ -364,41 +377,11 @@ public final class DAXEngine {
         db.tables[ti].addColumn(ColumnStore(computed: c.name, type: c.dataType == .any ? .text : c.dataType, values: out, model: c))
     }
 
-    /// Appends hidden Year/Quarter/Month/Day columns for every date column when auto date/time is on.
-    private func buildAutoDateColumns() {
-        for ti in db.tables.indices {
-            guard let mt = db.tables[ti].model, !mt.isCalculated, mt.columns.contains(where: { $0.expression == nil }) || true else { continue }
-            let cal = Calendar.utc
-            for c in mt.columns where c.dataType.isTemporal && c.expression == nil {
-                guard let cid = db.tables[ti].colIndex[c.name.daxKey] else { continue }
-                let values = db.tables[ti].columns[cid].values
-                guard values.contains(where: { if case .date = $0 { return true }; return false }) else { continue }
-                var map: [String: ColumnID] = [:]
-                let levels: [(String, (Date) -> Value)] = [
-                    ("Year", { .int(Int64(cal.component(.year, from: $0))) }),
-                    ("Quarter", { .int(Int64(cal.component(.quarter, from: $0))) }),
-                    ("Month", { .int(Int64(cal.component(.month, from: $0))) }),
-                    ("Day", { .int(Int64(cal.component(.day, from: $0))) }),
-                ]
-                for (level, make) in levels {
-                    let name = "\(c.name).\(level)"
-                    guard db.tables[ti].colIndex[name.daxKey] == nil else { continue }
-                    let out = values.map { v -> Value in v.asDate.map(make) ?? .null }
-                    db.tables[ti].addColumn(ColumnStore(computed: name, type: .integer, values: out, model: nil))
-                    if let newCid = db.tables[ti].colIndex[name.daxKey] { map[level.lowercased()] = ColumnID(table: ti, col: newCid) }
-                }
-                if !map.isEmpty {
-                    autoDateColumns[ColumnID(table: ti, col: cid)] = map
-                    autoDateTables.insert(ti)
-                }
-            }
-        }
-    }
-
     private func rebuildDataStore() {
         var out = sourceData
         for t in db.tables {
-            out[t.name] = DataTable(name: t.name, columns: t.columns.map { DataColumn(name: $0.name, type: $0.type, values: $0.values) })
+            let kept = t.columns.indices.filter { !t.variationColumns.contains($0) }.map { t.columns[$0] }
+            out[t.name] = DataTable(name: t.name, columns: kept.map { DataColumn(name: $0.name, type: $0.type, values: $0.values) })
         }
         data = out
     }
@@ -415,7 +398,7 @@ public final class DAXEngine {
 
     /// Converts a filter into a context filter; nil when it restricts nothing or refers to a missing column.
     func ctxFilter(_ f: FilterSpec) throws -> CtxFilter? {
-        guard let cid = db.columnID(table: f.field.table, column: f.field.name) else { return nil }
+        guard let cid = columnID(f.field) else { return nil }
         try checkColumnAccess(cid, nil)
         let col = db.column(cid)
         func selected(_ values: [Value]) -> Set<Value> {
@@ -499,13 +482,13 @@ public final class DAXEngine {
         guard !points.isEmpty else { return nil }
         var columns: [ColumnID] = []
         for f in points[0].fields {
-            if let cid = db.columnID(table: f.table, column: f.name), !columns.contains(cid) { columns.append(cid) }
+            if let cid = columnID(f), !columns.contains(cid) { columns.append(cid) }
         }
         guard !columns.isEmpty else { return nil }
         if columns.count == 1 {
             var set = Set<Value>()
             for p in points { for (i, f) in p.fields.enumerated() where i < p.values.count {
-                if let cid = db.columnID(table: f.table, column: f.name), cid == columns[0] { set.insert(p.values[i]) }
+                if let cid = columnID(f), cid == columns[0] { set.insert(p.values[i]) }
             } }
             return set.isEmpty ? nil : CtxFilter(.values(columns[0], set))
         }
@@ -515,7 +498,7 @@ public final class DAXEngine {
             for cid in columns {
                 var hit = Value.null
                 for (i, f) in p.fields.enumerated() where i < p.values.count {
-                    if let c = db.columnID(table: f.table, column: f.name), c == cid { hit = p.values[i] }
+                    if let c = columnID(f), c == cid { hit = p.values[i] }
                 }
                 combo.append(hit)
             }
@@ -640,7 +623,7 @@ public final class DAXEngine {
     /// The distinct values of a field under filters, capped at `limit`.
     public func distinctValues(field: FieldRef, filters: [FilterSpec], limit: Int = 1000) -> [Value] {
         guard field.kind == .column, field.aggregation == .none,
-              let cid = db.columnID(table: field.table, column: field.name),
+              let cid = columnID(field),
               (try? checkColumnAccess(cid, nil)) != nil else { return [] }
         guard let ctx = try? rootContext(filters) else { return [] }
         var out = self.distinctValues(cid, ctx.fc, blankRow: true)
@@ -793,7 +776,7 @@ private extension [Value] {
     }
 }
 
-private extension ColumnStore {
+extension ColumnStore {
     /// A computed column carrying its model definition.
     convenience init(computed name: String, type: DataType, values: [Value], model: ModelColumn?) {
         self.init(name: name, type: type, values: values)

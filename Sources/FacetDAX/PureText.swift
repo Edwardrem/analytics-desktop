@@ -5,6 +5,26 @@ import FacetCore
 enum PureText {
     private typealias A = PureArgs
 
+    /// FORMAT(value, format [, locale]) in a culture: the locale argument's, else the model's.
+    static func format(_ a: [Value], culture: FormatCulture) -> Value {
+        let v = a[safe: 0] ?? .null
+        let fmt = A.s(a, 1)
+        let plain = fmt.isEmpty || ["general number", "general"].contains(fmt.lowercased())
+        switch v {
+        case .null: return .string("")
+        case .string(let s):
+            guard !fmt.isEmpty, let d = numeric(s) else { return .string(s) }
+            return .string(plain ? culture.localize(Value.double(d).asString) : ValueFormatter.format(.double(d), fmt, culture: culture))
+        case .bool(let b):
+            if plain { return .string(b ? "True" : "False") }
+            return .string(ValueFormatter.format(.int(b ? 1 : 0), fmt, culture: culture))
+        case .int, .double:
+            return .string(plain ? culture.localize(v.asString) : ValueFormatter.format(v, fmt, culture: culture))
+        case .date:
+            return .string(ValueFormatter.format(v, plain ? "General Date" : fmt, culture: culture))
+        }
+    }
+
     /// Length of the prefix of `text[from...]` matched by `pattern[pi...]` (wildcards `?`, `*`, `~` escape), or nil.
     private static func matchLength(_ pattern: [Character], _ pi: Int, _ text: [Character], _ from: Int) -> Int? {
         var p = pi, t = from
@@ -128,24 +148,7 @@ enum PureText {
         }
         f["SEARCH"] = { a in try search(a, caseInsensitive: true, name: "SEARCH") }
         f["FIND"] = { a in try search(a, caseInsensitive: false, name: "FIND") }
-        f["FORMAT"] = { a in
-            let v = a[safe: 0] ?? .null
-            let fmt = A.s(a, 1)
-            let plain = fmt.isEmpty || ["general number", "general"].contains(fmt.lowercased())
-            switch v {
-            case .null: return .string("")
-            case .string(let s):
-                guard !fmt.isEmpty, let d = numeric(s) else { return .string(s) }
-                return .string(plain ? Value.double(d).asString : ValueFormatter.format(.double(d), fmt))
-            case .bool(let b):
-                if plain { return .string(b ? "True" : "False") }
-                return .string(ValueFormatter.format(.int(b ? 1 : 0), fmt))
-            case .int, .double:
-                return .string(plain ? v.asString : ValueFormatter.format(v, fmt))
-            case .date:
-                return .string(ValueFormatter.format(v, plain ? "General Date" : fmt))
-            }
-        }
+        f["FORMAT"] = { a in format(a, culture: a.count > 2 ? FormatCulture(identifier: A.s(a, 2)) : .enUS) }
         f["VALUE"] = { a in
             switch a[safe: 0] ?? .null {
             case .null: return .null

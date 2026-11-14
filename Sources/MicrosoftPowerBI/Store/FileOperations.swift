@@ -139,10 +139,12 @@ enum FileOperations {
     static func write(_ store: DocumentStore, to url: URL) -> Bool {
         do {
             var notes: [ImportWarning] = []
+            // DirectQuery tables are read from their sources, not saved.
+            let doc = store.doc.withoutDirectQueryRows
             if url.pathExtension.lowercased() == projectExtension {
-                notes = try writeProject(store.doc, to: url)
+                notes = try writeProject(doc, to: url)
             } else {
-                try DocumentPackage.write(store.doc, to: url)
+                try DocumentPackage.write(doc, to: url)
             }
             store.markSaved(at: url)
             let files = DocumentFiles.of(store)

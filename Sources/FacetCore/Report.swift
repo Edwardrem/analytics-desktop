@@ -17,6 +17,8 @@ public struct FieldRef: Codable, Hashable, Identifiable, Sendable {
     public var isHidden = false
     /// "Show value as": "", "percentOfGrandTotal", "percentOfColumnTotal", "percentOfRowTotal".
     public var showAs: String = ""
+    /// A level of the column's auto date/time hierarchy ("Year", "Quarter", "Month", "Day"); nil for the column itself.
+    public var dateLevel: String?
 
     public init(kind: Kind, table: String, name: String, aggregation: Aggregation = .none) {
         self.kind = kind; self.table = table; self.name = name; self.aggregation = aggregation
@@ -27,17 +29,27 @@ public struct FieldRef: Codable, Hashable, Identifiable, Sendable {
     public static func measure(_ table: String, _ name: String) -> FieldRef {
         FieldRef(kind: .measure, table: table, name: name)
     }
+    /// A level of a date column's auto date/time hierarchy: `'Table'[Column].[Level]` in DAX.
+    public static func dateLevel(_ table: String, _ column: String, _ level: String) -> FieldRef {
+        var f = FieldRef(kind: .column, table: table, name: column)
+        f.dateLevel = level
+        return f
+    }
     /// True when this field produces a number per group (a measure or an aggregated column).
     public var isAggregate: Bool { kind == .measure || aggregation != .none }
     public var caption: String {
         if let d = displayName, !d.isEmpty { return d }
-        if kind == .column, aggregation != .none { return "\(aggregation.displayName) of \(name)" }
-        return name
+        let base = dateLevel ?? name
+        if kind == .column, aggregation != .none { return "\(aggregation.displayName) of \(base)" }
+        return base
     }
-    /// DAX-style identifier: 'Table'[Name].
-    public var daxReference: String { kind == .measure ? "[\(name)]" : "'\(table)'[\(name)]" }
+    /// DAX-style identifier: 'Table'[Name], or 'Table'[Name].[Level] for a date hierarchy level.
+    public var daxReference: String {
+        if kind == .measure { return "[\(name)]" }
+        return "'\(table)'[\(name)]" + (dateLevel.map { ".[\($0)]" } ?? "")
+    }
     /// Identity ignoring `id` and presentation, for matching the same field across wells.
-    public var key: String { "\(kind.rawValue)|\(table)|\(name)|\(aggregation.rawValue)" }
+    public var key: String { "\(kind.rawValue)|\(table)|\(name)|\(aggregation.rawValue)" + (dateLevel.map { "|\($0)" } ?? "") }
 }
 
 // MARK: - Filters
@@ -390,6 +402,8 @@ public struct ConditionalFormat: Codable, Identifiable, Hashable, Sendable {
         public var isPercent = false
         public var color: String = "#34C759"
         public var icon: String?
+        /// The number the rule gives a numeric property (a measure-driven column width).
+        public var number: Double?
         public init() {}
     }
     public var id = UUID()
@@ -484,6 +498,8 @@ public struct VisualSpec: Codable, Identifiable, Hashable, Sendable {
     public var tooltipPageID: UUID?
     /// Formatting that applies only in the phone layout, layered over `format` (card → property → value).
     public var mobileFormat: FormatBag?
+    /// Measure-driven ("fx") format properties; their values arrive in `VisualData.formatOverrides`.
+    public var formatBindings: [FormatBinding]?
 
     public init(type: VisualType, frame: Frame, name: String? = nil) {
         self.type = type; self.frame = frame; self.name = name ?? type.displayName
@@ -526,6 +542,9 @@ public struct VisualData: Sendable {
     public var daxQuery: String = ""
     /// The title a measure supplies (a `.title` conditional format), evaluated under the visual's filters.
     public var dynamicTitle: String?
+    /// The evaluated values of the visual's `formatBindings` (card → key → value), drawn in place
+    /// of the stored format.
+    public var formatOverrides: FormatBag = [:]
 
     public init(table: DataTable = DataTable(), roles: [String: [Int]] = [:], fields: [FieldRef?] = [],
                 formats: [String] = [], totals: [Value] = [], error: String? = nil) {

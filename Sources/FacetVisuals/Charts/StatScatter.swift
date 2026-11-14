@@ -159,6 +159,8 @@ struct ScatterChart: View {
         let base = CGFloat(FormatNumber.clamped(style.format.double("markers", "size", 3.5), to: ScatterChart.markerSizes) ?? 3.5)
         let visible = model.visible(frame: frame)
         let matcher = SelectionMatcher(context.selection)
+        // Past the limit, draw (and hit-test) the high-density sample; lines and statistics use every point.
+        let shown = ScatterSampling.sample(visible) { matcher.isSelected($0.selection) }
         let clusters = context.overlays.clusters
         let names = model.legendNames(clusters: clusters)
         func color(_ p: ScatterModel.Point) -> Color {
@@ -174,9 +176,9 @@ struct ScatterChart: View {
                         yFormat: format(.y), yDefaultTitle: caption(.y),
                         refValues: visible.map(\.y),
                         snapRadius: 8,
-                        signature: visible.count &* 31 &+ frame,
+                        signature: shown.count &* 31 &+ frame,
                         hits: { map in
-                            visible.map { p in
+                            shown.map { p in
                                 ChartHit(id: p.id, path: Path(ellipseIn: circle(map.point(p.x, p.y), radius(p, model, base))),
                                          selection: p.selection,
                                          tooltip: TooltipContent(title: p.label, rows: tooltipRows(p, model, color(p))))
@@ -192,7 +194,7 @@ struct ScatterChart: View {
                                 }
                                 ctx.stroke(path, with: .color(color(trail[0]).opacity(0.5)), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                             }
-                            for p in visible.prefix(4_000) {
+                            for p in shown {
                                 let dim = (matcher.isActive && !matcher.isSelected(p.selection))
                                     || (!highlighted.isEmpty && !highlighted.contains(model.colorIndex(p, clusters: clusters)))
                                 ctx.fill(Path(ellipseIn: circle(map.point(p.x, p.y), radius(p, model, base))),
@@ -201,6 +203,9 @@ struct ScatterChart: View {
                             drawLines(ctx, map, reach(model), visible, style: style)
                         },
                         marks: { })
+            .overlay(alignment: .bottomTrailing) {
+                if shown.count < visible.count { samplingNote(shown: shown.count, of: visible.count, style: style) }
+            }
             .overlay(alignment: .topTrailing) {
                 if !model.frames.isEmpty {
                     // The current play-axis value, large and quiet behind the points.
@@ -208,6 +213,17 @@ struct ScatterChart: View {
                         .padding(Design.Space.m).allowsHitTesting(false)
                 }
             }
+    }
+
+    /// Says the chart is sampled, as Power BI's high-density sampling does.
+    private func samplingNote(shown: Int, of total: Int, style: ChartStyle) -> some View {
+        let text = ScatterSampling.note(shown: shown, of: total)
+        return Label(text, systemImage: "circle.grid.3x3")
+            .font(.system(size: 9)).foregroundStyle(style.secondary)
+            .labelStyle(.titleAndIcon).lineLimit(1)
+            .padding(Design.Space.xs)
+            .help("\(text). Overlapping points are drawn once; outliers and selected points are always shown.")
+            .accessibilityLabel(text)
     }
 
     private func itemColor(_ item: AnalyticsItem, _ fallback: Color) -> Color {

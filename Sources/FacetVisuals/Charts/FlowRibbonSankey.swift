@@ -5,7 +5,8 @@ import FacetDesign
 // MARK: - Ribbon
 
 /// Ribbon chart: like a stacked area, but each series is drawn as its own band whose vertical
-/// position follows its rank within each category, so crossings show how ranks changed.
+/// position follows its rank within each category, so crossings show how ranks changed. A field in
+/// Small multiples draws one ribbon per value, on a shared value scale unless that is turned off.
 struct RibbonChart: View {
     let env: FlowEnv
 
@@ -17,6 +18,8 @@ struct RibbonChart: View {
         /// With cross-highlighting: the upper edge of the highlighted part of the band, which
         /// starts at `lo`. Empty when nothing is highlighted.
         var lit: [Double] = []
+        /// The band's rank at each category: 1 for the largest value there.
+        var rank: [Int] = []
     }
     struct Layout {
         var bands: [Band] = []
@@ -30,27 +33,53 @@ struct RibbonChart: View {
 
     var body: some View {
         let model = SeriesModel(spec: env.spec, data: env.data, categoryWell: .category, valueWells: [.values], legendWell: .legend)
-        GeometryReader { geo in
-            let L = layout(model, size: geo.size)
-            let items = model.series.enumerated().map { offset, s in
-                LegendItem(id: offset, name: s.name, color: env.colors.seriesColor(offset, name: s.name))
-            }
-            let hits = bandHits(L, model)
-            var h = Hasher()
-            let _ = model.series.forEach { s in h.combine(s.values); h.combine(s.baseline) }
-            ChartScaffold(spec: env.spec, context: env.context, items: items) { highlighted in
-                FlowCanvas(env: env, hits: hits, signature: h.finalize()) { ctx, size in
-                    draw(ctx, L, model, highlighted: highlighted, size: size)
+        let items = model.series.enumerated().map { offset, s in
+            LegendItem(id: offset, name: s.name, color: env.colors.seriesColor(offset, name: s.name))
+        }
+        let parts = SeriesModel.partitions(data: env.data)
+        ChartScaffold(spec: env.spec, context: env.context, items: items) { highlighted in
+            if parts.isEmpty {
+                panel(model, sharedMax: nil, highlighted: highlighted)
+            } else {
+                let models = parts.map {
+                    SeriesModel(spec: env.spec, data: env.data, categoryWell: .category, valueWells: [.values], legendWell: .legend, partition: $0)
+                }
+                let shared = env.f.bool("smallMultiples", "sharedYAxis", true) ? sharedMax(models) : nil
+                SmallMultiplesGrid(partitions: parts, style: env.style) { p, _ in
+                    if let i = parts.firstIndex(where: { $0.title == p.title }) {
+                        panel(models[i], sharedMax: shared, highlighted: highlighted)
+                    }
                 }
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(env.spec.type.displayName), \(model.categories.count) categories, \(model.series.count) series.")
+        .accessibilityLabel("\(env.spec.type.displayName), \(model.categories.count) categories, \(model.series.count) series"
+                            + (parts.isEmpty ? "." : ", in \(parts.count) small multiples."))
+    }
+
+    /// One ribbon, laid out at the size it is drawn.
+    private func panel(_ model: SeriesModel, sharedMax: Double?, highlighted: Set<Int>) -> some View {
+        GeometryReader { geo in
+            let L = layout(model, size: geo.size, sharedMax: sharedMax)
+            let hits = bandHits(L, model, size: geo.size)
+            var h = Hasher()
+            let _ = model.series.forEach { s in h.combine(s.values); h.combine(s.baseline) }
+            FlowCanvas(env: env, hits: hits, signature: h.finalize()) { ctx, size in
+                draw(ctx, L, model, highlighted: highlighted, size: size)
+            }
+        }
+    }
+
+    /// The tallest stack across the panels, so every small multiple is drawn on the same scale.
+    func sharedMax(_ models: [SeriesModel]) -> Double? {
+        let tallest = models.map { layout($0, size: CGSize(width: 1, height: 1)).maxTotal }.max() ?? 0
+        return tallest > 0 ? tallest : nil
     }
 
     /// The band edges per category. With cross-highlighting the bands keep the size and rank of
-    /// the unhighlighted values, and each carries the highlighted part inside it.
-    func layout(_ model: SeriesModel, size: CGSize) -> Layout {
+    /// the unhighlighted values, and each carries the highlighted part inside it. `sharedMax`
+    /// sets the top of the scale (the small multiples' shared value axis).
+    func layout(_ model: SeriesModel, size: CGSize, sharedMax: Double? = nil) -> Layout {
         var L = Layout()
         let n = model.categories.count, m = model.series.count
         guard n > 0, m > 0 else { return L }
@@ -70,11 +99,12 @@ struct RibbonChart: View {
             for c in 0..<n { totals[c] += full(s, c) }
         }
         L.totals = totals
-        L.maxTotal = totals.max() ?? 0
+        L.maxTotal = max(sharedMax ?? 0, totals.max() ?? 0)
         L.format = model.series.first?.format ?? ""
         L.caption = env.caption(model.series.first?.column)
         for _ in 0..<m {
-            L.bands.append(Band(series: 0, lo: [Double](repeating: 0, count: n), hi: [Double](repeating: 0, count: n)))
+            L.bands.append(Band(series: 0, lo: [Double](repeating: 0, count: n), hi: [Double](repeating: 0, count: n),
+                                rank: [Int](repeating: 0, count: n)))
         }
         for s in model.series.indices {
             L.bands[s].series = s
@@ -86,7 +116,8 @@ struct RibbonChart: View {
                 return va == vb ? a < b : va > vb
             }
             var cum = 0.0
-            for s in order {
+            for (place, s) in order.enumerated() {
+                L.bands[s].rank[c] = place + 1
                 let v = full(s, c)
                 L.bands[s].lo[c] = cum
                 L.bands[s].hi[c] = cum + v
@@ -100,12 +131,15 @@ struct RibbonChart: View {
         return L
     }
 
+    /// The vertical position of a value: 0 at the bottom of the plot, `maxTotal` at its top.
+    static func y(_ v: Double, _ L: Layout, size: CGSize) -> CGFloat {
+        let plot = CGRect(origin: .zero, size: size).insetBy(dx: 0, dy: 6)
+        return plot.maxY - CGFloat(v / max(L.maxTotal, 1e-12)) * plot.height
+    }
+
     private func draw(_ ctx: GraphicsContext, _ L: Layout, _ model: SeriesModel, highlighted: Set<Int>, size: CGSize) {
         guard !L.bands.isEmpty, L.maxTotal > 0, L.xs.count > 1 else { return }
-        let plot = CGRect(origin: .zero, size: size).insetBy(dx: 0, dy: 6)
-        func y(_ v: Double) -> CGFloat {
-            plot.maxY - CGFloat(v / L.maxTotal) * plot.height
-        }
+        func y(_ v: Double) -> CGFloat { Self.y(v, L, size: size) }
         for (offset, band) in L.bands.enumerated() {
             let s = model.series[band.series]
             let color = env.colors.seriesColor(offset, name: s.name)
@@ -140,7 +174,8 @@ struct RibbonChart: View {
         }
     }
 
-    private func bandHits(_ L: Layout, _ model: SeriesModel) -> [ChartHit] {
+    /// One hover and click target per band and category, where the band is drawn there.
+    func bandHits(_ L: Layout, _ model: SeriesModel, size: CGSize) -> [ChartHit] {
         guard L.maxTotal > 0, !L.bands.isEmpty else { return [] }
         var out: [ChartHit] = []
         for (c, slice) in L.slices.enumerated() {
@@ -150,16 +185,13 @@ struct RibbonChart: View {
                 let lo = band.lo[c], hi = band.hi[c]
                 guard hi > lo else { continue }
                 let selection = model.selection(category: model.categories[c].index, series: s.index)
-                let top = band.hi[c] / L.maxTotal
-                let bottom = band.lo[c] / L.maxTotal
-                let height = 1.0
-                let rect = CGRect(x: slice.x0, y: (1 - top) * height, width: slice.x1 - slice.x0,
-                                  height: (top - bottom) * height)
+                let top = Self.y(hi, L, size: size), bottom = Self.y(lo, L, size: size)
+                let rect = CGRect(x: slice.x0, y: top, width: slice.x1 - slice.x0, height: bottom - top)
                 let value = (model.hasBaseline ? model.series[s.index].baseline[c] : nil) ?? model.series[s.index].values[c] ?? 0
                 var rows: [TooltipContent.Row] = [
                     .init(color: env.colors.seriesColor(offset, name: s.name), label: L.caption,
                           value: env.full(value, format: L.format), isEmphasized: true),
-                    .init(label: "Rank", value: "\(offset + 1) of \(L.bands.count)"),
+                    .init(label: "Rank", value: "\(band.rank[safe: c] ?? offset + 1) of \(L.bands.count)"),
                     .init(label: "Share", value: env.percent((hi - lo) / max(total, 1e-12))),
                 ]
                 if model.hasBaseline {

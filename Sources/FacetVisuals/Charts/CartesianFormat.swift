@@ -45,11 +45,7 @@ extension CartesianOptions {
                     y2.string("title", "Title", "")]
         }
         out += SharedFormatCards.legend()
-        let multiples = FormatCard("smallMultiples", "Small multiples")
-        out += [multiples.bool("sharedYAxis", "Shared value axis", true),
-                multiples.number("columns", "Columns (0 = automatic)", 0, 0...20),
-                multiples.number("rows", "Rows (0 = automatic)", 0, 0...20),
-                multiples.number("padding", "Padding", 14, 0...100)]
+        out += SmallMultiplesLayout.formatProperties()
         out.append(FormatCard("zoomSlider", "Zoom slider").bool("show", "Show zoom slider", false))
         if kind.drawsBars {
             let bars = FormatCard("bars", kind.horizontal ? "Bars" : "Columns")

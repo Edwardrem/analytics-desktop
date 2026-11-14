@@ -151,6 +151,8 @@ struct TMDLWriter {
     let queries: [QueryDefinition]
     /// Table name → the query emitted as that table's `partition … = m`.
     let partitionQuery: [String: QueryDefinition]
+    /// The aggregation mappings written as `alternateOf`, by aggregation column (see `TMDLAggregations.key`).
+    let nativeAggregations: [String: AggregationMapping]
 
     init(model: SemanticModel, queries: [QueryDefinition]) {
         self.model = model
@@ -163,6 +165,7 @@ struct TMDLWriter {
             map[t.name] = def
         }
         partitionQuery = map
+        nativeAggregations = TMDLAggregations.native(in: model)
     }
 
     var sharedQueries: [QueryDefinition] {
@@ -219,10 +222,15 @@ struct TMDLWriter {
         e.prop(l + 1, "culture", model.culture)
         e.prop(l + 1, "defaultPowerBIDataSourceVersion", "powerBI_V3")
         e.blank()
-        if model.autoDateTime { e.facet(l + 1, "autoDateTime", .bool(true)) }
+        // Power BI's own switch for auto date/time ("Time intelligence" in the model).
+        e.annotation(l + 1, "__PBI_TimeIntelligenceEnabled", model.autoDateTime ? "1" : "0")
+        if let v = model.autodetectRelationships { e.facet(l + 1, "autodetectRelationships", .bool(v)) }
         if !model.fieldParameters.isEmpty { e.facet(l + 1, "fieldParameters", encoding: model.fieldParameters) }
         if !model.whatIfParameters.isEmpty { e.facet(l + 1, "whatIfParameters", encoding: model.whatIfParameters) }
-        if !model.aggregations.isEmpty { e.facet(l + 1, "aggregations", encoding: model.aggregations) }
+        if !model.aggregations.isEmpty,
+           let v = TMDLAggregations.annotation(model.aggregations, native: Set(nativeAggregations.values.map(\.id))) {
+            e.facet(l + 1, "aggregations", v)
+        }
         e.facet(l + 1, "layouts", encoding: model.layouts)
         if model.aiExcludedFields != defaults.aiExcludedFields { e.facet(l + 1, "aiExcludedFields", encoding: model.aiExcludedFields) }
         if !model.aiInstructions.isEmpty { e.facet(l + 1, "aiInstructions", .string(model.aiInstructions)) }
@@ -249,7 +257,7 @@ struct TMDLWriter {
         if t.dateColumn != nil { e.prop(l + 1, "dataCategory", "Time") }
         e.blank()
         for m in t.measures { emitMeasure(e, l + 1, m); e.blank() }
-        for c in t.columns { emitColumn(e, l + 1, c); e.blank() }
+        for c in t.columns { emitColumn(e, l + 1, c, table: t.name); e.blank() }
         for h in t.hierarchies { emitHierarchy(e, l + 1, h); e.blank() }
 
         var modeWritten = false
@@ -269,6 +277,8 @@ struct TMDLWriter {
             e.blank()
             sourceQueryWritten = true
         }
+        let policySource = t.expression == nil ? partitionQuery[t.name]?.mScript : nil
+        if let p = t.incrementalRefresh { TMDLRefreshPolicy.emit(e, l + 1, p, source: policySource, table: t.name); e.blank() }
         if !modeWritten, t.storageMode != .import { e.facet(l + 1, "storageMode", .string(t.storageMode.rawValue)) }
         if !sourceQueryWritten, let q = t.sourceQuery { e.facet(l + 1, "sourceQuery", .string(q)) }
         if let d = t.dateColumn { e.facet(l + 1, "dateColumn", .string(d)) }
@@ -277,7 +287,9 @@ struct TMDLWriter {
         if let c = t.rowLabelColumn { e.facet(l + 1, "rowLabelColumn", .string(c)) }
         if let c = t.keyColumn { e.facet(l + 1, "keyColumn", .string(c)) }
         if !t.calendars.isEmpty { e.facet(l + 1, "calendars", encoding: t.calendars) }
-        if let p = t.incrementalRefresh { e.facet(l + 1, "incrementalRefresh", encoding: p) }
+        if let p = t.incrementalRefresh, TMDLRefreshPolicy.needsDateColumnAnnotation(p, source: policySource) {
+            e.facet(l + 1, TMDLRefreshPolicy.dateColumnAnnotation, .string(p.dateColumn))
+        }
     }
 
     func emitMeasure(_ e: TMDLEmitter, _ l: Int, _ m: Measure) {
@@ -291,7 +303,8 @@ struct TMDLWriter {
         e.prop(l + 1, "lineageTag", m.id.lower)
     }
 
-    func emitColumn(_ e: TMDLEmitter, _ l: Int, _ c: ModelColumn) {
+    /// A column; with its table, also the `alternateOf` that makes it an aggregation of a detail column.
+    func emitColumn(_ e: TMDLEmitter, _ l: Int, _ c: ModelColumn, table: String? = nil) {
         e.description(l, c.description)
         if let dax = c.expression { e.expression(l, "column \(TMDLName.quote(c.name))", dax) }
         else { e.raw(l, "column \(TMDLName.quote(c.name))") }
@@ -308,6 +321,7 @@ struct TMDLWriter {
         if let s = c.sortByColumn { e.prop(l + 1, "sortByColumn", TMDLName.quote(s)) }
         if !c.displayFolder.isEmpty { e.prop(l + 1, "displayFolder", c.displayFolder) }
         if let cat = TMDLVocabulary.category(c.dataCategory) { e.prop(l + 1, "dataCategory", cat) }
+        if let table, let m = nativeAggregations[TMDLAggregations.key(table, c.name)] { TMDLAggregations.emit(e, l + 1, m) }
         if !dt.exact { e.facet(l + 1, "dataType", .string(c.dataType.rawValue)) }
         if !native { e.facet(l + 1, "summarizeBy", .string(c.summarizeBy.rawValue)) }
         if !c.formatLocale.isEmpty { e.facet(l + 1, "formatLocale", .string(c.formatLocale)) }

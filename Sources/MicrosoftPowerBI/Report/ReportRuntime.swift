@@ -156,7 +156,7 @@ final class ReportRuntime: ObservableObject {
         guard tooltipData[key] == nil, !tooltipLoading.contains(key) else { return }
         let sourcePage = store.currentPage
         let source = sourcePage.visual(sourceID).map { store.request(for: $0, on: sourcePage) } ?? VisualRequest()
-        let jobs = page.visuals.filter { !$0.isHidden && (!$0.type.isPageElement || $0.type == .textBox) }.map { spec in
+        let jobs = page.visuals.filter { !$0.isHidden && FormatBindings.queriesData($0) }.map { spec in
             (spec, TooltipPages.request(base: store.request(for: spec, on: page), source: source, point: point))
         }
         tooltipLoading.insert(key)

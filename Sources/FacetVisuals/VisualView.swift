@@ -9,6 +9,14 @@ public struct NavItem: Identifiable, Hashable {
     public init(id: UUID, name: String) { self.id = id; self.name = name }
 }
 
+/// A command the host adds to a visual's context menu.
+public struct VisualMenuAction: Identifiable {
+    public let id: String
+    public var title: String
+    public var perform: () -> Void
+    public init(title: String, perform: @escaping () -> Void) { self.id = title; self.title = title; self.perform = perform }
+}
+
 /// Everything a visual needs from its host besides its spec and data.
 /// Renderers are pure views: they never touch the model, they only call back.
 public struct VisualContext {
@@ -44,6 +52,15 @@ public struct VisualContext {
     /// The report asks every slicer for an Apply button (query reduction); a slicer's own
     /// `format["slicer"]["applyButton"]` still wins.
     public var slicerApplyButtons = false
+    /// Analyze commands the host offers for a data point ("Explain the increase"), listed under
+    /// Analyze in the point's context menu. Empty = no Analyze menu.
+    public var analyzeActions: (DataPointSelection) -> [VisualMenuAction] = { _ in [] }
+    /// Opens the host's setup for a visual that needs one (the address of embedded content).
+    /// Nil = no setup offered here (reading view, thumbnails).
+    public var onSetUp: ((VisualSpec) -> Void)?
+    /// Runs the Power Automate flow a visual is connected to, with the visual's data. Nil = the
+    /// flow can't run from here.
+    public var onRunFlow: ((VisualSpec) -> Void)?
 
     public init() {}
 
@@ -59,8 +76,18 @@ public struct VisualView: View {
     public let data: VisualData
     public let context: VisualContext
 
+    /// Draws `spec` with its measure-driven format values (`data.formatOverrides`) in place of the
+    /// stored ones. A change the renderer reports keeps the stored values of the properties it
+    /// left alone, so an evaluated value is never written back as a static one.
     public init(spec: VisualSpec, data: VisualData, context: VisualContext) {
-        self.spec = spec; self.data = data; self.context = context
+        let overrides = spec.boundFormatOverrides(data.formatOverrides)
+        self.data = data
+        guard !overrides.isEmpty else { self.spec = spec; self.context = context; return }
+        self.spec = spec.applyingFormatOverrides(overrides)
+        var c = context
+        let report = context.onSpecChange
+        c.onSpecChange = { edited in report(edited.restoringFormatOverrides(overrides, from: spec)) }
+        self.context = c
     }
 
     public var body: some View {

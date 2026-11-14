@@ -16,7 +16,7 @@ final class StoreRegistry {
 
     func store(for handle: DocumentHandle) -> DocumentStore {
         if let s = stores[handle.id] { return s }
-        var doc = FacetDocument()
+        var doc = DocumentStore.newDocument()
         var url: URL?
         var problem: String?
         var opened = false

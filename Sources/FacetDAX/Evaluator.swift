@@ -511,7 +511,12 @@ extension DAXEngine {
             if let v = try? scalar(fe, c), !v.isNull { return v.asString }
             return inner
         }
-        if let fe = m.formatExpr, let v = try? scalar(fe, c), !v.isNull { return v.asString }
+        if let fe = m.formatExpr {
+            // As in a calculation item, SELECTEDMEASURE() is the measure's value in this context.
+            c.selectedMeasure = m
+            c.formattingMeasure = true
+            if let v = try? scalar(fe, c), !v.isNull { return v.asString }
+        }
         return m.formatString
     }
 

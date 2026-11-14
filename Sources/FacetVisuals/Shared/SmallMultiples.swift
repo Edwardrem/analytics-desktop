@@ -50,6 +50,15 @@ public struct SmallMultiplesGrid<Cell: View>: View {
 }
 
 enum SmallMultiplesLayout {
+    /// The Small multiples format card: a shared value axis, the grid's columns and rows, and padding.
+    static func formatProperties() -> [FormatProperty] {
+        let multiples = FormatCard("smallMultiples", "Small multiples")
+        return [multiples.bool("sharedYAxis", "Shared value axis", true),
+                multiples.number("columns", "Columns (0 = automatic)", 0, 0...20),
+                multiples.number("rows", "Rows (0 = automatic)", 0, 0...20),
+                multiples.number("padding", "Padding", 14, 0...100)]
+    }
+
     /// Column count whose panels come closest to a 3:2 aspect ratio, penalising empty cells.
     static func columns(count n: Int, size: CGSize) -> Int {
         guard n > 1, size.width > 0, size.height > 0 else { return 1 }

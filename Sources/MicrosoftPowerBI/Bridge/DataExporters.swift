@@ -3,7 +3,8 @@ import FacetCore
 import FacetInterop
 
 /// The file formats Export data writes, registered as `VisualExport.dataExporters`: CSV (RFC 4180,
-/// UTF-8 with a byte-order mark so Excel reads accents correctly) and Excel (.xlsx, one sheet).
+/// UTF-8 with a byte-order mark so Excel reads accents correctly), Excel (.xlsx, one sheet) and JSON
+/// (an array of row objects, UTF-8).
 /// Values are written unformatted, as Power BI's "Underlying data" and "Summarized data" exports do.
 enum DataExporters {
     @MainActor
@@ -14,6 +15,63 @@ enum DataExporters {
         VisualExport.dataExporters["xlsx"] = { table, _, url in
             try xlsx(table).write(to: url, options: .atomic)
         }
+        VisualExport.dataExporters["json"] = { table, _, url in
+            try json(table).write(to: url, options: .atomic)
+        }
+    }
+
+    // MARK: JSON
+
+    /// One object per row, keys in column order (a repeated column name gets " 2", " 3"…). Numbers and
+    /// true/false stay typed, dates are ISO 8601 text ("2024-03-01", "2024-03-01T10:30:00" with a
+    /// time of day), blanks and non-finite numbers are null.
+    static func json(_ table: DataTable) -> Data {
+        var taken = Set<String>()
+        let keys = table.columns.map { column -> String in
+            var name = column.name, n = 2
+            while taken.contains(name) { name = "\(column.name) \(n)"; n += 1 }
+            taken.insert(name)
+            return jsonString(name)
+        }
+        var out = "["
+        for r in 0..<table.rowCount {
+            let fields = table.columns.indices.map { c in "\(keys[c]): \(jsonValue(table.columns[c].values[safe: r] ?? .null))" }
+            out += (r == 0 ? "\n" : ",\n") + "  {" + fields.joined(separator: ", ") + "}"
+        }
+        out += table.rowCount == 0 ? "]\n" : "\n]\n"
+        return Data(out.utf8)
+    }
+
+    static func jsonValue(_ value: Value) -> String {
+        switch value {
+        case .null: return "null"
+        case .bool(let b): return b ? "true" : "false"
+        case .int(let i): return String(i)
+        case .double(let d):
+            guard d.isFinite else { return "null" }
+            return d == d.rounded() && abs(d) < 1e15 ? String(Int64(d)) : String(d)
+        case .string(let s): return jsonString(s)
+        case .date(let d):
+            let hasTime = d.timeIntervalSince1970.truncatingRemainder(dividingBy: 86400) != 0
+            return jsonString(ValueFormatter.formatDate(d, hasTime ? "yyyy-MM-dd'T'HH:mm:ss" : "yyyy-MM-dd"))
+        }
+    }
+
+    /// A JSON string literal: quotes, backslashes and control characters escaped.
+    static func jsonString(_ s: String) -> String {
+        var out = "\""
+        for scalar in s.unicodeScalars {
+            switch scalar {
+            case "\"": out += "\\\""
+            case "\\": out += "\\\\"
+            case "\n": out += "\\n"
+            case "\r": out += "\\r"
+            case "\t": out += "\\t"
+            default:
+                if scalar.value < 0x20 { out += String(format: "\\u%04X", scalar.value) } else { out.unicodeScalars.append(scalar) }
+            }
+        }
+        return out + "\""
     }
 
     // MARK: CSV

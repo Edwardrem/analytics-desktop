@@ -78,7 +78,9 @@ struct MeasureToolsRow: View {
         HStack(spacing: Design.Space.s) {
             Text("Measure tools").font(Design.Typeface.captionStrong).foregroundStyle(.secondary)
             Hairline(vertical: true).frame(height: 14).padding(.horizontal, Design.Space.xxs)
-            FormatControls(format: measure.formatString, dataType: .decimal, apply: applyFormat)
+            FormatControls(format: measure.formatString, dataType: .decimal,
+                           dynamic: .init(isOn: measure.formatExpression != nil) { DynamicFormat.edit(store, table: table, measure: measure.name) },
+                           apply: applyFormat)
             homeTableMenu
             IconButton("square.and.pencil", help: "Edit in the formula bar") {
                 ModelOps.beginFormula(store, kind: .measure, table: table, editing: measure.name)
@@ -102,9 +104,10 @@ struct MeasureToolsRow: View {
         .help("Home table")
     }
 
+    /// A static format replaces a dynamic one, as choosing one does in Power BI.
     private func applyFormat(_ format: String) {
         ModelOps.updateMeasures(store, [(table, measure.name)], name: "Format Measure",
-                                coalesce: "format-\(table)-\(measure.name)") { $0.formatString = format }
+                                coalesce: "format-\(table)-\(measure.name)") { $0.formatString = format; $0.formatExpression = nil }
     }
 }
 
