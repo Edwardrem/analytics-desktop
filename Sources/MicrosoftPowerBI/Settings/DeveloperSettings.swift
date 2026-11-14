@@ -28,7 +28,7 @@ struct DeveloperSettings: View {
                     LabeledContent("Endpoint") {
                         HStack {
                             Text(bridge.endpoint).font(Design.Typeface.mono).textSelection(.enabled)
-                            IconButton("doc.on.doc", help: "Copy the endpoint") { copy(bridge.endpoint, "endpoint") }
+                            IconButton("doc.on.doc", help: "Copy the endpoint") { copy(bridge.endpoint, "endpoint", concealed: false) }
                         }
                     }
                     LabeledContent("Session token") {
@@ -36,11 +36,11 @@ struct DeveloperSettings: View {
                             Text(revealToken ? bridge.token : String(repeating: "•", count: 16)).font(Design.Typeface.mono)
                                 .textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                             IconButton(revealToken ? "eye.slash" : "eye", help: revealToken ? "Hide the token" : "Show the token") { revealToken.toggle() }
-                            IconButton("doc.on.doc", help: "Copy the token") { copy(bridge.token, "token") }
+                            IconButton("doc.on.doc", help: "Copy the token") { copy(bridge.token, "token", concealed: true) }
                         }
                     }
                     HStack {
-                        Button("Copy Client Configuration") { copy(bridge.clientConfiguration, "configuration") }
+                        Button("Copy Client Configuration") { copy(bridge.clientConfiguration, "configuration", concealed: true) }
                             .help("JSON for an MCP client: the endpoint and an Authorization header with this session's token")
                         if let copied { Text("Copied the \(copied).").font(Design.Typeface.caption).foregroundStyle(.secondary) }
                     }
@@ -66,9 +66,19 @@ struct DeveloperSettings: View {
         .formStyle(.grouped)
     }
 
-    private func copy(_ text: String, _ what: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    private func copy(_ text: String, _ what: String, concealed: Bool) {
+        Self.put(text, concealed: concealed, on: .general)
         copied = what
+    }
+
+    /// The marker clipboard managers honour to leave an item out of their history (nspasteboard.org).
+    static let concealedType = NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")
+
+    /// Puts `text` on `pasteboard`; a secret (the session token, or configuration holding it) is marked concealed.
+    static func put(_ text: String, concealed: Bool, on pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        pasteboard.declareTypes(concealed ? [.string, concealedType] : [.string], owner: nil)
+        pasteboard.setString(text, forType: .string)
+        if concealed { pasteboard.setData(Data(), forType: concealedType) }
     }
 }

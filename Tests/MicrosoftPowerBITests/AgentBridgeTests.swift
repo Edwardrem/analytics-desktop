@@ -158,6 +158,18 @@ final class AgentBridgeTests: XCTestCase {
         XCTAssertEqual(alert.buttons.map(\.title), ["Allow", "Don't Allow"])
     }
 
+    func testTheSessionTokenIsCopiedAsConcealed() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("analytics-desktop-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        DeveloperSettings.put("the-token", concealed: true, on: pasteboard)
+        XCTAssertEqual(pasteboard.string(forType: .string), "the-token")
+        XCTAssertTrue(pasteboard.types?.contains(DeveloperSettings.concealedType) == true, "clipboard managers skip it")
+        XCTAssertEqual(DeveloperSettings.concealedType.rawValue, "org.nspasteboard.ConcealedType")
+        DeveloperSettings.put("http://127.0.0.1:1234/mcp", concealed: false, on: pasteboard)
+        XCTAssertEqual(pasteboard.string(forType: .string), "http://127.0.0.1:1234/mcp")
+        XCTAssertFalse(pasteboard.types?.contains(DeveloperSettings.concealedType) == true, "the endpoint is not a secret")
+    }
+
     func testTheServerStartsOnLoopbackWithAFreshTokenAndStops() async throws {
         let bridge = AgentBridge.shared
         await bridge.start()
