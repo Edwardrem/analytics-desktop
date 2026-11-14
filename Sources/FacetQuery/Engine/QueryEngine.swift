@@ -199,14 +199,18 @@ public final class QueryEngine: @unchecked Sendable {
 
     /// Run blocking evaluation work on a dedicated thread with a 512 MB stack (deep M recursion).
     func onWorker<T>(_ body: @escaping () throws -> T) async throws -> T {
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
-            let thread = Thread {
-                do { cont.resume(returning: try body()) } catch { cont.resume(throwing: error) }
+        let cancellation = QueryCancellation()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
+                let thread = Thread {
+                    Thread.current.threadDictionary[QueryCancellation.threadKey] = cancellation
+                    do { cont.resume(returning: try body()) } catch { cont.resume(throwing: error) }
+                }
+                thread.stackSize = 512 << 20
+                thread.name = "Facet.QueryEngine"
+                thread.start()
             }
-            thread.stackSize = 512 << 20
-            thread.name = "Facet.QueryEngine"
-            thread.start()
-        }
+        } onCancel: { cancellation.cancel() }
     }
 
     // MARK: Result conversion
