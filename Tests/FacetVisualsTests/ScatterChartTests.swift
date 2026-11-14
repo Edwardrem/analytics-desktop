@@ -63,10 +63,44 @@ final class ScatterChartTests: XCTestCase {
         XCTAssertTrue(model.trails(through: 1, matcher: SelectionMatcher([])).isEmpty)
     }
 
+    func testTrendAndRatioLines() throws {
+        let model = ScatterModel(data: sample(play: false).1)
+        // Σy / Σx = (1 + 4 + 2 + 3 + 1) / (10 + 20 + 15 + 18 + 5) = 11 / 68.
+        XCTAssertEqual(try XCTUnwrap(ScatterAnalytics.ratio(model.points)), 11.0 / 68.0, accuracy: 1e-12)
+        // y = 0.2x + 0 fits (10, 2), (20, 4), (15, 3) exactly.
+        var spec = VisualSpec(type: .scatter, frame: Frame(x: 0, y: 0, width: 10, height: 10))
+        spec.setFields(.x, [.measure("S", "X")])
+        let line = ScatterModel(data: VisualData(
+            table: DataTable(name: "q", columns: [DataColumn(name: "X", type: .decimal, values: [10, 20, 15].map(Value.double)),
+                                                  DataColumn(name: "Y", type: .decimal, values: [2, 4, 3].map(Value.double))]),
+            roles: ["x": [0], "y": [1]], fields: [nil, nil], formats: ["", ""]))
+        let fit = try XCTUnwrap(ScatterAnalytics.trend(line.points))
+        XCTAssertEqual(fit.slope, 0.2, accuracy: 1e-12)
+        XCTAssertEqual(fit.intercept, 0, accuracy: 1e-12)
+        XCTAssertNil(ScatterAnalytics.ratio([]))
+    }
+
+    func testClustersColourThePointsWhenThereIsNoLegend() {
+        var data = sample(play: false).1
+        data.roles["legend"] = nil
+        let model = ScatterModel(data: data)
+        XCTAssertTrue(model.series.isEmpty)
+        let clusters = [1, 0, 1, -1, 0]
+        XCTAssertEqual(model.points.map { model.colorIndex($0, clusters: clusters) }, [1, 0, 1, 0, 0], "an unclustered row keeps the first colour")
+        XCTAssertEqual(model.legendNames(clusters: clusters), ["Cluster 1", "Cluster 2"])
+        XCTAssertEqual(model.legendNames(clusters: nil), [])
+        // A legend wins over clusters.
+        let legend = ScatterModel(data: sample(play: false).1)
+        XCTAssertEqual(legend.points.map { legend.colorIndex($0, clusters: clusters) }, [0, 1, 0, 1, 0])
+    }
+
     func testRendersWithAPlayAxisAndALegend() {
-        let (spec, data) = sample()
+        var (spec, data) = sample()
+        spec.analytics = [AnalyticsItem(kind: .trendLine), AnalyticsItem(kind: .ratioLine), AnalyticsItem(kind: .symmetryShading),
+                          AnalyticsItem(kind: .averageLine)]
         var context = VisualContext()
         context.isInteractive = false
+        context.selection = [DataPointSelection(fields: [store], values: [.string("A")])]
         let host = NSHostingView(rootView: VisualView(spec: spec, data: data, context: context).frame(width: 480, height: 320))
         host.frame = NSRect(x: 0, y: 0, width: 480, height: 320)
         host.layoutSubtreeIfNeeded()

@@ -67,6 +67,20 @@ struct ScatterModel {
         maxSize = out.compactMap(\.size).max() ?? 0
     }
 
+    /// The colour slot of a point: its legend series, or — with clustering on and no legend — its cluster.
+    func colorIndex(_ p: Point, clusters: [Int]?) -> Int {
+        if !series.isEmpty { return p.series }
+        if let c = clusters?[safe: p.row], c >= 0 { return c }
+        return 0
+    }
+
+    /// The legend: the legend values, or the clusters when they colour the points instead.
+    func legendNames(clusters: [Int]?) -> [String] {
+        if !series.isEmpty { return series.map(\.name) }
+        guard let clusters, let top = clusters.max(), top >= 0 else { return [] }
+        return (0...top).map { "Cluster \($0 + 1)" }
+    }
+
     /// The points drawn at a play-axis position (all of them without a play axis).
     func visible(frame: Int) -> [Point] { frames.isEmpty ? points : points.filter { $0.frame == frame } }
 
@@ -81,10 +95,28 @@ struct ScatterModel {
     }
 }
 
+/// Scatter-only Analytics pane lines: trend, ratio and the y = x line symmetry shading splits on.
+enum ScatterAnalytics {
+    /// Least-squares line through the points.
+    static func trend(_ points: [ScatterModel.Point]) -> (slope: Double, intercept: Double)? {
+        ChartMath.linearRegression(points.map { (x: $0.x, y: $0.y) })
+    }
+    /// Slope of the ratio line: the total of Y over the total of X, through the origin.
+    static func ratio(_ points: [ScatterModel.Point]) -> Double? {
+        let sx = points.reduce(0) { $0 + $1.x }, sy = points.reduce(0) { $0 + $1.y }
+        return abs(sx) > 1e-12 ? sy / sx : nil
+    }
+    static func dash(_ style: String) -> [CGFloat] {
+        let s = style.lowercased()
+        return s.hasPrefix("solid") ? [] : (s.hasPrefix("dotted") ? [1.5, 3.5] : [5, 4])
+    }
+}
+
 // MARK: - View
 
 /// Scatter chart: one point per row at (X, Y), sized by the Size well, coloured by Legend (with a
-/// legend), labelled by Details. A Play axis plays the points through its values.
+/// legend) or by cluster, labelled by Details. A Play axis plays the points through its values. The
+/// Analytics pane adds reference lines (StatPlot), a trend line, a ratio line and symmetry shading.
 struct ScatterChart: View {
     /// Bounds of `markers.size` (the radius of a point without a Size value).
     static let markerSizes: ClosedRange<Double> = 1...40
@@ -97,8 +129,9 @@ struct ScatterChart: View {
     var body: some View {
         let model = ScatterModel(data: data)
         let colors = ColorResolver(spec: spec, data: data, theme: context.theme)
-        let items = model.series.enumerated().map { i, s in
-            LegendItem(id: i, name: s.name, color: colors.seriesColor(i, name: s.name), marker: .circle, selection: s.selection)
+        let clusters = context.overlays.clusters
+        let items = model.legendNames(clusters: clusters).enumerated().map { i, name in
+            LegendItem(id: i, name: name, color: colors.seriesColor(i, name: name), marker: .circle, selection: model.series[safe: i]?.selection)
         }
         let current = min(frame, max(0, model.frames.count - 1))
         VStack(spacing: Design.Space.xs) {
@@ -126,6 +159,12 @@ struct ScatterChart: View {
         let base = CGFloat(FormatNumber.clamped(style.format.double("markers", "size", 3.5), to: ScatterChart.markerSizes) ?? 3.5)
         let visible = model.visible(frame: frame)
         let matcher = SelectionMatcher(context.selection)
+        let clusters = context.overlays.clusters
+        let names = model.legendNames(clusters: clusters)
+        func color(_ p: ScatterModel.Point) -> Color {
+            let i = model.colorIndex(p, clusters: clusters)
+            return colors.seriesColor(i, name: names[safe: i] ?? "")
+        }
         // Axes span every frame, so they stay still while the points move.
         return StatPlot(spec: spec, context: context, style: style,
                         xDomain: extent(model.points.map(\.x)),
@@ -138,29 +177,28 @@ struct ScatterChart: View {
                         signature: visible.count &* 31 &+ frame,
                         hits: { map in
                             visible.map { p in
-                                let color = colors.seriesColor(p.series, name: model.series[safe: p.series]?.name ?? "")
-                                return ChartHit(id: p.id, path: Path(ellipseIn: circle(map.point(p.x, p.y), radius(p, model, base))),
-                                                selection: p.selection,
-                                                tooltip: TooltipContent(title: p.label, rows: tooltipRows(p, model, color)))
+                                ChartHit(id: p.id, path: Path(ellipseIn: circle(map.point(p.x, p.y), radius(p, model, base))),
+                                         selection: p.selection,
+                                         tooltip: TooltipContent(title: p.label, rows: tooltipRows(p, model, color(p))))
                             }
                         },
                         draw: { ctx, map in
+                            drawShading(ctx, map, reach(model), style: style)
                             let fill = 1 - (FormatNumber.clamped(style.format.double("markers", "transparency", 20), to: 0...100) ?? 20) / 100
                             for trail in model.trails(through: frame, matcher: matcher) {
                                 var path = Path()
                                 for (i, p) in trail.enumerated() {
                                     if i == 0 { path.move(to: map.point(p.x, p.y)) } else { path.addLine(to: map.point(p.x, p.y)) }
                                 }
-                                let color = colors.seriesColor(trail[0].series, name: model.series[safe: trail[0].series]?.name ?? "")
-                                ctx.stroke(path, with: .color(color.opacity(0.5)), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
+                                ctx.stroke(path, with: .color(color(trail[0]).opacity(0.5)), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
                             }
                             for p in visible.prefix(4_000) {
-                                let color = colors.seriesColor(p.series, name: model.series[safe: p.series]?.name ?? "")
                                 let dim = (matcher.isActive && !matcher.isSelected(p.selection))
-                                    || (!highlighted.isEmpty && !highlighted.contains(p.series))
+                                    || (!highlighted.isEmpty && !highlighted.contains(model.colorIndex(p, clusters: clusters)))
                                 ctx.fill(Path(ellipseIn: circle(map.point(p.x, p.y), radius(p, model, base))),
-                                         with: .color(color.opacity(dim ? 0.25 : fill)))
+                                         with: .color(color(p).opacity(dim ? 0.25 : fill)))
                             }
+                            drawLines(ctx, map, reach(model), visible, style: style)
                         },
                         marks: { })
             .overlay(alignment: .topTrailing) {
@@ -170,6 +208,55 @@ struct ScatterChart: View {
                         .padding(Design.Space.m).allowsHitTesting(false)
                 }
             }
+    }
+
+    private func itemColor(_ item: AnalyticsItem, _ fallback: Color) -> Color {
+        item.color.flatMap { HexColor.rgb($0) != nil ? Color(hex: $0) : nil } ?? fallback
+    }
+
+    /// Far enough past the data on both axes that a line drawn between its ends crosses the whole plot.
+    private func reach(_ model: ScatterModel) -> (lo: Double, hi: Double) {
+        let all = model.points.flatMap { [$0.x, $0.y] }
+        let lo = all.min() ?? 0, hi = all.max() ?? 1, span = max(hi - lo, 1)
+        return (lo - span * 10, hi + span * 10)
+    }
+
+    /// A line y = slope·x + intercept across the plot (clipped to it).
+    private func line(_ ctx: GraphicsContext, _ map: StatMap, _ r: (lo: Double, hi: Double), slope: Double, intercept: Double,
+                      _ item: AnalyticsItem, _ fallback: Color) {
+        let a = map.point(r.lo, intercept + slope * r.lo), b = map.point(r.hi, intercept + slope * r.hi)
+        var path = Path(); path.move(to: a); path.addLine(to: b)
+        var clipped = ctx
+        clipped.clip(to: Path(map.plot))
+        clipped.stroke(path, with: .color(itemColor(item, fallback)), style: StrokeStyle(lineWidth: 1.5, dash: ScatterAnalytics.dash(item.style)))
+    }
+
+    /// Symmetry shading: the areas above and below y = x, tinted (drawn under the points).
+    private func drawShading(_ ctx: GraphicsContext, _ map: StatMap, _ r: (lo: Double, hi: Double), style: ChartStyle) {
+        guard let item = spec.analytics.first(where: { $0.kind == .symmetryShading }) else { return }
+        let a = map.point(r.lo, r.lo), b = map.point(r.hi, r.hi)
+        let far = map.plot.height * 4 + 1e4
+        var upper = Path(), lower = Path()
+        upper.move(to: a); upper.addLine(to: b); upper.addLine(to: CGPoint(x: b.x, y: b.y - far)); upper.addLine(to: CGPoint(x: a.x, y: a.y - far))
+        lower.move(to: a); lower.addLine(to: b); lower.addLine(to: CGPoint(x: b.x, y: b.y + far)); lower.addLine(to: CGPoint(x: a.x, y: a.y + far))
+        var clipped = ctx
+        clipped.clip(to: Path(map.plot))
+        clipped.fill(upper, with: .color(itemColor(item, Color(hex: context.theme.accent)).opacity(0.08)))
+        clipped.fill(lower, with: .color(style.secondary.opacity(0.07)))
+    }
+
+    /// Trend and ratio lines over the points shown.
+    private func drawLines(_ ctx: GraphicsContext, _ map: StatMap, _ r: (lo: Double, hi: Double), _ points: [ScatterModel.Point],
+                           style: ChartStyle) {
+        for item in spec.analytics {
+            switch item.kind {
+            case .trendLine:
+                if let fit = ScatterAnalytics.trend(points) { line(ctx, map, r, slope: fit.slope, intercept: fit.intercept, item, style.secondary) }
+            case .ratioLine:
+                if let k = ScatterAnalytics.ratio(points) { line(ctx, map, r, slope: k, intercept: 0, item, style.secondary) }
+            default: break
+            }
+        }
     }
 
     private func playBar(_ model: ScatterModel, frame: Int) -> some View {
@@ -206,6 +293,7 @@ struct ScatterChart: View {
         ]
         if let s = p.size { rows.append(.init(label: caption(.size), value: fmt(s, .size))) }
         if !model.series.isEmpty, let name = model.series[safe: p.series]?.name { rows.append(.init(label: caption(.legend), value: name)) }
+        else if let c = context.overlays.clusters?[safe: p.row], c >= 0 { rows.append(.init(label: "Cluster", value: "Cluster \(c + 1)")) }
         if !model.frames.isEmpty, let f = p.frame { rows.append(.init(label: caption(.playAxis), value: frameName(model, f))) }
         return rows + SeriesModel.tooltipFields(data: data, row: p.row).map { .init(label: $0.label, value: $0.value) }
     }
