@@ -7,7 +7,11 @@ import FacetCore
 
 /// Everything a visual query needs beyond the visual itself.
 struct VisualRequest {
-    struct Slicer { var fields: [FieldRef]; var state: SlicerState; var type: VisualType }
+    struct Slicer {
+        var fields: [FieldRef]; var state: SlicerState; var type: VisualType
+        /// An input slicer's operator (`format["slicer"]["operator"]`): how its terms match values.
+        var matchOperator = "contains"
+    }
     var filters: [FilterSpec] = []
     var slicers: [Slicer] = []
     var crossFilters: [[DataPointSelection]] = []
@@ -37,6 +41,15 @@ protocol CalculationService: AnyObject {
     func query(_ dax: String) throws -> [DataTable]
     func scalar(_ expression: String, filters: [FilterSpec]) throws -> Value
     func check(_ expression: String, kind: ExpressionKind, homeTable: String?) -> [ExpressionIssue]
+    /// The rows of a model table that a visual's filters, slicers and cross-filters leave, for
+    /// visuals that analyse rows rather than a grouped query (Key influencers).
+    func rows(of table: String, request: VisualRequest) throws -> DataTable
+}
+
+extension CalculationService {
+    func rows(of table: String, request: VisualRequest) throws -> DataTable {
+        throw CocoaError(.featureUnsupported, userInfo: [NSLocalizedDescriptionKey: "This calculation engine can't list a table's filtered rows."])
+    }
 }
 
 /// Analytics-pane computations layered on a visual's query result.

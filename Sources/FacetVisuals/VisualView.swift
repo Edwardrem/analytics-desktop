@@ -93,6 +93,9 @@ public struct VisualView: View {
             }
         }
         .shadow(color: f.bool("shadow", "show", false) ? .black.opacity(0.12) : .clear, radius: 10, y: 3)
+        // A visual sits on its theme's card, not on the window: system text colours inside it follow
+        // the theme, or a light report is unreadable (white on white) while the Mac is in Dark Mode.
+        .environment(\.colorScheme, theme.isDark ? .dark : .light)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(spec.altText.isEmpty ? spec.name : spec.altText)
     }

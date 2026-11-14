@@ -43,6 +43,22 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(back.report.pages[0].visuals.first?.type, .card)
     }
 
+    /// JSON writes 2399.0 as 2399; a decimal column still reads it back as a decimal, and a whole
+    /// number column keeps its integers.
+    func testWholeDecimalsComeBackAsDecimals() throws {
+        let column = DataColumn(name: "Price", type: .currency, values: [.double(2399), .double(29.5), .null])
+        let counts = DataColumn(name: "Units", type: .integer, values: [.int(3), .int(40)])
+        let mixed = DataColumn(name: "Any", type: .any, values: [.int(3), .string("x")])
+        let back = try JSONDecoder().decode([DataColumn].self, from: JSONEncoder().encode([column, counts, mixed]))
+        guard back.count == 3 else { return XCTFail("decoded \(back.count) columns") }
+        if case .double(let d) = back[0].values[0] { XCTAssertEqual(d, 2399) } else { XCTFail("2399.0 came back as \(back[0].values[0])") }
+        if case .double(let d) = back[0].values[1] { XCTAssertEqual(d, 29.5) } else { XCTFail("29.5 came back as \(back[0].values[1])") }
+        XCTAssertTrue(back[0].values[2].isNull)
+        if case .int(let i) = back[1].values[1] { XCTAssertEqual(i, 40) } else { XCTFail("an integer came back as \(back[1].values[1])") }
+        if case .int = back[2].values[0] {} else { XCTFail("an untyped column changed its values") }
+        XCTAssertEqual(back[2].values[1], .string("x"))
+    }
+
     /// Everything the modeling dialogs write must come back from a saved `.facet` package.
     func testModelingObjectsSurviveThePackage() throws {
         var doc = FacetDocument()

@@ -21,6 +21,12 @@ enum SampleData {
             for t in tables { d.data[t.name] = t }
             d.model.tables.removeAll { t in tables.contains { $0.name == t.name } }
             d.model.tables.append(contentsOf: model.tables)
+            // Loading the sample again replaces its relationships instead of adding them a second time.
+            d.model.relationships.removeAll { r in
+                model.relationships.contains {
+                    $0.fromTable == r.fromTable && $0.fromColumn == r.fromColumn && $0.toTable == r.toTable && $0.toColumn == r.toColumn
+                }
+            }
             d.model.relationships.append(contentsOf: model.relationships)
             if d.report.pages.allSatisfy({ $0.visuals.isEmpty }) {
                 d.report.pages = report.pages

@@ -321,7 +321,7 @@ final class DocumentStore: ObservableObject {
                 $0.filters.append(filter)
             }
         case .page:
-            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters") {
+            updatePage(name: announce ? "Add Page Filter" : "Change Page Filters", invalidates: .visuals(nil)) {
                 guard !$0.filters.contains(where: { $0.field.key == field.key }) else { return }
                 $0.filters.append(filter)
             }
@@ -348,7 +348,7 @@ final class DocumentStore: ObservableObject {
             guard let target = selectedVisual?.id else { return }
             updateVisual(target, name: "Remove Visual Filter") { $0.filters.removeAll { $0.id == id } }
         case .page:
-            updatePage(name: "Remove Page Filter") { $0.filters.removeAll { $0.id == id } }
+            updatePage(name: "Remove Page Filter", invalidates: .visuals(nil)) { $0.filters.removeAll { $0.id == id } }
         case .report:
             mutate("Remove Report Filter") { $0.report.filters.removeAll { $0.id == id } }
         case .drillthrough:
@@ -367,7 +367,8 @@ final class DocumentStore: ObservableObject {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .page:
-            updatePage(name: name) {
+            // A page filter applies to every visual on the page, so they all requery.
+            updatePage(name: name, invalidates: .visuals(nil)) {
                 if let i = $0.filters.firstIndex(where: { $0.id == id }) { body(&$0.filters[i]) }
             }
         case .report:
@@ -387,7 +388,8 @@ final class DocumentStore: ObservableObject {
         for other in page.visuals where other.id != spec.id && other.type.isSlicer {
             guard let state = other.slicerState, state.isActive else { continue }
             if page.interactions[other.id]?[spec.id] == InteractionMode.none { continue }
-            r.slicers.append(.init(fields: other.fields(.field), state: state, type: other.type))
+            r.slicers.append(.init(fields: other.fields(.field), state: state, type: other.type,
+                                   matchOperator: other.fmtString("slicer", "operator", "contains")))
         }
         for (source, points) in pointSelections where source != spec.id && !points.isEmpty {
             switch interaction(from: source, to: spec, on: page) {
@@ -758,6 +760,9 @@ final class DocumentStore: ObservableObject {
     func defaultAggregation(for field: FieldRef) -> Aggregation {
         guard field.kind == .column, let col = doc.model.table(field.table)?.column(field.name) else { return .none }
         if col.summarizeBy != .none { return col.summarizeBy }
+        // A position is averaged, never added up, and a date summarizes to its earliest value.
+        if col.dataCategory == .latitude || col.dataCategory == .longitude { return .average }
+        if col.dataType.isTemporal { return .min }
         return col.dataType.isNumeric ? .sum : .count
     }
 
@@ -793,6 +798,8 @@ final class DocumentStore: ObservableObject {
         f.id = UUID()
         if !chosen.isGrouping, f.kind == .column, !(spec.type == .table) { f.aggregation = defaultAggregation(for: f) }
         if spec.type == .table, f.kind == .column, isNumeric { f.aggregation = defaultAggregation(for: f) }
+        // An End well takes the latest date where a Start well takes the earliest.
+        if chosen == .end, f.kind == .column, f.aggregation == .min { f.aggregation = .max }
         updateVisual(id, name: "Add Field") { v in v.setFields(chosen, v.fields(chosen) + [f]) }
     }
 
@@ -808,6 +815,12 @@ final class DocumentStore: ObservableObject {
         } else if current.count == 1, points.count == 1, current[0].key == points[0].key { current = [] }
         else { current = points }
         if current.isEmpty { pointSelections[visualID] = nil } else { pointSelections[visualID] = current }
+        refreshVisuals(currentPage.visuals.filter { $0.id != visualID }.map(\.id))
+    }
+    /// Drops one visual's data point selection; the visuals it cross-filtered requery without it.
+    private func clearSelection(of visualID: UUID) {
+        guard pointSelections[visualID] != nil else { return }
+        pointSelections[visualID] = nil
         refreshVisuals(currentPage.visuals.filter { $0.id != visualID }.map(\.id))
     }
     func clearPointSelections() {
@@ -851,7 +864,7 @@ final class DocumentStore: ObservableObject {
                 v.drillLevel += 1
                 v.expandedAllLevels = false
             }
-            pointSelections[id] = nil
+            clearSelection(of: id)
         case .up:
             updateVisual(id, name: "Drill Up") { v in
                 guard v.drillLevel > 0 else { return }
@@ -859,7 +872,7 @@ final class DocumentStore: ObservableObject {
                 if !v.drillPath.isEmpty { v.drillPath.removeLast() }
                 if v.drillLevel == 0 { v.expandedAllLevels = false }
             }
-            pointSelections[id] = nil
+            clearSelection(of: id)
         case .expandAll:
             updateVisual(id, name: "Expand to Next Level") { v in
                 guard v.drillLevel < max(0, v.fields(.category).count - 1) else { return }

@@ -46,7 +46,8 @@ struct KeyInfluencersView: View {
     private var cacheKey: String {
         let explain = explainFields.map(\.key).joined(separator: "|")
         let tv = targetValue.map(\.asString) ?? ""
-        return "\(targetField?.key ?? "")|\(tv)|\(direction.rawValue)|\(explain)|\(data.table.rowCount)"
+        // The visual's own query carries the page's filters, so a new filter context reruns the analysis.
+        return "\(targetField?.key ?? "")|\(tv)|\(direction.rawValue)|\(explain)|\(data.table.rowCount)|\(data.daxQuery)"
     }
 
     var body: some View {
@@ -197,15 +198,27 @@ struct KeyInfluencersView: View {
 
         // Build the flat analysis table.
         var analysis: (DataTable, String)?
-        if target.kind == .column, let base = store.computedData[target.table] {
-            analysis = Self.flatTable(target: target, explain: explainFields, base: base,
-                                      baseTable: target.table, model: store.model, data: store.computedData)
+        if target.kind == .column {
+            // The rows the page's filters, slicers and selections leave, as Power BI analyses them.
+            let request = store.request(for: spec, on: store.currentPage), table = target.table
+            let rows = await store.withEngine { engine in Result { try engine.rows(of: table, request: request) } }
+            switch rows {
+            case .success(let base):
+                analysis = Self.flatTable(target: target, explain: explainFields, base: base,
+                                          baseTable: target.table, model: store.model, data: store.computedData)
+            case .failure(let failure):
+                result = nil
+                error = (failure as? LocalizedError)?.errorDescription ?? "\(failure)"
+                return
+            }
         } else if data.table.rowCount > 0 {
             analysis = Self.gridTable(data: data)
         }
         guard var (table, targetColumn) = analysis, table.rowCount >= 20 else {
             result = nil
-            error = "Add fields to Analyze and Explain by, then refresh the data."
+            error = target.kind == .column
+                ? "Key influencers needs at least 20 rows to analyze. This data has fewer."
+                : "Key influencers needs at least 20 rows to analyze. Put a column in Analyze, or add more Explain by fields."
             return
         }
         if table.rowCount > 20000 { table = table.prefix(20000) }
@@ -600,9 +613,9 @@ struct NarrativeView: View {
                     Text("Add visuals with data to this page and the summary is written here.")
                         .font(Design.Typeface.body).foregroundStyle(.secondary)
                 } else {
-                    ForEach(narrative.segments.indices, id: \.self) { i in
-                        segment(narrative.segments[i])
-                    }
+                    // One flowing paragraph, with the figures picked out.
+                    narrative.segments.reduce(Text("")) { $0 + segment($1) }
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .padding(Design.Space.m)
@@ -610,11 +623,10 @@ struct NarrativeView: View {
         }
     }
 
-    @ViewBuilder
-    private func segment(_ s: Narrative.Segment) -> some View {
+    private func segment(_ s: Narrative.Segment) -> Text {
         switch s {
-        case .text(let t): Text(t).font(Design.Typeface.body)
-        case .value(let v, _): Text(v).font(Design.Typeface.bodyStrong).foregroundStyle(Color.accentColor)
+        case .text(let t): return Text(t).font(Design.Typeface.body)
+        case .value(let v, _): return Text(v).font(Design.Typeface.bodyStrong).foregroundColor(Color.accentColor)
         }
     }
 

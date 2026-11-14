@@ -41,7 +41,8 @@ extension DocumentStore {
         c.onAction = { [weak self] action in self?.perform(action, from: id) }
         c.onDrill = { [weak self] action in self?.drill(action, in: id) }
         c.onSpecChange = { [weak self] new in
-            self?.updateVisual(id, name: "Change Visual", coalesce: "spec-\(id)") { $0 = new }
+            // A slicer's settings (an input slicer's operator) change what it filters on the whole page.
+            self?.updateVisual(id, name: "Change Visual", coalesce: "spec-\(id)", invalidates: new.type.isSlicer ? .visuals(nil) : nil) { $0 = new }
         }
         c.extensionView = { [weak self] spec, data, ctx in
             guard let self else { return nil }
