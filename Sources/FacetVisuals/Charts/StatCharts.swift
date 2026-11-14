@@ -65,8 +65,3 @@ enum StatCharts {
         }
     }
 }
-
-extension ChartGallery {
-    static func statisticalSamples() -> [Sample] { [] }
-    static func gridSamples() -> [Sample] { [] }
-}
