@@ -152,6 +152,9 @@ final class LiveCalculation: CalculationService {
                     formats.append(calc.formatString)
                 }
             }
+            // Sparklines: one more column per sparkline, each row's series along its axis.
+            try Sparklines.append(to: &result, roles: &roles, fields: &fields, formats: &formats, spec: spec,
+                                  groups: groups.map(\.field), filters: filters, model: model) { try engine.query($0).first }
             var totals = [Value](repeating: .null, count: result.columnCount)
             if !values.isEmpty, !groups.isEmpty,
                let row = try? engine.query(summarize(depth: 0, limited: false)).first?.rows.first, row.count == values.count {

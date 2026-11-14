@@ -27,6 +27,12 @@ enum ReportFeature {
                             isEnabled: { $0.view == .report && $0.currentPage.hasMobileLayout }) { s in
             s.removeFromMobileLayout(s.currentPage.visuals.map(\.id))
         })
+        c.append(AppCommand(id: "insert.sparkline", title: "Add a Sparkline…", menu: .insert, symbol: "waveform.path.ecg",
+                            separatorBefore: true, help: "A small line or column chart in every row of a table.",
+                            isEnabled: { $0.sparklineTarget != nil }) { s in
+            guard let table = s.sparklineTarget else { return }
+            s.present { SparklineSheet(visualID: table.id) }
+        })
         c.append(AppCommand(id: "filters.clearAll", title: "Clear All Filters", menu: .data, symbol: "line.3.horizontal.decrease.circle",
                             separatorBefore: true, isEnabled: inReport) { $0.clearAllFilters() })
         c.append(AppCommand(id: "filters.apply", title: "Apply Filters", menu: .data, symbol: "checkmark.circle",
