@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analytics Desktop for Mac</title>
+<meta name="description" content="Analytics Desktop is a native macOS app for building business-intelligence reports: shape data with Power Query M, model it with DAX and design interactive report pages.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/site.css">
+<script src="js/site.js" defer></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="favicon.svg" alt="" width="24" height="24"> Analytics Desktop</a>
+    <nav class="nav" aria-label="Site">
+      <a href="index.html" aria-current="page">Home</a>
+      <a href="features.html">Features</a>
+      <a href="releases.html">Releases</a>
+      <a href="docs/index.html">Docs</a>
+      <a href="https://github.com/Edwardrem/analytics-desktop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <section class="hero">
+      <img class="mark" src="favicon.svg" alt="" width="88" height="88">
+      <h1>Analytics Desktop</h1>
+      <p class="lede">A native Mac app for business-intelligence reports. Get and shape data, model it with DAX, and design interactive report pages.</p>
+      <div class="actions">
+        <a class="button primary" id="download" href="https://github.com/Edwardrem/analytics-desktop/releases">Download</a>
+        <a class="button secondary" href="releases.html">Release notes</a>
+      </div>
+      <p class="download-meta" id="download-meta">macOS 15 or later, Apple silicon. Beta.</p>
+    </section>
+
+    <figure class="shot" data-src="img/report-view.png" data-alt="The report canvas in Analytics Desktop, with the Filters, Visualizations and Data panes" hidden>
+      <figcaption>Report view</figcaption>
+    </figure>
+
+    <section class="grid" aria-label="What it does">
+      <div>
+        <h3>Get and shape data</h3>
+        <p>Read Excel, CSV, JSON, XML, folders, SQLite, web pages and OData feeds. The Power Query Editor gives you applied steps, merges, pivots, column profiling and the M formula language.</p>
+      </div>
+      <div>
+        <h3>Model it with DAX</h3>
+        <p>Relationships, measures, calculated columns and tables, calculation groups and row-level security, with a DAX query view and a TMDL script view. Over 300 DAX functions.</p>
+      </div>
+      <div>
+        <h3>Design interactive reports</h3>
+        <p>Charts, maps, tables and matrices, slicers, drillthrough, bookmarks and tooltips, on pages laid out the way report authors expect. Export to PDF, CSV or Excel.</p>
+      </div>
+      <div>
+        <h3>Open formats, in Git</h3>
+        <p>Reads and writes Power BI project files (PBIP with PBIR and TMDL), <code>.pbit</code> templates and theme JSON, so reports live as plain text next to your code.</p>
+      </div>
+    </section>
+
+    <section class="section columns">
+      <div>
+        <h2>Requirements</h2>
+        <ul>
+          <li>macOS 15 Sequoia or later</li>
+          <li>A Mac with Apple silicon (M1 or later)</li>
+          <li>A Microsoft account only if you use OneDrive, SharePoint, OneLake or Publish</li>
+        </ul>
+        <p class="small muted">This is a beta. Read the <a href="features.html#limits">known limits</a> before you rely on it.</p>
+      </div>
+      <div>
+        <h2>Opening it the first time</h2>
+        <p>Builds are ad-hoc signed and not notarized by Apple, so macOS asks before it opens the app the first time.</p>
+        <ol>
+          <li>Unzip the download and move <b>Analytics Desktop</b> to Applications.</li>
+          <li>Open it. macOS says it can’t verify the developer. Click <b>Done</b>.</li>
+          <li>Open <b>System Settings ▸ Privacy &amp; Security</b>, scroll to Security and click <b>Open Anyway</b> next to Analytics Desktop.</li>
+        </ol>
+        <p class="small muted">Or, in Terminal: <code>xattr -dr com.apple.quarantine "/Applications/Analytics Desktop.app"</code>. You only do this once; <a href="docs/updates.html">updates</a> install from inside the app. <a href="docs/getting-started.html">Getting started</a></p>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Analytics Desktop is not affiliated with or endorsed by Microsoft. Power BI is a trademark of Microsoft.</p>
+    <p><a href="docs/privacy.html">Privacy</a> · <a href="https://github.com/Edwardrem/analytics-desktop">Source on GitHub</a></p>
+  </div>
+</footer>
+</body>
+</html>

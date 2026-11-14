@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features · Analytics Desktop</title>
+<meta name="description" content="What Analytics Desktop does today, area by area: features done, partial and missing against a complete desktop BI feature list, and its known limits.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/site.css">
+<script src="js/site.js" defer></script>
+<script src="js/md.js" defer></script>
+<script src="js/features.js" defer></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html"><img src="favicon.svg" alt="" width="24" height="24"> Analytics Desktop</a>
+    <nav class="nav" aria-label="Site">
+      <a href="index.html">Home</a>
+      <a href="features.html" aria-current="page">Features</a>
+      <a href="releases.html">Releases</a>
+      <a href="docs/index.html">Docs</a>
+      <a href="https://github.com/Edwardrem/analytics-desktop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <div class="prose">
+      <h1>Features</h1>
+      <p>Every item in a complete feature list for Power BI Desktop for Windows, and where Analytics Desktop stands on it. The list is checked against the code, not written from memory. <span id="as-of"></span></p>
+    </div>
+
+    <div id="status">
+      <p class="muted" id="status-loading">Loading the feature list…</p>
+    </div>
+
+    <section class="section prose" id="limits">
+      <h2>Known limits</h2>
+      <p>These are the gaps most likely to matter. They are stated plainly so you can decide before you rely on the app.</p>
+      <ol id="known-limits"></ol>
+      <h3>Not possible in this app</h3>
+      <ul id="not-possible"></ul>
+    </section>
+
+    <section class="section prose">
+      <h2>How to read this</h2>
+      <ul>
+        <li><b>Done</b>: the feature is real and you can reach it in the app.</li>
+        <li><b>Partial</b>: it works, with the gaps given in the note.</li>
+        <li><b>Missing</b>: it isn’t built.</li>
+        <li><b>N/A</b>: it is Windows-only or runs only in the Power BI service, so it doesn’t apply to a Mac authoring app.</li>
+      </ul>
+      <p>“Not live-tested” means a Microsoft cloud feature has only run against local stand-in servers. The source of this page is <a href="https://github.com/Edwardrem/analytics-desktop/blob/main/STATUS.md">STATUS.md</a>.</p>
+    </section>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Analytics Desktop is not affiliated with or endorsed by Microsoft. Power BI is a trademark of Microsoft.</p>
+    <p><a href="docs/privacy.html">Privacy</a> · <a href="https://github.com/Edwardrem/analytics-desktop">Source on GitHub</a></p>
+  </div>
+</footer>
+</body>
+</html>

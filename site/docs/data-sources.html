@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data sources · Analytics Desktop</title>
+<meta name="description" content="The data sources Analytics Desktop can read today, how refresh and privacy levels work, and which connectors are not available.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="24" height="24"> Analytics Desktop</a>
+    <nav class="nav" aria-label="Site">
+      <a href="../index.html">Home</a>
+      <a href="../features.html">Features</a>
+      <a href="../releases.html">Releases</a>
+      <a href="index.html" aria-current="page">Docs</a>
+      <a href="https://github.com/Edwardrem/analytics-desktop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap docs">
+    <nav aria-label="Docs"><ul><li><a href="index.html">All docs</a></li><li><a href="getting-started.html">Getting started</a></li><li><a href="microsoft-account.html">Microsoft account</a></li><li><a href="data-sources.html" aria-current="page">Data sources</a></li><li><a href="updates.html">Updates</a></li><li><a href="privacy.html">Privacy</a></li></ul></nav>
+    <article class="prose">
+<h1>Data sources</h1>
+<p>Choose <b>Get Data</b> on the Home tab of the ribbon. Sources the app can read are listed normally; sources it can’t read yet are shown dimmed with the reason, and can’t be started.</p>
+
+<h2 id="available">What you can connect to</h2>
+<table>
+  <thead><tr><th>Source</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Excel workbook (<code>.xlsx</code>, <code>.xlsm</code>)</td><td>Navigator over sheets and tables</td></tr>
+    <tr><td>Text / CSV</td><td>Delimiter and header detection</td></tr>
+    <tr><td>XML, JSON</td><td>Records and lists expand in the Power Query Editor</td></tr>
+    <tr><td>Folder</td><td>Combine every file in a folder into one table</td></tr>
+    <tr><td>SQLite</td><td>Tables and views, or your own SQL statement after you approve it; Import or DirectQuery</td></tr>
+    <tr><td>Web</td><td>CSV, JSON, XML, Excel files and HTML tables from a URL</td></tr>
+    <tr><td>OData feed</td><td></td></tr>
+    <tr><td>Python script, R script</td><td>Runs on your installed interpreter, once scripts are allowed in Settings ▸ Scripting</td></tr>
+    <tr><td>Enter data, Blank query</td><td>Type or paste a table, or write M yourself</td></tr>
+    <tr><td>OneLake catalog</td><td>Needs a work or school <a href="microsoft-account.html">Microsoft account</a>. Semantic models import as a snapshot of up to 100,000 rows; lakehouse CSV, JSON and Excel files</td></tr>
+    <tr><td><code>.pbids</code> files</td><td>Open one to start a new document at its connection</td></tr>
+  </tbody>
+</table>
+<p><b>Recent sources</b> remembers your last 20 sources and reconnects with the location filled in.</p>
+
+<h2 id="credentials">Sign-in to sources</h2>
+<p>In this beta the app reads data sources without credentials: local files, and web and OData URLs that need no sign-in. It can’t yet pass a user name, key or Microsoft account to a source. This is listed among the <a href="../features.html#limits">known limits</a>.</p>
+
+<h2 id="not-available">What isn’t available</h2>
+<p>Connectors that need a database driver or an online service the app doesn’t include are listed but dimmed, with the reason in their tooltip. They include SQL Server, Oracle, PostgreSQL, MySQL and other databases, ODBC and OLE DB, Parquet, PDF, <code>.xls</code> and <code>.xlsb</code>, SharePoint lists and folders, Azure, Dataverse and Fabric sources, and custom <code>.mez</code> connectors. Typing one of their M functions fails with a message that it isn’t available.</p>
+
+<h2 id="modes">Import and DirectQuery</h2>
+<ul>
+  <li><b>Import</b> is the default. The rows are saved in your <code>.facet</code> file.</li>
+  <li><b>DirectQuery</b> works for SQLite. The table is read on load and on refresh, and visuals are computed on your Mac; it is not one SQL query per visual.</li>
+  <li><b>Dual</b> can be chosen, and behaves as Import.</li>
+</ul>
+
+<h2 id="refresh">Refresh</h2>
+<p>Home ▸ Refresh reloads every table. You can also refresh one table, refresh only the visuals, or refresh the preview inside the Power Query Editor. Automatic page refresh re-queries a page at an interval while the window is open.</p>
+
+<h2 id="privacy-levels">Privacy levels and native queries</h2>
+<ul>
+  <li>Each source can be given a privacy level (Private, Organizational or Public) in <b>Data source settings</b>. The query engine then refuses to combine data in a way that could send private data to another source, unless you choose to ignore privacy levels in Settings ▸ Security.</li>
+  <li>A SQL statement you type for SQLite runs only after you approve it. Approvals are remembered per source.</li>
+</ul>
+    </article>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Analytics Desktop is not affiliated with or endorsed by Microsoft. Power BI is a trademark of Microsoft.</p>
+    <p><a href="privacy.html">Privacy</a> · <a href="https://github.com/Edwardrem/analytics-desktop">Source on GitHub</a></p>
+  </div>
+</footer>
+</body>
+</html>
