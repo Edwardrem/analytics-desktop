@@ -30,6 +30,10 @@ public final class DAXEngine {
     var userObjectID = ""
     var customData = ""
     var roleNames: [String] = []
+    /// Preview features this engine honours; new engines take `DAXFeatures.current`.
+    public var features = DAXFeatures.current
+    /// The culture FORMAT uses without a locale argument: the user's culture, which is the model's.
+    var formatCulture = FormatCulture.enUS
     private var sourceData = DataStore()
     var model = SemanticModel()
     /// Source data plus computed calculated tables, columns and groupings.
@@ -49,6 +53,7 @@ public final class DAXEngine {
         self.userName = userName
         self.userPrincipalName = userPrincipalName.isEmpty ? userName : userPrincipalName
         self.userCulture = culture ?? model.culture
+        formatCulture = FormatCulture(identifier: userCulture)
         sourceData = source
 
         // Data tables. Calculated tables have no source data yet; their columns arrive below.
@@ -203,6 +208,11 @@ public final class DAXEngine {
         var issues: [DAXObjectError] = []
         suspendObjectSecurity()
         defer { applyObjectSecurity() }
+        // Without user-context-aware calculated columns, calculated objects are computed as at refresh:
+        // with no View-as identity, so they don't change with the user viewing the report.
+        let identity = (userName, userPrincipalName)
+        if !features.userContextColumns { userName = ""; userPrincipalName = "" }
+        defer { (userName, userPrincipalName) = identity }
 
         // User-defined functions, so measures and columns can call them.
         for f in model.functions {
@@ -321,7 +331,7 @@ public final class DAXEngine {
         }
 
         // Custom calendars for calendar-based time intelligence.
-        for t in model.tables {
+        for t in model.tables where features.calendarTimeIntelligence {
             guard let ti = db.tableIndex[t.name.daxKey] else { continue }
             for cal in t.calendars {
                 guard let dateName = cal.columnsByUnit["date"] ?? t.dateColumn,

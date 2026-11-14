@@ -62,7 +62,8 @@ enum ModelingDialogsFeature {
                 store.present { DateTableSheet(table: table) }
             },
             AppCommand(id: "model.calendars", title: "Calendars…", menu: .modeling, symbol: "calendar.badge.clock",
-                       isEnabled: hasTables) { store in
+                       help: "Calendar-based time intelligence is a preview feature (Settings ▸ Preview).",
+                       isEnabled: { hasTables($0) && PreviewFeatures.isOn(.previewCalendarTI) }) { store in
                 guard let table = DialogTarget.table(store).flatMap(store.model.table) else { return }
                 store.present { CalendarsSheet(table: table) }
             },

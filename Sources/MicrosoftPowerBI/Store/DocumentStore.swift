@@ -287,13 +287,18 @@ final class DocumentStore: ObservableObject {
             guard let self, gen == self.engineGeneration else { return }
             if !problems.isEmpty { self.status = StatusMessage(kind: .error, text: problems.joined(separator: "\n")) }
             self.calcQueue.async { [weak self] in
+                let start = DispatchTime.now()
                 let errors = engine.load(model: model, data: data, roles: roles, userName: user)
                 let computed = engine.data
+                TraceLog.shared.record("engine.load", ["ms": .milliseconds(TraceLog.milliseconds(since: start)),
+                                                       "tables": .count(model.tables.count), "errors": .count(errors.count),
+                                                       "rows": .count(computed.tables.values.reduce(0) { $0 + $1.rowCount })])
                 DispatchQueue.main.async {
                     guard let self, gen == self.engineGeneration else { return }
                     self.calculation = engine
                     self.modelErrors = errors
                     self.computedData = computed
+                    self.engineDidLoad()
                     self.refreshVisuals()
                 }
             }
@@ -454,6 +459,9 @@ final class DocumentStore: ObservableObject {
                 let data = engine.visualData(spec: spec, request: request)
                 let overlay = spec.analytics.isEmpty ? AnalyticsOverlays() : analytics.overlays(spec: spec, data: data)
                 let total = (CFAbsoluteTimeGetCurrent() - start) * 1000
+                TraceLog.shared.record("visual.query", ["visualType": .name(spec.type.rawValue), "ms": .milliseconds(total),
+                                                        "queryMs": .milliseconds(data.queryMilliseconds),
+                                                        "rows": .count(data.table.rowCount), "failed": .flag(data.error != nil)])
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.loadingVisuals.remove(spec.id)
@@ -1057,10 +1065,12 @@ final class DocumentStore: ObservableObject {
             .filter { !direct.contains($0) }
         if !direct.isEmpty { DirectQuerySession.of(self).invalidate() }
         refreshProgress = RefreshProgress(query: "", message: "Starting refresh…", fraction: 0)
+        let start = DispatchTime.now()
         Task {
             let results = await services.query.refresh(queries: queries, only: only, baseDirectory: base) { p in
                 DispatchQueue.main.async { self.refreshProgress = p }
             }
+            Self.trace(refresh: results, since: start)
             var tables: [DataTable] = [], failures: [String] = []
             for (name, result) in results {
                 switch result {
@@ -1080,6 +1090,21 @@ final class DocumentStore: ObservableObject {
                                 + (direct.isEmpty ? "" : " DirectQuery tables read their sources again."))
                 : StatusMessage(kind: .error, text: failures.joined(separator: "\n"))
         }
+    }
+}
+
+extension DocumentStore {
+    /// Settings ▸ Diagnostics ▸ tracing: each query's row count or failure, and the refresh's duration.
+    nonisolated static func trace(refresh results: [String: Result<DataTable, Error>], since start: DispatchTime) {
+        var failures = 0
+        for (name, result) in results.sorted(by: { $0.key < $1.key }) {
+            switch result {
+            case .success(let t): TraceLog.shared.record("refresh.query", ["query": .name(name), "rows": .count(t.rowCount)])
+            case .failure: failures += 1; TraceLog.shared.record("refresh.query", ["query": .name(name), "failed": .flag(true)])
+            }
+        }
+        TraceLog.shared.record("refresh", ["ms": .milliseconds(TraceLog.milliseconds(since: start)),
+                                           "queries": .count(results.count), "failures": .count(failures)])
     }
 }
 

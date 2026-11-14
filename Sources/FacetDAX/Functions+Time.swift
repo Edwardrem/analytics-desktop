@@ -97,6 +97,10 @@ extension DAXEngine {
         var name: String?
         if case .ident(let s) = n.kind { name = s } else if let s = n.stringConst { name = s }
         if let s = name, c.vars?.lookup(s.daxKey) == nil, let cal = calendars[s.daxKey] { calendar = cal }
+        if let s = name, calendar == nil, !features.calendarTimeIntelligence, c.vars?.lookup(s.daxKey) == nil,
+           model.tables.contains(where: { $0.calendars.contains { $0.name.daxKey == s.daxKey } }) {
+            throw DAXError("\(fn): “\(s)” is a calendar, and calendar-based time intelligence (a preview feature) is turned off.", range: n.range)
+        }
         if let cal = calendar {
             let vis = distinctValues(cal.dateColumn, c.fc, blankRow: false).compactMap { v -> Date? in if case .date(let d) = v { return d }; return nil }.sorted()
             return DateArg(cid: cal.dateColumn, visible: vis, yearEnd: (cal.yearEndMonth, 31), calendar: cal)

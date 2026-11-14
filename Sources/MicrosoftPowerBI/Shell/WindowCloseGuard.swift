@@ -29,6 +29,11 @@ struct WindowCloseGuard: NSViewRepresentable {
             self.window = window
             original = window.delegate
             window.delegate = self
+            if window.isKeyWindow { MainActor.assumeIsolated { ActiveDocument.shared.activate(store) } }
+        }
+        func windowDidBecomeKey(_ notification: Notification) {
+            original?.windowDidBecomeKey?(notification)
+            MainActor.assumeIsolated { ActiveDocument.shared.activate(store) }
         }
         // Forward everything we don't handle to SwiftUI's own delegate.
         override func responds(to aSelector: Selector!) -> Bool {
@@ -42,7 +47,7 @@ struct WindowCloseGuard: NSViewRepresentable {
         }
         func windowWillClose(_ notification: Notification) {
             original?.windowWillClose?(notification)
-            MainActor.assumeIsolated { StoreRegistry.shared.remove(handleID) }
+            MainActor.assumeIsolated { ActiveDocument.shared.closed(store); StoreRegistry.shared.remove(handleID) }
         }
     }
 }

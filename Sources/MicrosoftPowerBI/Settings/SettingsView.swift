@@ -9,7 +9,7 @@ enum AppSettings {
     enum Key: String {
         case appearance
         // Data load
-        case detectTypes, autodetectRelationships, autoDateTime, backgroundPreviews, parallelLoading, cacheLimitMB
+        case detectTypes, autodetectRelationships, autoDateTime, parallelLoading
         // Power Query Editor
         case pqFormulaBar, pqProfilingWholeDataset, pqColumnQuality, pqColumnDistribution, pqColumnProfile, pqMonospaced
         // DirectQuery
@@ -17,11 +17,11 @@ enum AppSettings {
         // Scripting
         case pythonPath, rPath, allowScripts
         // Security & privacy
-        case requireNativeQueryApproval, connectorTrust, certificateChecks, warnUncertifiedVisuals, privacyMode
+        case requireNativeQueryApproval, privacyMode
         // Regional
-        case appLanguage, modelLanguage, importLocale
-        // Updates, diagnostics
-        case updateNotifications, usageData, tracing
+        case modelLanguage, importLocale
+        // Diagnostics
+        case tracing
         // Auto recovery
         case autoRecovery, autoRecoveryMinutes, autoRecoveryLocation
         // Preview features
@@ -31,12 +31,11 @@ enum AppSettings {
     }
     static let initial: [String: Any] = [
         Key.appearance.rawValue: "system", Key.detectTypes.rawValue: true, Key.autodetectRelationships.rawValue: true,
-        Key.autoDateTime.rawValue: false, Key.backgroundPreviews.rawValue: true, Key.parallelLoading.rawValue: true, Key.cacheLimitMB.rawValue: 4096,
+        Key.autoDateTime.rawValue: false, Key.parallelLoading.rawValue: true,
         Key.pqFormulaBar.rawValue: true, Key.pqColumnQuality.rawValue: true, Key.pqColumnDistribution.rawValue: false, Key.pqColumnProfile.rawValue: false,
         Key.pqMonospaced.rawValue: false, Key.dqMaxConnections.rawValue: 10, Key.requireNativeQueryApproval.rawValue: true,
-        Key.connectorTrust.rawValue: "certified", Key.certificateChecks.rawValue: true, Key.warnUncertifiedVisuals.rawValue: true,
-        Key.privacyMode.rawValue: "combine", Key.appLanguage.rawValue: "system", Key.modelLanguage.rawValue: "en-US", Key.importLocale.rawValue: "en-US",
-        Key.updateNotifications.rawValue: true, Key.usageData.rawValue: false, Key.autoRecovery.rawValue: true, Key.autoRecoveryMinutes.rawValue: 10,
+        Key.privacyMode.rawValue: "combine", Key.modelLanguage.rawValue: "en-US", Key.importLocale.rawValue: "en-US",
+        Key.autoRecovery.rawValue: true, Key.autoRecoveryMinutes.rawValue: 10, Key.tracing.rawValue: false,
         Key.allowScripts.rawValue: false, Key.previewGantt.rawValue: true, Key.previewNewQueryEditor.rawValue: true, Key.previewCalendarTI.rawValue: true,
         Key.previewUserContextColumns.rawValue: true, Key.previewFullTextSearch.rawValue: true,
         Key.mcpServerEnabled.rawValue: false, Key.pbipDataCache.rawValue: false, Key.autoRecoveryLocation.rawValue: "",
@@ -59,6 +58,7 @@ enum SettingsFeature {
     static func register() {
         AppSettings.registerDefaults()
         Features.settingsBuilder = { AnyView(SettingsView()) }
+        PreviewFeatures.observe()
     }
 }
 
@@ -66,6 +66,7 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }
+            CurrentFileSettings().tabItem { Label("Current File", systemImage: "doc.badge.gearshape") }
             DataSettings().tabItem { Label("Data", systemImage: "cylinder.split.1x2") }
             SecuritySettings().tabItem { Label("Security", systemImage: "lock.shield") }
             ScriptingSettings().tabItem { Label("Scripting", systemImage: "chevron.left.forwardslash.chevron.right") }
@@ -88,41 +89,67 @@ private struct Toggled: View {
         Toggle(isOn: $value) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                if !help.isEmpty { Text(help).font(Design.Typeface.caption).foregroundStyle(.secondary) }
+                if !help.isEmpty { Text(help).font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
             }
         }
+        .managed(key)
+    }
+}
+
+/// A plain statement in a settings section.
+private struct Note: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
 }
 
 private struct GeneralSettings: View {
     @AppStorage(AppSettings.Key.appearance.rawValue) private var appearance = "system"
-    @AppStorage(AppSettings.Key.appLanguage.rawValue) private var language = "system"
     @AppStorage(AppSettings.Key.modelLanguage.rawValue) private var modelLanguage = "en-US"
     @AppStorage(AppSettings.Key.importLocale.rawValue) private var importLocale = "en-US"
     @AppStorage(AppSettings.Key.autoRecoveryMinutes.rawValue) private var minutes = 10
-    private let locales = ["en-US", "en-GB", "en-ZA", "fr-FR", "de-DE", "es-ES", "pt-BR", "it-IT", "nl-NL", "ja-JP", "zh-CN", "sn-ZW"]
     var body: some View {
         Form {
             Section("Appearance") {
                 Picker("Window theme", selection: $appearance) {
                     Text("Match system").tag("system"); Text("Light").tag("light"); Text("Dark").tag("dark")
                 }
+                .managed(.appearance)
             }
             Section("Regional") {
-                Picker("Model language", selection: $modelLanguage) { ForEach(locales, id: \.self) { Text(Locale.current.localizedString(forIdentifier: $0) ?? $0).tag($0) } }
-                Picker("Locale for import", selection: $importLocale) { ForEach(locales, id: \.self) { Text(Locale.current.localizedString(forIdentifier: $0) ?? $0).tag($0) } }
+                VStack(alignment: .leading, spacing: 2) {
+                    Picker("Model language for new files", selection: $modelLanguage) { CulturePicker.options }
+                    Note("How numbers and dates are formatted, and the culture DAX's FORMAT and USERCULTURE() use. Change an open file's own language in Current File.")
+                }
+                .managed(.modelLanguage)
+                VStack(alignment: .leading, spacing: 2) {
+                    Picker("Locale for import", selection: $importLocale) { CulturePicker.options }
+                    Note("How text from sources is read as numbers and dates when data is loaded, for every file.")
+                }
+                .managed(.importLocale)
             }
             Section("Auto recovery") {
                 Toggled("Store recovery copies of open documents", .autoRecovery,
                         help: "Documents with unsaved changes are copied regularly and offered back if \(AppIdentity.name) quits before you save.")
                 Stepper("Every \(minutes) minute\(minutes == 1 ? "" : "s")", value: $minutes, in: 1...60)
-                RecoveryLocationRow()
+                    .managed(.autoRecoveryMinutes)
+                RecoveryLocationRow().managed(.autoRecoveryLocation)
             }
-            Section("Updates") {
-                Toggled("Tell me when an update is available", .updateNotifications)
-                Toggled("Share anonymous usage data", .usageData, help: "Off by default. \(AppIdentity.name) never sends your data or documents.")
+            Section("Updates and usage data") {
+                Note("\(AppIdentity.name) has no automatic updater: new versions come from wherever you installed it. It sends no usage data or telemetry, and never sends your data or documents anywhere you didn't ask.")
             }
         }.formStyle(.grouped)
+    }
+}
+
+/// The cultures offered for the model language and the locale for import.
+enum CulturePicker {
+    static let cultures = ["en-US", "en-GB", "en-ZA", "fr-FR", "de-DE", "es-ES", "pt-BR", "it-IT", "nl-NL", "ja-JP", "zh-CN", "sn-ZW"]
+    static func name(_ id: String) -> String { Locale.current.localizedString(forIdentifier: id) ?? id }
+    @ViewBuilder static var options: some View {
+        ForEach(cultures, id: \.self) { Text(name($0)).tag($0) }
     }
 }
 
@@ -152,17 +179,16 @@ private struct RecoveryLocationRow: View {
 }
 
 private struct DataSettings: View {
-    @AppStorage(AppSettings.Key.cacheLimitMB.rawValue) private var cache = 4096
     @AppStorage(AppSettings.Key.dqMaxConnections.rawValue) private var connections = 10
     var body: some View {
         Form {
             Section("Data load") {
                 Toggled("Detect column types and headers for unstructured sources", .detectTypes)
-                Toggled("Autodetect new relationships after data is loaded", .autodetectRelationships)
-                Toggled("Auto date/time for new documents", .autoDateTime, help: "Adds hidden date hierarchies. Larger models; prefer a date table.")
-                Toggled("Load data previews in the background", .backgroundPreviews)
-                Toggled("Load tables in parallel", .parallelLoading)
-                Stepper("Data cache limit: \(cache) MB", value: $cache, in: 256...65536, step: 256)
+                Toggled("Autodetect new relationships after data is loaded", .autodetectRelationships,
+                        help: "For files that haven't chosen for themselves in Current File.")
+                Toggled("Auto date/time for new files", .autoDateTime, help: "Adds hidden date hierarchies. Larger models; prefer a date table.")
+                Toggled("Load tables in parallel", .parallelLoading,
+                        help: "Up to \(max(2, ProcessInfo.processInfo.activeProcessorCount)) tables load at once. When off, a refresh loads one table at a time.")
             }
             Section("Power Query Editor") {
                 Toggled("Show the formula bar", .pqFormulaBar)
@@ -174,30 +200,24 @@ private struct DataSettings: View {
             }
             Section("DirectQuery") {
                 Stepper("Maximum connections per data source: \(connections)", value: $connections, in: 1...30)
+                    .managed(.dqMaxConnections)
                 Toggled("Edit relationships without validating against the source", .dqSkipRelationshipValidation,
                         help: "Creating or editing a relationship doesn't read DirectQuery tables' rows to check its cardinality.")
-                Text("Measures over DirectQuery tables run in \(AppIdentity.name)'s engine on the rows the source returns, so every DAX function is available: there is no restricted mode to turn off.")
-                    .font(Design.Typeface.caption).foregroundStyle(.secondary)
+                Note("Measures over DirectQuery tables run in \(AppIdentity.name)'s engine on the rows the source returns, so every DAX function is available: there is no restricted mode to turn off.")
             }
         }.formStyle(.grouped)
     }
 }
 
 private struct SecuritySettings: View {
-    @AppStorage(AppSettings.Key.connectorTrust.rawValue) private var trust = "certified"
     @AppStorage(AppSettings.Key.privacyMode.rawValue) private var privacy = "combine"
     var body: some View {
         Form {
             Section("Queries") {
                 Toggled("Ask before running native database queries", .requireNativeQueryApproval)
-                Toggled("Check certificate revocation for connections", .certificateChecks)
             }
             Section("Extensions") {
-                Picker("Data connectors", selection: $trust) {
-                    Text("Only certified connectors").tag("certified")
-                    Text("Allow any connector, with a warning").tag("any")
-                }
-                Toggled("Warn before loading uncertified custom visuals", .warnUncertifiedVisuals)
+                Note("\(AppIdentity.name) has no custom data connectors or custom visuals, so there is nothing to certify or warn about. Connections use macOS's own certificate checks.")
             }
             Section("Privacy levels") {
                 Picker("Combining data", selection: $privacy) {
@@ -205,6 +225,7 @@ private struct SecuritySettings: View {
                     Text("Always ask per file").tag("file")
                     Text("Ignore privacy levels (faster, may expose data)").tag("ignore")
                 }
+                .managed(.privacyMode)
                 Text("Privacy levels stop data from a private source being sent to another source when queries are combined.")
                     .font(Design.Typeface.caption).foregroundStyle(.secondary)
             }
@@ -227,10 +248,12 @@ private struct ScriptingSettings: View {
             }
             Section("Python") {
                 HStack { TextField("Interpreter", text: $python, prompt: Text(detected("python3") ?? "/usr/bin/python3")); Button("Choose…") { choose { python = $0 } } }
+                    .managed(.pythonPath)
                 Text(python.isEmpty ? "Using \(detected("python3") ?? "no Python found on this Mac")." : "").font(Design.Typeface.caption).foregroundStyle(.secondary)
             }
             Section("R") {
                 HStack { TextField("Rscript", text: $r, prompt: Text(detected("Rscript") ?? "Not installed")); Button("Choose…") { choose { r = $0 } } }
+                    .managed(.rPath)
                 Text(r.isEmpty ? (detected("Rscript").map { "Using \($0)." } ?? "R isn't installed. Install it from r-project.org to use R scripts and visuals.") : "")
                     .font(Design.Typeface.caption).foregroundStyle(.secondary)
             }
@@ -249,12 +272,9 @@ private struct ScriptingSettings: View {
 private struct PreviewSettings: View {
     var body: some View {
         Form {
-            Section(footer: Text("Preview features may change. Some need a restart.").font(Design.Typeface.caption).foregroundStyle(.secondary)) {
-                Toggled("Gantt chart visual", .previewGantt)
-                Toggled("Diagram, schema and script views in the Power Query Editor", .previewNewQueryEditor)
-                Toggled("Calendar-based time intelligence", .previewCalendarTI)
-                Toggled("User-context-aware calculated columns", .previewUserContextColumns)
-                Toggled("String indexing and full-text search functions", .previewFullTextSearch)
+            Section(header: Text("Preview features"),
+                    footer: Note("Preview features may change. Open documents follow a change at once; the Power Query Editor follows it the next time it opens.")) {
+                ForEach(PreviewFeatures.all, id: \.key) { f in Toggled(f.title, f.key, help: f.help) }
             }
         }.formStyle(.grouped)
     }
@@ -271,9 +291,10 @@ private struct DiagnosticsSettings: View {
                 LabeledContent("Memory", value: ByteCountFormatter.string(fromByteCount: Int64(ProcessInfo.processInfo.physicalMemory), countStyle: .memory))
             }
             Section("Tracing") {
-                Toggled("Enable tracing", .tracing, help: "Writes engine timings to the traces folder.")
+                Toggled("Enable tracing", .tracing,
+                        help: "Writes how long loading the model, refreshing, DirectQuery reads and visual queries take, with row counts, to the Traces folder. Never data values, DAX or M text, or credentials.")
                 Button("Open Traces Folder") {
-                    let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("\(AppIdentity.name)/Traces")
+                    let url = TraceLog.shared.directory
                     try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
                     NSWorkspace.shared.open(url)
                 }

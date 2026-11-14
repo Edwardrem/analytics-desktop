@@ -484,6 +484,7 @@ final class LiveQuery: QueryService {
     func refresh(queries: [QueryDefinition], only: [String]?, baseDirectory: URL?,
                  progress: @escaping (RefreshProgress) -> Void) async -> [String: Result<DataTable, Error>] {
         let engine = QueryEngine(queries: queries, environment: .app(baseDirectory: baseDirectory))
+        DataLoadOptions.configure(engine)
         return await engine.refreshAll(only: only) { p in
             let fraction = p.total > 0 ? Double(min(p.completed, p.total)) / Double(p.total) : 0
             let message: String

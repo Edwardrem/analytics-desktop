@@ -82,6 +82,9 @@ extension DAXEngine {
             return .scalar(.bool(false))
         }
         d["TEXTSEARCH"] = { e, a, c, _ in
+            guard e.features.textSearch else {
+                throw DAXError("TEXTSEARCH belongs to string indexing and full-text search, a preview feature that is turned off.")
+            }
             let cid = try e.columnArg(a[0], c, "TEXTSEARCH")
             let query = try e.scalar(a[1], c).asString
             let words = ColumnStore.words(query)
@@ -94,6 +97,12 @@ extension DAXEngine {
                             ("USERCULTURE", \DAXEngine.userCulture), ("USEROBJECTID", \DAXEngine.userObjectID),
                             ("CUSTOMDATA", \DAXEngine.customData)] {
             d[name] = { e, _, _, _ in .scalar(.string(e[keyPath: key])) }
+        }
+        // FORMAT uses the model's culture unless a locale is given.
+        d["FORMAT"] = { e, a, c, _ in
+            let args = try a.map { try e.scalar($0, c) }
+            let culture = args.count > 2 && !args[2].isNull ? FormatCulture(identifier: args[2].asString) : e.formatCulture
+            return .scalar(PureText.format(args, culture: culture))
         }
         d["SELECTEDMEASURE"] = { e, _, c, _ in
             guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURE can only be used inside a calculation item or a dynamic format string.") }

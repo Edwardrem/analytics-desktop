@@ -77,7 +77,17 @@ final class DirectQuerySession {
         let data = doc.data
         Task {
             let results = await Self.fetch(jobs, maxConnections: maxConnections) { job in
-                try await Self.read(job, engine: engine)
+                let start = DispatchTime.now()
+                do {
+                    let rows = try await Self.read(job, engine: engine)
+                    TraceLog.shared.record("directQuery.read", ["table": .name(job.table), "rows": .count(rows.rowCount),
+                                                                "ms": .milliseconds(TraceLog.milliseconds(since: start))])
+                    return rows
+                } catch {
+                    TraceLog.shared.record("directQuery.read", ["table": .name(job.table), "failed": .flag(true),
+                                                                "ms": .milliseconds(TraceLog.milliseconds(since: start))])
+                    throw error
+                }
             }
             for (table, result) in results { cache[table.lowercased()] = Entry(signature: signature, result: result) }
             completion(merged(data, wanted), problems(wanted))

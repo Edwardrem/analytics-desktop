@@ -261,6 +261,7 @@ final class GetDataSession: ObservableObject {
             var sources: [QueryDataSource] = SourcePlanner.dataSource(request).map { [$0] } ?? []
             if destination == .load {
                 let engine = QueryEngine(queries: store.doc.queries + definitions, environment: environment)
+                DataLoadOptions.configure(engine)
                 let results = await engine.refreshAll(only: definitions.map(\.name)) { _ in }
                 var failures: [String] = []
                 for definition in definitions {
