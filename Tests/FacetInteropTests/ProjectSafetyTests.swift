@@ -155,6 +155,49 @@ final class ProjectSafetyTests: XCTestCase {
         XCTAssertEqual(try PBIPProject.read(from: alias.appendingPathComponent("Sales.pbip")).0.model.tables.map(\.name), ["Sales"])
     }
 
+    func testReportAndModelOutsideTheProjectFolderAreRefused() throws {
+        let fm = FileManager.default
+        let elsewhere = dir.appendingPathComponent("Elsewhere")
+        var secret = document()
+        secret.model.tables[0].name = "Payroll"
+        try PBIPProject.write(document: secret, to: elsewhere, name: "Secret")
+        func project() throws -> URL {
+            let folder = dir.appendingPathComponent("Shared/\(UUID().uuidString)")
+            try PBIPProject.write(document: document(), to: folder, name: "Sales")
+            return folder
+        }
+        func refused(_ url: URL, _ why: String) {
+            XCTAssertThrowsError(try PBIPProject.read(from: url), why) { error in
+                XCTAssertTrue(error.localizedDescription.contains("outside the folder"), error.localizedDescription)
+            }
+        }
+
+        // The report points `byPath` at a model in another folder.
+        let byPath = try project()
+        let pbir = byPath.appendingPathComponent("Sales.Report/definition.pbir")
+        try Data(#"{"version":"4.0","datasetReference":{"byPath":{"path":"../../../Elsewhere/Secret.SemanticModel"}}}"#.utf8).write(to: pbir)
+        refused(byPath.appendingPathComponent("Sales.pbip"), "byPath")
+
+        // The .pbip points its report at another folder.
+        let artifact = try project()
+        try Data(#"{"version":"1.0","artifacts":[{"report":{"path":"../../Elsewhere/Secret.Report"}}]}"#.utf8)
+            .write(to: artifact.appendingPathComponent("Sales.pbip"))
+        refused(artifact.appendingPathComponent("Sales.pbip"), "artifact path")
+
+        // The model folder is a link to a model elsewhere.
+        let linked = try project()
+        try fm.removeItem(at: linked.appendingPathComponent("Sales.SemanticModel"))
+        try fm.createSymbolicLink(at: linked.appendingPathComponent("Sales.SemanticModel"), withDestinationURL: elsewhere.appendingPathComponent("Secret.SemanticModel"))
+        refused(linked.appendingPathComponent("Sales.pbip"), "linked model folder")
+
+        // A model file linked from elsewhere is not read either.
+        let file = try project()
+        let tables = file.appendingPathComponent("Sales.SemanticModel/definition/tables")
+        try fm.createSymbolicLink(at: tables.appendingPathComponent("Payroll.tmdl"), withDestinationURL: elsewhere.appendingPathComponent("Secret.SemanticModel/definition/tables/Payroll.tmdl"))
+        let (doc, _) = try PBIPProject.read(from: file.appendingPathComponent("Sales.pbip"))
+        XCTAssertEqual(doc.model.tables.map(\.name), ["Sales"])
+    }
+
     func testTemplatesKeepTheirSensitivityLabel() throws {
         var doc = document()
         doc.report.settings.sensitivityLabel = "Highly Confidential"
