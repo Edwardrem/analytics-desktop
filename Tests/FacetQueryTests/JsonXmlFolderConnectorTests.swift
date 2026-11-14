@@ -145,8 +145,7 @@ final class JsonXmlFolderConnectorTests: FixtureTestCase {
         XCTAssertEqual(try XCTUnwrap(failure("Folder.Files(\"f.txt\")")).reason, "DataSource.Error")
     }
     func testUnavailableConnectorsFailClearly() throws {
-        for call in ["Pdf.Tables(#binary({1}))", "Sql.Database(\"srv\", \"db\")", "Odbc.DataSource(\"dsn\")",
-                     "PostgreSQL.Database(\"h\", \"d\")", "MySQL.Database(\"h\", \"d\")"] {
+        for call in ["Pdf.Tables(#binary({1}))", "Sql.Database(\"srv\", \"db\")", "Odbc.DataSource(\"dsn\")"] {
             let e = try XCTUnwrap(failure(call), call)
             XCTAssertEqual(e.reason, "DataSource.Error", call)
             XCTAssertTrue(e.message.contains("isn't available"), e.message)

@@ -16,6 +16,9 @@ struct SourceRequest: Equatable, Sendable {
     /// Optional SQL statement for database sources.
     var nativeQuery = ""
     var directQuery = false
+    /// PostgreSQL, MySQL, MariaDB and Redshift: TLS, on unless turned off. Whether a certificate is checked is a per-host
+    /// setting (`QuerySecurity.trustedServerCertificateHosts`), never part of the query.
+    var encrypt = true
     var webContent: WebContentKind = .csv
     /// The database, semantic model or other second part of the address (SQL Server, Azure Data Explorer, Power BI models).
     var database = ""
@@ -79,6 +82,11 @@ enum SourcePlanner {
         case .blank: return "\"\""
         case .parquet, .sharePointFolder, .sharePointList, .dataverse, .dynamics365, .azureBlobs, .azureDataLake, .lakehouse, .kusto, .semanticModel:
             return CloudSourcePlanner.sourceExpression(r) ?? "\"\""
+        case .postgresql, .mysql, .mariadb, .redshift:
+            var options: [String] = []
+            if !r.encrypt { options.append("EncryptConnection = false") }
+            let database = MSyntax.text(r.database.trimmingCharacters(in: .whitespacesAndNewlines))
+            return "\(serverFunction(r.kind))(\(location), \(database)\(options.isEmpty ? "" : ", [" + options.joined(separator: ", ") + "]"))"
         case .web, .oneDriveFile:
             let contents = "Web.Contents(\(location))"
             switch r.webContent {
@@ -95,7 +103,7 @@ enum SourcePlanner {
     static func sourceSteps(_ r: SourceRequest) -> [MStep] {
         var steps = [MStep(name: "Source", expression: sourceExpression(r))]
         let sql = r.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if r.kind == .sqlite, !sql.isEmpty {
+        if r.kind.isDatabase, !sql.isEmpty {
             steps.append(MStep(name: "Query", expression: "Value.NativeQuery(Source, \(MSyntax.text(sql)), null, [EnableFolding = true])"))
         }
         return steps
@@ -108,6 +116,25 @@ enum SourcePlanner {
             steps.append(MStep(name: item.stepName, expression: MSyntax.identifier(last.name) + item.selector))
         }
         return steps
+    }
+
+    /// The M function of a database server connector, as Power BI writes it.
+    static func serverFunction(_ kind: SourceKind) -> String {
+        switch kind {
+        case .mysql: return "MySQL.Database"
+        case .mariadb: return "MariaDB.Contents"
+        case .redshift: return "AmazonRedshift.Database"
+        default: return "PostgreSQL.Database"
+        }
+    }
+    /// The data source kind the engine records for a server connector.
+    static func serverSourceKind(_ kind: SourceKind) -> String {
+        switch kind {
+        case .mysql: return "MySQL"
+        case .mariadb: return "MariaDB"
+        case .redshift: return "AmazonRedshift"
+        default: return "PostgreSQL"
+        }
     }
 
     // MARK: Navigator
@@ -260,6 +287,17 @@ enum SourcePlanner {
         switch fn {
         case "Folder.Files", "Folder.Contents": return text(args.first).map { make(.folder, $0) }
         case "Sqlite.Database": return text(args.first).map { make(.sqlite, $0) }
+        case "PostgreSQL.Database", "MySQL.Database", "MariaDB.Contents", "AmazonRedshift.Database":
+            guard let server = text(args.first), let database = text(args[safe: 1]) else { return nil }
+            let kind: SourceKind = fn == "MySQL.Database" ? .mysql : fn == "MariaDB.Contents" ? .mariadb : fn == "AmazonRedshift.Database" ? .redshift : .postgresql
+            var r = make(kind, server)
+            r.database = database
+            if case .record(let fields)? = args[safe: 2] {
+                for (name, value) in fields {
+                    if name == "EncryptConnection", case .literal(.logical(let b)) = value { r.encrypt = b }
+                }
+            }
+            return r
         case "Sql.Database":
             guard let server = text(args.first), let database = text(args[safe: 1]) else { return nil }
             var r = make(.sqlServer, server)
@@ -328,6 +366,9 @@ enum SourcePlanner {
         case .python: return "Python"
         case .r: return "R"
         case .blank: return "Query1"
+        case .postgresql, .mysql, .mariadb, .redshift:
+            let database = r.database.trimmingCharacters(in: .whitespacesAndNewlines)
+            return database.isEmpty ? "Query" : database
         }
     }
 
@@ -346,6 +387,8 @@ enum SourcePlanner {
             guard let parts = URLComponents(string: location), let host = parts.host?.lowercased() else { return nil }
             return QueryDataSource(kind: "Web", location: "https://\(host)")
         case .python, .r, .blank: return nil
+        case .postgresql, .mysql, .mariadb, .redshift:
+            return QueryDataSource(kind: serverSourceKind(r.kind), location: location + ";" + r.database.trimmingCharacters(in: .whitespacesAndNewlines))
         default: return CloudSourcePlanner.dataSource(r)
         }
     }
@@ -363,6 +406,10 @@ enum SourcePlanner {
             guard !location.isEmpty else { return "Type the address." }
             guard let parts = URLComponents(string: location), let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),
                   !(parts.host ?? "").isEmpty else { return "The address must start with http:// or https://." }
+            return nil
+        case .postgresql, .mysql, .mariadb, .redshift:
+            guard !location.isEmpty else { return "Type the server name." }
+            guard !r.database.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return "Type the database name." }
             return nil
         case .csv, .excel, .json, .xml, .folder, .sqlite:
             guard !location.isEmpty else { return r.kind == .folder ? "Choose a folder." : "Choose a file." }

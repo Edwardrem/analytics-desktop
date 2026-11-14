@@ -18,13 +18,17 @@ final class GetDataCatalogTests: XCTestCase {
         XCTAssertEqual(available, ["excel", "csv", "xml", "json", "folder", "sqlite", "sqlserver", "azure-sql", "azure-synapse", "fabric-warehouses",
                                    "web", "odata", "python", "r", "blank",
                                    "parquet", "sharepoint-folder", "onedrive-file", "sharepoint-list", "fabric-models", "fabric-lakehouses",
-                                   "dataverse", "dynamics365", "azure-blob", "azure-adls2", "azure-adx"])
-        // Every kind the session implements is offered exactly once, except the SQL Server family: SQL Server, Azure SQL,
-        // Synapse SQL and Fabric warehouses all speak TDS and share one form.
+                                   "dataverse", "dynamics365", "azure-blob", "azure-adls2", "azure-adx",
+                                   "postgresql", "mysql", "mariadb", "redshift", "azure-postgres", "azure-mysql"])
+        // Every kind the session implements is offered once, except the SQL Server family (SQL Server, Azure SQL, Synapse
+        // SQL and Fabric warehouses all speak TDS and share one form) and Azure Database for PostgreSQL and MySQL, which are
+        // the PostgreSQL and MySQL connectors, as in Power BI.
         for kind in SourceKind.allCases {
-            XCTAssertEqual(DataConnector.all.filter { $0.kind == kind }.count, kind == .sqlServer ? 4 : 1, "\(kind)")
+            XCTAssertEqual(DataConnector.all.filter { $0.kind == kind }.count, kind == .sqlServer ? 4 : [.postgresql, .mysql].contains(kind) ? 2 : 1, "\(kind)")
         }
         XCTAssertEqual(DataConnector.connector(for: .sqlServer)?.id, "sqlserver")
+        XCTAssertEqual(DataConnector.connector("azure-postgres")?.kind, .postgresql)
+        XCTAssertEqual(DataConnector.connector("azure-mysql")?.kind, .mysql)
     }
 
     func testUnavailableConnectorsSayWhatIsMissing() {
@@ -33,7 +37,7 @@ final class GetDataCatalogTests: XCTestCase {
             XCTAssertFalse((c.unavailableReason ?? "").isEmpty, c.name)
         }
         XCTAssertEqual(DataConnector.connector("oracle")?.unavailableReason, "Needs a database driver, which this app does not include.")
-        XCTAssertEqual(DataConnector.connector("postgresql")?.isAvailable, false)
+        XCTAssertEqual(DataConnector.connector("postgresql")?.isAvailable, true)
         XCTAssertNil(DataConnector.connector("parquet")?.unavailableReason)
         XCTAssertEqual(DataConnector.connector("fabric-warehouses")?.isAvailable, true)
         XCTAssertEqual(DataConnector.connector("sharepoint-onprem")?.isAvailable, false)

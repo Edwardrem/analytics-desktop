@@ -81,7 +81,8 @@ final class GetDataSession: ObservableObject {
         guard let kind = connector.kind else { return }
         self.connector = connector
         request = SourceRequest(kind: kind, location: location)
-        if kind == .sqlServer, let split = location.firstIndex(of: ";") {      // "server;database", as data source files give it
+        // A recent database server is remembered as "server;database", as data source files give it.
+        if kind.isServer || kind == .sqlServer, let split = location.firstIndex(of: ";") {
             request.location = String(location[..<split])
             request.database = String(location[location.index(after: split)...])
         }
@@ -123,6 +124,7 @@ final class GetDataSession: ObservableObject {
         if request.kind == .sqlServer {
             return QueryDataSource(kind: "SQL", location: SQLServerConnection.location(server: request.location, database: request.database))
         }
+        if request.kind.isServer { return SourcePlanner.dataSource(request) }
         return CloudSourcePlanner.nativeQuerySource(request)
     }
     var pendingNativeQuery: String { request.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -233,7 +235,7 @@ final class GetDataSession: ObservableObject {
                 shown = try await sample(script)
             }
         }
-        let typed = [.sqlite, .sqlServer, .python, .r, .parquet, .kusto].contains(request.kind)
+        let typed = request.kind.isDatabase || [.sqlServer, .python, .r, .parquet, .kusto].contains(request.kind)
         if detectTypes, !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)
@@ -321,7 +323,7 @@ final class GetDataSession: ObservableObject {
                 // One record per location: OData reads its feed through Web.Contents, which is the same source.
                 for s in engine.dataSourcesAccessed where !sources.contains(where: { $0.location == s.location }) { sources.append(s) }
             }
-            let directQuery = [.sqlite, .sqlServer].contains(request.kind) && request.directQuery
+            let directQuery = (request.kind.isDatabase || request.kind == .sqlServer) && request.directQuery
             if directQuery {
                 // The same check as the storage-mode menu: DirectQuery only when every step folds into SQL.
                 for table in tables {
@@ -365,7 +367,9 @@ final class GetDataSession: ObservableObject {
                     }
                 }
             }
-            security.noteRecent(kind: request.kind, location: request.location)
+            security.noteRecent(kind: request.kind, location: request.kind.isServer
+                                ? request.location.trimmingCharacters(in: .whitespacesAndNewlines) + ";" + request.database.trimmingCharacters(in: .whitespacesAndNewlines)
+                                : request.location)
             switch destination {
             case .load:
                 let rows = tables.reduce(0) { $0 + $1.rowCount }

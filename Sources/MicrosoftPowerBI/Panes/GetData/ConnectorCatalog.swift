@@ -4,6 +4,12 @@ import Foundation
 enum SourceKind: String, Codable, CaseIterable, Sendable {
     case csv, excel, json, xml, folder, sqlite, sqlServer, web, odata, python, r, blank
     case parquet, sharePointFolder, sharePointList, oneDriveFile, dataverse, dynamics365, azureBlobs, azureDataLake, lakehouse, kusto, semanticModel
+    case postgresql, mysql, mariadb, redshift
+
+    /// Database servers: a server and a database name rather than a file or address.
+    var isServer: Bool { [.postgresql, .mysql, .mariadb, .redshift].contains(self) }
+    /// Sources that run SQL, so a native query and DirectQuery are offered.
+    var isDatabase: Bool { self == .sqlite || isServer }
 }
 
 /// One entry of the Get Data catalog. The catalog lists everything Power BI Desktop offers; an entry is either
@@ -82,19 +88,19 @@ struct DataConnector: Identifiable, Hashable {
         missing("db2", "IBM Db2 database", .database, "cylinder", Missing.driver),
         missing("informix", "IBM Informix database", .database, "cylinder", Missing.driver),
         missing("netezza", "IBM Netezza", .database, "cylinder", Missing.driver),
-        missing("mysql", "MySQL database", .database, "cylinder", Missing.driver),
-        missing("postgresql", "PostgreSQL database", .database, "cylinder", Missing.driver),
+        works("mysql", "MySQL database", .database, "cylinder", .mysql),
+        works("postgresql", "PostgreSQL database", .database, "cylinder", .postgresql),
         missing("sybase", "Sybase database", .database, "cylinder", Missing.driver),
         missing("teradata", "Teradata database", .database, "cylinder", Missing.driver),
         missing("saphana", "SAP HANA database", .database, "cylinder", Missing.driver),
         missing("sapbw", "SAP Business Warehouse", .database, "cube", Missing.driver),
-        missing("redshift", "Amazon Redshift", .database, "cylinder", Missing.driver),
+        works("redshift", "Amazon Redshift", .database, "cylinder", .redshift),
         missing("impala", "Impala", .database, "cylinder", Missing.driver),
         missing("bigquery", "Google BigQuery", .database, "cylinder", Missing.driver),
         missing("vertica", "Vertica", .database, "cylinder", Missing.driver),
         missing("snowflake", "Snowflake", .database, "snowflake", Missing.driver),
         missing("essbase", "Essbase", .database, "cube", Missing.driver),
-        missing("mariadb", "MariaDB", .database, "cylinder", Missing.driver),
+        works("mariadb", "MariaDB", .database, "cylinder", .mariadb),
         missing("athena", "Amazon Athena", .database, "cylinder", Missing.driver),
         missing("databricks", "Databricks", .database, "cylinder", Missing.driver),
         // Microsoft Fabric
@@ -113,7 +119,8 @@ struct DataConnector: Identifiable, Hashable {
         works("azure-sql", "Azure SQL database", .azure, "cylinder", .sqlServer),
         works("azure-synapse", "Azure Synapse Analytics SQL", .azure, "cylinder.split.1x2", .sqlServer),
         missing("azure-as", "Azure Analysis Services database", .azure, "cube", Missing.azure),
-        missing("azure-postgres", "Azure Database for PostgreSQL", .azure, "cylinder", Missing.azure),
+        works("azure-postgres", "Azure Database for PostgreSQL", .azure, "cylinder", .postgresql),
+        works("azure-mysql", "Azure Database for MySQL", .azure, "cylinder", .mysql),
         works("azure-blob", "Azure Blob Storage", .azure, "shippingbox", .azureBlobs),
         missing("azure-table", "Azure Table Storage", .azure, "tablecells", Missing.azure),
         missing("azure-cosmos", "Azure Cosmos DB", .azure, "globe", Missing.azure),

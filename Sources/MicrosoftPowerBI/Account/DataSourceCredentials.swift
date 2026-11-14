@@ -26,6 +26,7 @@ enum CredentialMethod: String, CaseIterable, Identifiable, Sendable {
         case "AzureBlobs", "AzureDataLakeStorage": return [.organizational, .accountKey, .sasToken, .anonymous]
         case "SharePoint", "CommonDataService", "AzureDataExplorer", "AnalysisServices": return [.organizational]
         case "SQL", "PostgreSQL", "MySQL": return [.basic, .organizational]
+        case "AmazonRedshift", "MariaDB": return [.basic]
         default: return [.anonymous, .basic, .organizational]
         }
     }

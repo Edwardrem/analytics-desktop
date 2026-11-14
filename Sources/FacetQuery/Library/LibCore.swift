@@ -6,7 +6,7 @@ extension MLibrary {
     static let registrars: [(MLibrary) -> Void] = [
         registerCore, registerRecord,
         registerTable, registerList, registerText, registerNumber, registerDateTime,
-        registerFiles, registerSQL, registerSQLServer, registerWeb, registerWebTables, registerScripts, registerAI,
+        registerFiles, registerSQL, registerSQLServer, registerServerDatabases, registerWeb, registerWebTables, registerScripts, registerAI,
         registerParquet, registerSharePoint, registerDataverse, registerAzureStorage, registerKustoPowerBI,
     ]
 

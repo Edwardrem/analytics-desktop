@@ -40,7 +40,7 @@ enum StorageModeLogic {
         if let local = ((try? await engine.stepFolding(for: q)) ?? []).first(where: { $0.indicator == .notFolded }) {
             return .importOnly("DirectQuery needs the source to run every step of “\(q)”. Step “\(local.step)” runs on this Mac, so the table can only be imported.")
         }
-        return .importOnly("DirectQuery needs a source that runs queries itself: a SQLite or SQL Server database, with a query that folds completely. “\(q)” doesn't read one.")
+        return .importOnly("DirectQuery needs a source that runs queries itself (a SQLite, SQL Server, PostgreSQL, MySQL, MariaDB or Amazon Redshift database), with a query that folds completely. “\(q)” doesn't read one.")
     }
 
     /// Changes the mode. DirectQuery drops the imported rows (they are read from the source from then on);
