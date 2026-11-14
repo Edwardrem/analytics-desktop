@@ -107,8 +107,14 @@ public enum PBIPProject {
         }
         let ids = (report: existingID("Report") ?? UUID().lower, model: existingID("SemanticModel") ?? UUID().lower)
         let generated = files(for: document, name: safeName, options: options, logicalIDs: ids)
+        let managed = ["\(safeName).Report/definition", "\(safeName).SemanticModel/definition", "\(safeName).SemanticModel/.pbi/facet-cache",
+                       "\(safeName).Report/StaticResources/RegisteredResources"]
+        do { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+        catch { throw InteropError.io("Couldn't write the project to “\(folder.path)”: \(error.localizedDescription)") }
+        guard let root = ProjectPaths.realPath(folder) else { throw InteropError.io("Couldn't open the project folder “\(folder.path)”.") }
+        // Check every target before writing anything, so a link planted in the project changes nothing.
+        for path in generated.files.map(\.path) + managed { try ProjectPaths.checkWritable(path, in: folder, root: root) }
         do {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
             var written = Set<String>()
             for (path, data) in generated.files {
                 written.insert(path)
@@ -116,25 +122,33 @@ public enum PBIPProject {
                 if let old = BoundedFile.readIfPresent(url, limit: max(data.count, 1)), old == data { continue }
                 try fm.writeCreatingDirectories(data, to: url)
             }
-            // Prune stale generated files.
-            for managed in ["\(safeName).Report/definition", "\(safeName).SemanticModel/definition", "\(safeName).SemanticModel/.pbi/facet-cache",
-                            "\(safeName).Report/StaticResources/RegisteredResources"] {
-                let base = folder.appendingPathComponent(managed)
-                guard let walker = fm.enumerator(atPath: base.path) else { continue }
-                var dirs: [URL] = []
-                for case let rel as String in walker {
-                    let url = base.appendingPathComponent(rel)
-                    if fm.isDirectory(url) { dirs.append(url); continue }
-                    if !written.contains(managed + "/" + rel) { try? fm.removeItem(at: url) }
-                }
-                for d in dirs.sorted(by: { $0.path.count > $1.path.count }) where (try? fm.contentsOfDirectory(atPath: d.path))?.isEmpty == true {
-                    try? fm.removeItem(at: d)
-                }
-            }
+            for base in managed { prune(base, keeping: written, in: folder, root: root) }
         } catch {
             throw InteropError.io("Couldn't write the project to “\(folder.path)”: \(error.localizedDescription)")
         }
         return generated.warnings
+    }
+
+    /// Removes generated files under `managed` that this save didn't write (deleted pages, visuals, tables).
+    /// Links are never followed or deleted, and nothing outside the project folder is touched.
+    static func prune(_ managed: String, keeping written: Set<String>, in folder: URL, root: String) {
+        let fm = FileManager.default
+        let base = folder.appendingPathComponent(managed)
+        let keys: [URLResourceKey] = [.isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey]
+        guard !ProjectPaths.isSymbolicLink(base), ProjectPaths.isInside(base, root: root), let baseReal = ProjectPaths.realPath(base),
+              let walker = fm.enumerator(at: base, includingPropertiesForKeys: keys, options: []) else { return }
+        var dirs: [URL] = []
+        // The URL enumerator lists a link but never descends into it; links themselves are left in place.
+        for case let url as URL in walker {
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            guard values?.isSymbolicLink == false, let real = ProjectPaths.realPath(url), real.hasPrefix(baseReal + "/") else { continue }
+            if values?.isDirectory == true { dirs.append(url); continue }
+            guard values?.isRegularFile == true, !written.contains(managed + "/" + real.dropFirst(baseReal.count + 1)) else { continue }
+            try? fm.removeItem(at: url)
+        }
+        for d in dirs.sorted(by: { $0.path.count > $1.path.count }) where (try? fm.contentsOfDirectory(atPath: d.path))?.isEmpty == true {
+            try? fm.removeItem(at: d)
+        }
     }
 
     /// Opens a project: pass the project folder, the `.pbip` file, or a `.Report` / `.SemanticModel` folder.
@@ -143,14 +157,16 @@ public enum PBIPProject {
         let fm = FileManager.default
         var warnings: [ImportWarning] = []
         var reportDir: URL?, modelDir: URL?
-        func json(_ u: URL) -> JSONValue? { BoundedFile.readIfPresent(u).flatMap { try? JSONValue.parse($0) } }
 
         var pbip: URL?
+        // The project folder: everything is read from inside it, whatever paths or links the project holds.
+        var folder = url.deletingLastPathComponent()
         if url.pathExtension.lowercased() == "pbip" { pbip = url }
         else if fm.isDirectory(url) {
             if url.lastPathComponent.hasSuffix(".Report") { reportDir = url }
             else if url.lastPathComponent.hasSuffix(".SemanticModel") || url.lastPathComponent.hasSuffix(".Dataset") { modelDir = url }
             else {
+                folder = url
                 let items = (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)) ?? []
                 pbip = items.filter { $0.pathExtension.lowercased() == "pbip" }.sorted { $0.path < $1.path }.first
                 if pbip == nil {
@@ -159,16 +175,29 @@ public enum PBIPProject {
                 }
             }
         }
+        guard let root = ProjectPaths.realPath(folder) else {
+            throw InteropError.missingFile("“\(url.lastPathComponent)” doesn't contain a Power BI project (.pbip, .Report or .SemanticModel).")
+        }
+        let inside = { (u: URL) in ProjectPaths.isInside(u, root: root) }
+        func json(_ u: URL) -> JSONValue? { inside(u) ? BoundedFile.readIfPresent(u).flatMap { try? JSONValue.parse($0) } : nil }
+        func confine(_ dir: URL, _ what: String, _ written: String) throws {
+            guard inside(dir) else {
+                throw InteropError.invalidFormat("The project's \(what) (“\(written)”) is outside the folder that holds the project, so it wasn't opened. \(AppIdentity.name) only reads a project's report and semantic model from inside that folder. Move the folder there, or open it directly.")
+            }
+        }
         if let pbip {
             guard let j = json(pbip) else { throw InteropError.invalidFormat("“\(pbip.lastPathComponent)” is not a valid Power BI project file.") }
             if let path = j["artifacts"]?[0]?["report"]?["path"]?.stringValue {
                 reportDir = pbip.deletingLastPathComponent().appendingPathComponent(path).standardizedFileURL
+                if let reportDir { try confine(reportDir, "report folder", path) }
             }
         }
         if let reportDir, modelDir == nil {
             if let pbir = json(reportDir.appendingPathComponent("definition.pbir")) {
                 if let path = pbir["datasetReference"]?["byPath"]?["path"]?.stringValue {
-                    modelDir = reportDir.appendingPathComponent(path).standardizedFileURL
+                    let dir = reportDir.appendingPathComponent(path).standardizedFileURL
+                    try confine(dir, "semantic model", path)
+                    modelDir = dir
                 } else if pbir["datasetReference"]?["byConnection"] != nil {
                     warnings.append(ImportWarning("The report uses a live connection to a published semantic model; no model was imported.", location: "definition.pbir"))
                 }
@@ -190,7 +219,7 @@ public enum PBIPProject {
                         guard tmdl.count < BoundedFile.maxProjectFiles else {
                             throw InteropError.invalidFormat("“\(modelDir.lastPathComponent)” holds more than \(BoundedFile.maxProjectFiles) model files.")
                         }
-                        guard let text = BoundedFile.readIfPresent(f).flatMap(TextDecoding.string(from:)) else {
+                        guard inside(f), let text = BoundedFile.readIfPresent(f).flatMap(TextDecoding.string(from:)) else {
                             warnings.append(ImportWarning("“\(f.lastPathComponent)” couldn't be read (missing, unreadable or too large).", location: f.lastPathComponent))
                             continue
                         }
@@ -209,7 +238,7 @@ public enum PBIPProject {
                 warnings.append(ImportWarning("No semantic model definition was found in “\(modelDir.lastPathComponent)”.", location: modelDir.lastPathComponent))
             }
             let cache = modelDir.appendingPathComponent(".pbi/facet-cache")
-            for f in (try? fm.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "json" {
+            for f in (try? fm.contentsOfDirectory(at: cache, includingPropertiesForKeys: nil)) ?? [] where f.pathExtension == "json" && inside(f) {
                 if let d = BoundedFile.readIfPresent(f, limit: BoundedFile.dataLimit), let t = try? JSONDecoder().decode(DataTable.self, from: d) { doc.data[t.name] = t }
             }
         }
@@ -218,9 +247,9 @@ public enum PBIPProject {
             let def = reportDir.appendingPathComponent("definition")
             let resources = reportDir.appendingPathComponent("StaticResources/RegisteredResources")
             if let reportJSON = json(def.appendingPathComponent("report.json")) {
-                try readPBIR(def: def, reportJSON: reportJSON, resources: resources, into: &doc, warnings: &warnings)
+                try readPBIR(def: def, reportJSON: reportJSON, resources: resources, root: root, into: &doc, warnings: &warnings)
             } else if let legacy = json(reportDir.appendingPathComponent("report.json")) {
-                let converted = LegacyReportLayout.convert(legacy) { name in resource(resources, name) }
+                let converted = LegacyReportLayout.convert(legacy) { name in resource(resources, name, root: root) }
                 doc.report = converted.report
                 warnings += converted.warnings
             } else {
@@ -232,15 +261,20 @@ public enum PBIPProject {
     }
 
     /// A registered resource (theme, image) by the name the report gives it; names that would leave the folder are refused.
-    static func resource(_ folder: URL, _ name: String) -> Data? {
+    /// With `root`, a resource reached through a link that leaves the project folder is refused too.
+    static func resource(_ folder: URL, _ name: String, root: String? = nil) -> Data? {
         guard BoundedFile.isSafeResourceName(name) else { return nil }
-        return BoundedFile.readIfPresent(folder.appendingPathComponent(name))
+        let url = folder.appendingPathComponent(name)
+        if let root, !ProjectPaths.isInside(url, root: root) { return nil }
+        return BoundedFile.readIfPresent(url)
     }
 
-    private static func readPBIR(def: URL, reportJSON: JSONValue, resources: URL, into doc: inout FacetDocument, warnings: inout [ImportWarning]) throws {
+    private static func readPBIR(def: URL, reportJSON: JSONValue, resources: URL, root: String, into doc: inout FacetDocument, warnings: inout [ImportWarning]) throws {
         let fm = FileManager.default
-        func json(_ u: URL) -> JSONValue? { BoundedFile.readIfPresent(u).flatMap { try? JSONValue.parse($0) } }
-        let head = PBIR.readReport(reportJSON, resource: { resource(resources, $0) }, warnings: &warnings)
+        func json(_ u: URL) -> JSONValue? {
+            ProjectPaths.isInside(u, root: root) ? BoundedFile.readIfPresent(u).flatMap { try? JSONValue.parse($0) } : nil
+        }
+        let head = PBIR.readReport(reportJSON, resource: { resource(resources, $0, root: root) }, warnings: &warnings)
         doc.report = head.report
         doc.dataSources = head.dataSources
 

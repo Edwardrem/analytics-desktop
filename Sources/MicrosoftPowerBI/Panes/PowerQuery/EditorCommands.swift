@@ -139,12 +139,18 @@ enum EditorCommands {
         }) { s in CombineFilesCommand.run(s) },
     ] + DataTypeCommands.all + aiCommands
 
-    /// Azure AI transforms exist in the catalog but need Azure Cognitive Services, which the engine cannot reach.
+    /// AI Insights: the text and image transforms run on this Mac (NaturalLanguage and Vision) and add a column;
+    /// Azure Machine Learning needs Azure, which the engine cannot reach.
     private static let aiCommands: [EditorCommand] = [
-        ("pq.ai.text", "Text Analytics", "text.bubble"), ("pq.ai.vision", "Vision", "eye"), ("pq.ai.ml", "Azure Machine Learning", "brain"),
-    ].map { id, title, symbol in
-        c(id, title, symbol, { _ in "Needs Azure Cognitive Services with a Microsoft sign-in, which the query engine cannot reach." }) { _ in }
-    }
+        ("pq.ai.sentiment", "Score Sentiment", "face.smiling", "Sentiment", Transform.aiSentiment),
+        ("pq.ai.keyPhrases", "Extract Key Phrases", "text.quote", "Key phrases", Transform.aiKeyPhrases),
+        ("pq.ai.language", "Detect Language", "globe", "Language", Transform.aiDetectLanguage),
+        ("pq.ai.vision", "Tag Images", "eye", "Tags", Transform.aiTagImage),
+    ].map { id, title, symbol, column, step in
+        c(id, title, symbol, Need.oneColumn) { s in
+            s.apply(step(first(s), QueryEditorPlans.uniqueColumnName(column, taken: s.columnNames)))
+        }
+    } + [c("pq.ai.ml", "Azure Machine Learning", "brain", { _ in "Needs Azure Machine Learning with a Microsoft sign-in, which the query engine cannot reach." }) { _ in }]
 
     // MARK: Transform
 

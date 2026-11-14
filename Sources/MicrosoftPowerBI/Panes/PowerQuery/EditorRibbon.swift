@@ -74,7 +74,7 @@ enum EditorRibbonLayout {
     static func duration(_ prefix: String) -> Item {
         .menu(title: "Duration", symbol: "timer", cmds(["durationDays", "durationHours", "durationMinutes", "durationSeconds", "totalDays", "totalHours", "totalMinutes", "totalSeconds"].map { "\(prefix).date.\($0)" }))
     }
-    static let ai = Group(title: "AI Insights", items: [.button("pq.ai.text"), .button("pq.ai.vision"), .button("pq.ai.ml")])
+    static let ai = Group(title: "AI Insights", items: [.menu(title: "Text Analytics", symbol: "text.bubble", cmds(["pq.ai.sentiment", "pq.ai.keyPhrases", "pq.ai.language"])), .button("pq.ai.vision"), .button("pq.ai.ml")])
 
     static let tabs: [Tab] = [
         Tab(title: "Home", groups: [
