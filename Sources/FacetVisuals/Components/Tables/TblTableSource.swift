@@ -235,7 +235,8 @@ final class CmpTblTableSource: CmpTblGridSource {
     private func dataRow(_ row: Int) -> Int { order?[row] ?? row }
 
     private func text(_ r: Int, _ c: Column) -> String {
-        CmpTblFormat.text(data.table[r, c.dataIndex], format: c.format, grouping: !(c.field?.isAggregate ?? false))
+        CmpTblFormat.text(data.table[r, c.dataIndex], format: data.pointFormats.isEmpty ? c.format : data.format(row: r, col: c.dataIndex),
+                          grouping: !(c.field?.isAggregate ?? false))
     }
 
     override func headerSpans(_ row: Int) -> [CmpTblSpan] {

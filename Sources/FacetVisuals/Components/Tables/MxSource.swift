@@ -370,7 +370,11 @@ final class CmpMxSource: CmpTblGridSource {
         let rowTotal = isFooter || entry.isSubtotal || (stepped && isExpanded("R", entry.node))
         let isTotal = rowTotal || ce.isSubtotal
         let value = pivot.value(row: entry.node, col: ce.node, v: v)
-        cell.text = ValueFormatter.format(value, data.formats[safe: valueCols[v]] ?? "")
+        // A detail cell of one data point takes that point's own format when its measure has per-point formats.
+        let column = valueCols[safe: v] ?? -1
+        let own = data.pointFormats[column] == nil || isTotal ? nil
+            : pivot.sourceRow(row: entry.node, col: ce.node).map { data.format(row: $0, col: column) }
+        cell.text = ValueFormatter.format(value, own ?? data.formats[safe: column] ?? "")
         cell.bold = rowTotal || (ce.isSubtotal && ce.node.depth == 0)
         if !selectedKeys.isEmpty, !isFooter {
             let cellSel = cellPoint(entry.node, ce.node).map { selectedKeys.contains($0.key) } ?? false

@@ -556,6 +556,9 @@ public struct VisualData: Sendable {
     /// The evaluated values of the visual's `formatBindings` (card → key → value), drawn in place
     /// of the stored format.
     public var formatOverrides: FormatBag = [:]
+    /// Column → the format string of each row, for value columns whose dynamic format string gives
+    /// data points different formats. Columns not listed use `formats` for every row.
+    public var pointFormats: [Int: [String]] = [:]
 
     public init(table: DataTable = DataTable(), roles: [String: [Int]] = [:], fields: [FieldRef?] = [],
                 formats: [String] = [], totals: [Value] = [], error: String? = nil) {
@@ -567,8 +570,12 @@ public struct VisualData: Sendable {
         indices(well)[safe: n].map { table.columns[$0] }
     }
     public var isEmpty: Bool { table.rowCount == 0 }
+    /// The format string of one cell: the row's own when its data point has one.
+    public func format(row: Int, col: Int) -> String {
+        pointFormats[col]?[safe: row] ?? formats[safe: col] ?? ""
+    }
     public func formatted(row: Int, col: Int) -> String {
-        ValueFormatter.format(table[row, col], formats[safe: col] ?? "")
+        ValueFormatter.format(table[row, col], format(row: row, col: col))
     }
 }
 

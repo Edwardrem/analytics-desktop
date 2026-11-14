@@ -57,7 +57,7 @@ extension CartesianPanel {
                 .foregroundStyle(color(series: b.series, cat: b.cat, value: b.value))
                 .opacity((b.isBaseline ? 0.3 : 1) * emphasis)
                 .accessibilityLabel(b.isBaseline ? "\(cat), \(name), total" : "\(cat), \(name)")
-                .accessibilityValue(model.formatted(b.value, series: b.series))
+                .accessibilityValue(model.formatted(b.value, series: b.series, category: b.cat))
         }
     }
 
@@ -106,7 +106,7 @@ extension CartesianPanel {
                 ForEach(Array(line.points.enumerated()), id: \.offset) { _, p in
                     LineMark(x: .value("x", p.x), y: .value("y", p.y), series: .value("s", line.id))
                         .accessibilityLabel("\(model.categories[safe: p.cat]?.label ?? ""), \(name)")
-                        .accessibilityValue(model.formatted(p.value, series: line.series))
+                        .accessibilityValue(model.formatted(p.value, series: line.series, category: p.cat))
                 }
                 .foregroundStyle(stackedArea ? AnyShapeStyle(style.card.opacity(0.7 * o)) : AnyShapeStyle(c.opacity(o)))
                 .lineStyle(stackedArea ? StrokeStyle(lineWidth: 1) : stroke(series: line.series))

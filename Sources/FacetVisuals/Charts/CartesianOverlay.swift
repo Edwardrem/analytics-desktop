@@ -78,10 +78,10 @@ extension CartesianPanel {
         let c = color(series: b.series, cat: b.cat, value: b.value)
         var rows: [TooltipContent.Row] = []
         if model.hasBaseline, let hv = s?.values[safe: b.cat] ?? nil, let total = s?.baseline[safe: b.cat] ?? nil {
-            rows.append(.init(color: c, label: s?.name ?? "", value: model.formatted(total, series: b.series)))
-            rows.append(.init(color: c.opacity(0.0), label: "Highlighted", value: model.formatted(hv, series: b.series), isEmphasized: true))
+            rows.append(.init(color: c, label: s?.name ?? "", value: model.formatted(total, series: b.series, category: b.cat)))
+            rows.append(.init(color: c.opacity(0.0), label: "Highlighted", value: model.formatted(hv, series: b.series, category: b.cat), isEmphasized: true))
         } else {
-            rows.append(.init(color: c, label: s?.name ?? "", value: model.formatted(b.value, series: b.series), isEmphasized: true))
+            rows.append(.init(color: c, label: s?.name ?? "", value: model.formatted(b.value, series: b.series, category: b.cat), isEmphasized: true))
         }
         if kind.stacking != .none, let t = L.totals[safe: b.cat], abs(t.sum) > 0 {
             rows.append(.init(label: "Share", value: AxisFormatter.label(b.value / t.sum, format: "0.0%")))
@@ -94,7 +94,7 @@ extension CartesianPanel {
         var rows: [TooltipContent.Row] = []
         for s in model.series.prefix(14) {
             guard let v = s.values[safe: cat] ?? nil else { continue }
-            rows.append(.init(color: color(series: s.index, cat: nil, value: v), label: s.name, value: model.formatted(v, series: s.index),
+            rows.append(.init(color: color(series: s.index, cat: nil, value: v), label: s.name, value: model.formatted(v, series: s.index, category: cat),
                               isEmphasized: s.index == emphasize))
         }
         if model.series.count > 14 { rows.append(.init(label: "+\(model.series.count - 14) more", value: "")) }
@@ -117,7 +117,7 @@ extension CartesianPanel {
                 out.append(ChartHit(id: (b.series + 1) * 10_000_000 + b.cat, rect: r,
                                     selection: model.selection(category: b.cat, series: b.series),
                                     tooltip: barTooltip(b, L),
-                                    copyText: model.formatted(b.value, series: b.series)))
+                                    copyText: model.formatted(b.value, series: b.series, category: b.cat)))
             }
         } else {
             // Line and area charts: a full-height column per category showing every series…
@@ -138,7 +138,7 @@ extension CartesianPanel {
                     out.append(ChartHit(id: (line.series + 1) * 10_000_000 + p.cat, path: Path(ellipseIn: r),
                                         selection: model.selection(category: p.cat, series: line.series),
                                         tooltip: categoryTooltip(p.cat, emphasize: line.series),
-                                        copyText: model.formatted(p.value, series: line.series)))
+                                        copyText: model.formatted(p.value, series: line.series, category: p.cat)))
                 }
             }
         }
@@ -149,9 +149,9 @@ extension CartesianPanel {
                                path: Path(ellipseIn: CGRect(x: pt.x - 8, y: pt.y - 8, width: 16, height: 16)),
                                selection: model.selection(category: a.cat, series: a.series),
                                tooltip: anomalyTooltip(a),
-                               copyText: model.formatted(a.value, series: a.series),
+                               copyText: model.formatted(a.value, series: a.series, category: a.cat),
                                accessibilityLabel: "Anomaly, \(model.categories[safe: a.cat]?.label ?? ""), "
-                                   + model.formatted(a.value, series: a.series))
+                                   + model.formatted(a.value, series: a.series, category: a.cat))
             if let explain = context.onExplainAnomaly {
                 let source = a.source
                 hit.activate = { explain(source) }
@@ -165,7 +165,7 @@ extension CartesianPanel {
         let name = model.series[safe: a.series]?.name ?? ""
         var rows: [TooltipContent.Row] = [
             .init(color: color(series: a.series, cat: a.cat, value: a.value), label: name,
-                  value: model.formatted(a.value, series: a.series), isEmphasized: true),
+                  value: model.formatted(a.value, series: a.series, category: a.cat), isEmphasized: true),
             .init(label: "Expected", value: model.formatted(a.source.expected, series: a.series)),
             .init(label: "Expected range", value: model.formatted(a.source.lower, series: a.series) + " – "
                     + model.formatted(a.source.upper, series: a.series)),
@@ -195,7 +195,7 @@ extension CartesianPanel {
         if let share { return AxisFormatter.label(share, format: abs(share) < 0.1 ? "0.0%" : "0%") }
         return AxisFormatter.label(value, units: DisplayUnits(f.string("dataLabels", "displayUnits", "auto")),
                                    decimals: f.decimals("dataLabels"),
-                                   format: model.series[safe: s]?.format ?? "")
+                                   format: model.format(series: s, category: cat))
     }
 
     private func drawLabels(_ ctx: GraphicsContext, L: CartesianLayout, bars: [CartesianLayout.Bar], map: PlotMap,

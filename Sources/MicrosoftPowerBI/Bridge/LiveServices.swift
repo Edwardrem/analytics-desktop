@@ -205,6 +205,11 @@ final class LiveCalculation: CalculationService {
             out.daxQuery = dax
             out.dynamicTitle = DynamicTitles.text(for: spec, filters: filters, model: model) { try engine.query($0).first }
             out.formatOverrides = formatOverrides(spec, filters)
+            out.pointFormats = PointFormats.formats(result: result, groups: groups.map(\.field),
+                                                    values: values.enumerated().map { (groups.count + $0.offset, $0.element.field) },
+                                                    visual: formats, filters: filters, model: model) { name, tables in
+                try? engine.formatString(forMeasure: name, filterTables: tables)
+            }
             return out
         } catch {
             let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000

@@ -133,6 +133,17 @@ final class CmpMxPivot {
     /// True when the cell (row × col) is a detail cell rather than a subtotal.
     func isDetail(row: CmpMxNode, col: CmpMxNode) -> Bool { row.isLeaf && col.isLeaf }
 
+    /// The one data row behind a detail cell; nil for a subtotal or a cell several rows make up.
+    func sourceRow(row: CmpMxNode, col: CmpMxNode) -> Int? {
+        guard isDetail(row: row, col: col) else { return nil }
+        var found: Int?
+        for r in row.rows where colLeafOfRow[safe: r] === col {
+            if found != nil { return nil }
+            found = r
+        }
+        return found
+    }
+
     /// The value shown at (row node × column node) for value index `v`.
     /// Detail cells backed by one data row show that row's value untouched; everything else aggregates
     /// with the value's aggregate. The grand total uses the query's `totals` when supplied.

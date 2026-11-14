@@ -65,7 +65,8 @@ struct PieVisual: View {
                 let label = detail.isEmpty ? name : "\(name) · \(detail)"
                 out.append(Slice(id: r, label: label, legendIndex: li, value: total, highlight: base != nil ? max(0, min(v, total)) : nil,
                                  color: colors.pointColor(series: li, seriesName: name, category: name, row: r, value: total),
-                                 selection: SeriesModel.selection(data: data, row: r, columns: legCols + detCols), row: r, format: fmt))
+                                 selection: SeriesModel.selection(data: data, row: r, columns: legCols + detCols), row: r,
+                                 format: data.format(row: r, col: vc)))
             }
         }
         let total = out.reduce(0) { $0 + $1.value }
