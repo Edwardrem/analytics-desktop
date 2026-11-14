@@ -260,7 +260,20 @@ enum EditorCommands {
         toggle("pq.view.profile", "Column Profile", "chart.bar.doc.horizontal", \.showProfile),
         toggle("pq.view.wholeDataset", "Profile Entire Data Set", "square.stack.3d.up", \.profileWholeDataset),
         c("pq.view.dependencies", "Query Dependencies", "point.3.connected.trianglepath.dotted") { $0.dialog = .dependencies },
+        centre("pq.view.data", "Data View", "tablecells", .data),
+        centre("pq.view.schema", "Schema View", "list.bullet.rectangle", .schema),
+        centre("pq.view.script", "Query Script", "curlybraces.square", .script),
+        EditorCommand(id: "pq.view.diagram", title: "Diagram View", symbol: "rectangle.3.group", blocker: newEditor, isOn: { $0.showDiagram }) { $0.showDiagram.toggle() },
     ]
+
+    /// The diagram, schema and script views belong to the new editor, a preview feature.
+    private static func newEditor(_ s: QueryEditorSession) -> String? {
+        s.newEditorViews ? nil : "Turn on “Diagram, schema and script views in the Power Query Editor” in Settings ▸ Preview features."
+    }
+    private static func centre(_ id: String, _ title: String, _ symbol: String, _ view: QueryEditorSession.CentreView) -> EditorCommand {
+        EditorCommand(id: id, title: title, symbol: symbol, blocker: view == .data ? { _ in nil } : newEditor,
+                      isOn: { $0.centreView == view }) { $0.centreView = view }
+    }
 
     private static let tools: [EditorCommand] = [
         c("pq.tools.diagnoseStep", "Diagnose Step", "stethoscope", Need.query) { $0.diagnoseStep() },

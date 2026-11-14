@@ -70,6 +70,21 @@ final class QueryEditorRenderTests: XCTestCase {
         render(EditorRibbonView(session: s), size: CGSize(width: 1280, height: 110), "ribbon")
     }
 
+    /// The new editor's views: schema and query script in the centre, the diagram above.
+    func testTheNewEditorViewsDraw() async throws {
+        let s = await makeSession()
+        XCTAssertTrue(s.newEditorViews, "on by default, as Settings ▸ Preview features starts")
+        s.clickColumn("Amount", toggle: false, range: false)
+        render(SchemaView(session: s), "schema view")
+        render(QueryScriptView(session: s), "query script view")
+        render(QueryDiagramView(session: s), size: CGSize(width: 900, height: 260), "diagram view")
+        s.centreView = .schema; s.showDiagram = true
+        render(QueryEditorView(store: s.store), size: CGSize(width: 1280, height: 800), "editor with schema and diagram")
+        s.selectedQueryID = s.query(named: "Year")?.id
+        await s.waitForPreview()
+        render(SchemaView(session: s), "schema view of a parameter")
+    }
+
     func testEveryDialogDraws() async throws {
         let s = await makeSession()
         let table = try XCTUnwrap(s.preview?.table)

@@ -430,6 +430,47 @@ final class QueryEditorSessionTests: XCTestCase {
         XCTAssertTrue(chosen.monospaced)
     }
 
+    /// The new editor's views switch the centre and show the diagram; with the preview feature off they are refused.
+    func testNewEditorViewsFollowThePreviewSetting() async throws {
+        let s = await session([QueryDefinition(name: "T", mScript: Self.table)])
+        await run("pq.view.schema", s)
+        XCTAssertEqual(s.centreView, .schema)
+        XCTAssertEqual(EditorCommands.command("pq.view.schema")?.isOn?(s), true)
+        await run("pq.view.script", s)
+        XCTAssertEqual(s.centreView, .script)
+        await run("pq.view.diagram", s)
+        XCTAssertTrue(s.showDiagram)
+        await run("pq.view.data", s)
+        XCTAssertEqual(s.centreView, .data)
+
+        let options = try XCTUnwrap(UserDefaults(suiteName: suite + "-views"))
+        defer { options.removePersistentDomain(forName: suite + "-views") }
+        options.set(false, forKey: AppSettings.Key.previewNewQueryEditor.rawValue)
+        let off = QueryEditorSession(store: s.store, security: s.security, options: options)
+        XCTAssertFalse(off.newEditorViews)
+        for id in ["pq.view.schema", "pq.view.script", "pq.view.diagram"] {
+            XCTAssertEqual(EditorCommands.command(id)?.blocker(off), "Turn on “Diagram, schema and script views in the Power Query Editor” in Settings ▸ Preview features.", id)
+        }
+        XCTAssertNil(EditorCommands.command("pq.view.data")?.blocker(off))
+    }
+
+    /// The diagram puts each query after the queries it reads, lists its steps, and links them; sources are left out.
+    func testDiagramCardsFollowTheDependencies() {
+        let base = QueryDefinition(name: "Base", mScript: "let\n    Source = Csv.Document(File.Contents(\"/tmp/a.csv\")),\n    #\"Promoted Headers\" = Table.PromoteHeaders(Source)\nin\n    #\"Promoted Headers\"")
+        let top = QueryDefinition(name: "Top", mScript: "let\n    Source = Base,\n    #\"Kept First Rows\" = Table.FirstN(Source, 2)\nin\n    #\"Kept First Rows\"")
+        let alone = QueryDefinition(name: "Alone", mScript: Self.table)
+        let (cards, edges) = QueryDiagramView.cards([base, top, alone])
+        let byTitle = Dictionary(uniqueKeysWithValues: cards.map { ($0.node.title, $0) })
+        XCTAssertEqual(byTitle["Base"]?.node.column, 0, "the file source is not a card")
+        XCTAssertEqual(byTitle["Top"]?.node.column, 1)
+        XCTAssertEqual(byTitle["Alone"]?.node.column, 0)
+        XCTAssertEqual(byTitle["Base"]?.steps, ["Source", "Promoted Headers"])
+        XCTAssertEqual(byTitle["Top"]?.steps, ["Source", "Kept First Rows"])
+        XCTAssertEqual(edges, [DependencyLayout.Edge(from: "query:Base", to: "query:Top")])
+        // 30 header + 2 steps × 19 + 6.
+        XCTAssertEqual(byTitle["Top"].map(QueryDiagramView.height), 74)
+    }
+
     func testDiagnosticsRecordWhatTheEngineEvaluated() async throws {
         let s = await session([QueryDefinition(name: "T", mScript: Self.table)])
         s.startDiagnostics()

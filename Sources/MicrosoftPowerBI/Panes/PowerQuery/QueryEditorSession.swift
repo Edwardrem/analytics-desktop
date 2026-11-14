@@ -44,6 +44,12 @@ final class QueryEditorSession: ObservableObject {
     @Published var profileWholeDataset = false { didSet { if profileWholeDataset != oldValue { refreshPreview() } } }
     @Published var monospaced = false
     @Published var showWhitespace = false
+    /// The new Power Query editor (Settings ▸ Preview features): the centre shows the data, the schema or the
+    /// query's script, and the diagram view can sit above it.
+    enum CentreView: Equatable { case data, schema, script }
+    @Published var centreView = CentreView.data
+    @Published var showDiagram = false
+    let newEditorViews: Bool
 
     // Diagnostics (Tools tab)
     @Published private(set) var isRecordingDiagnostics = false
@@ -85,6 +91,7 @@ final class QueryEditorSession: ObservableObject {
         showProfile = option(.pqColumnProfile)
         profileWholeDataset = option(.pqProfilingWholeDataset)
         monospaced = option(.pqMonospaced)
+        newEditorViews = option(.previewNewQueryEditor)
         queries = store.doc.queries
         baseline = store.doc.queries
         selectedQueryID = Self.initialSelection(store: store, queries: store.doc.queries)

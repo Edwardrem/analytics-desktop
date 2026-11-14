@@ -138,6 +138,7 @@ enum EditorRibbonLayout {
             ai,
         ]),
         Tab(title: "View", groups: [
+            Group(title: "Views", items: [.button("pq.view.data"), .button("pq.view.schema"), .button("pq.view.script"), .button("pq.view.diagram")]),
             Group(title: "Layout", items: [.button("pq.view.querySettings"), .button("pq.view.formulaBar")]),
             Group(title: "Data Preview", items: [
                 .button("pq.view.monospaced"), .button("pq.view.whitespace"), .button("pq.view.quality"),

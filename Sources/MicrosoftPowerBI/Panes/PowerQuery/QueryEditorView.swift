@@ -19,6 +19,9 @@ struct QueryEditorView: View {
 
     init(store: DocumentStore) { _session = StateObject(wrappedValue: QueryEditorSession(store: store)) }
 
+    /// Data view unless the new editor's views are turned on in Settings.
+    private var centre: QueryEditorSession.CentreView { session.newEditorViews ? session.centreView : .data }
+
     var body: some View {
         VStack(spacing: 0) {
             EditorRibbonView(session: session)
@@ -27,12 +30,20 @@ struct QueryEditorView: View {
                 QueriesPane(session: session).frame(width: 230)
                 Hairline(vertical: true)
                 VStack(spacing: 0) {
-                    if session.showFormulaBar, session.selectedQuery.map({ $0.kind != .parameter }) ?? false {
+                    if session.newEditorViews, session.showDiagram {
+                        QueryDiagramView(session: session).frame(minHeight: 140, idealHeight: 220, maxHeight: 300)
+                        Hairline()
+                    }
+                    if session.showFormulaBar, centre != .script, session.selectedQuery.map({ $0.kind != .parameter }) ?? false {
                         StepFormulaBar(session: session)
                         Hairline()
                     }
-                    PreviewArea(session: session)
-                    if session.showProfile, session.preview != nil {
+                    switch centre {
+                    case .data: PreviewArea(session: session)
+                    case .schema: SchemaView(session: session)
+                    case .script: QueryScriptView(session: session)
+                    }
+                    if session.showProfile, centre == .data, session.preview != nil {
                         Hairline()
                         ColumnProfilePanel(session: session).frame(height: 200)
                     }
