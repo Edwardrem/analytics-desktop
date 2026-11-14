@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Microsoft account · Analytics Desktop</title>
+<meta name="description" content="How signing in with a Microsoft work or school account works in Analytics Desktop, and what an organisation's admin may need to approve.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="24" height="24"> Analytics Desktop</a>
+    <nav class="nav" aria-label="Site">
+      <a href="../index.html">Home</a>
+      <a href="../features.html">Features</a>
+      <a href="../releases.html">Releases</a>
+      <a href="index.html" aria-current="page">Docs</a>
+      <a href="https://github.com/Edwardrem/analytics-desktop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap docs">
+    <nav aria-label="Docs"><ul><li><a href="index.html">All docs</a></li><li><a href="getting-started.html">Getting started</a></li><li><a href="microsoft-account.html" aria-current="page">Microsoft account</a></li><li><a href="data-sources.html">Data sources</a></li><li><a href="updates.html">Updates</a></li><li><a href="privacy.html">Privacy</a></li></ul></nav>
+    <article class="prose">
+<h1>Microsoft account</h1>
+<p>A Microsoft account is optional. You need one only to open and save files in OneDrive and SharePoint, browse the OneLake catalog, publish to the Power BI service, or apply sensitivity labels. Publishing, OneLake and labels need a work or school account.</p>
+<div class="note">
+  <p>These features have so far been tested only against local stand-in servers, not against live Microsoft services. Please report anything that doesn’t work on <a href="https://github.com/Edwardrem/analytics-desktop/issues">GitHub</a>.</p>
+</div>
+
+<h2 id="sign-in">Signing in</h2>
+<ol>
+  <li>Choose <b>Sign In with Microsoft…</b> from the account button in the toolbar, or open <b>Settings ▸ Microsoft account</b> and choose <b>Sign In…</b>.</li>
+  <li>Your browser opens Microsoft’s own sign-in page at <code>login.microsoftonline.com</code>. Analytics Desktop never sees your password.</li>
+  <li>Pick your account. The first time, Microsoft shows a <b>Permissions requested</b> page that lists what Analytics Desktop asks for. Review it and choose <b>Accept</b>.</li>
+  <li>The browser tells you that you can close the tab, and the app shows your name and account.</li>
+</ol>
+<p>If the browser can’t be used, the sign-in sheet offers a <b>device code</b> instead: you enter a short code at Microsoft’s device login page on any device.</p>
+<p>When you use a feature that needs a permission you haven’t granted yet, Microsoft may ask once more for just that permission.</p>
+
+<h2 id="permissions">What the app asks for</h2>
+<p>Permissions are delegated: the app acts as you, and can reach only what your account can already reach.</p>
+<ul>
+  <li><b>Sign you in and read your profile</b> (<code>User.Read</code>): your name and photo for the account button.</li>
+  <li><b>Read and write files you can access</b> (<code>Files.ReadWrite.All</code>): open and save reports in OneDrive and SharePoint.</li>
+  <li><b>Read items in all site collections</b> (<code>Sites.Read.All</code>): browse SharePoint sites and libraries.</li>
+  <li><b>Maintain access to data you have given it access to</b> (<code>offline_access</code>): stay signed in between launches.</li>
+  <li><b>Power BI and Fabric</b>: workspaces, semantic models, reports and items, for Publish and the OneLake catalog.</li>
+</ul>
+
+<h2 id="tokens">Where your sign-in is kept</h2>
+<p>The refresh token is stored only in the macOS Keychain. Tokens are sent only to Microsoft’s sign-in, Microsoft Graph, Power BI, Fabric and OneLake hosts; the app checks every host against an allow-list before it attaches a token. <b>Sign Out</b> in Settings ▸ Microsoft account removes the account and its tokens from the Keychain.</p>
+
+<h2 id="admin-consent">For organisations: admin consent</h2>
+<p>Many organisations don’t let people approve apps on their own. If yours doesn’t, Microsoft shows <b>Need admin approval</b> instead of the permissions page, and may offer to send a request to your admin. Nothing is wrong with the app: an administrator has to approve it once for the whole organisation.</p>
+<p>An administrator (Cloud Application Administrator, Application Administrator or Global Administrator) can do that in one of two ways:</p>
+<ul>
+  <li><b>In the Microsoft Entra admin center.</b> After someone in the organisation has tried to sign in, open <b>Enterprise applications</b>, select Analytics Desktop, open <b>Permissions</b> and choose <b>Grant admin consent for</b> your organisation.</li>
+  <li><b>With an admin consent link.</b> Open the link below while signed in as an administrator, replacing <code>&lt;tenant&gt;</code> with your tenant ID or domain and <code>&lt;client-id&gt;</code> with the application ID shown in Settings ▸ Microsoft account:
+    <pre><code>https://login.microsoftonline.com/&lt;tenant&gt;/adminconsent?client_id=&lt;client-id&gt;</code></pre>
+  </li>
+</ul>
+<p>Admins can also review the requested permissions, and revoke them at any time, from the same Enterprise applications page.</p>
+
+<h2 id="own-registration">Using your own app registration</h2>
+<p>Organisations that prefer an app registration they control can create one and enter its client ID and tenant in <b>Settings ▸ Microsoft account</b>. The same applies if Sign in reports that no app registration is configured.</p>
+<ol>
+  <li>In Microsoft Entra ID, register a new application. Add the platform <b>Mobile and desktop applications</b> with the redirect URI <code>http://localhost</code>, and turn on <b>Allow public client flows</b>.</li>
+  <li>Add the delegated permissions listed above: Microsoft Graph <code>User.Read</code>, <code>Files.ReadWrite.All</code>, <code>Sites.Read.All</code> and <code>offline_access</code>, plus the Power BI Service and Fabric permissions for what you use.</li>
+  <li>Enter the application (client) ID and your tenant in Settings ▸ Microsoft account, then sign in.</li>
+</ol>
+<p>No client secret is needed or used: the app signs in as a public client with PKCE.</p>
+    </article>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Analytics Desktop is not affiliated with or endorsed by Microsoft. Power BI is a trademark of Microsoft.</p>
+    <p><a href="privacy.html">Privacy</a> · <a href="https://github.com/Edwardrem/analytics-desktop">Source on GitHub</a></p>
+  </div>
+</footer>
+</body>
+</html>
