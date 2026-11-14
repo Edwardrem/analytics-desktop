@@ -172,6 +172,9 @@ private struct ConnectionForm: View {
                 Button("Browse…") { browse() }
             }
             if kind == .sqlite { databaseOptions }
+        case .sqlServer:
+            SQLServerFields(session: session)
+            databaseOptions
         case .web, .odata:
             TextField(kind == .web ? "https://example.com/data.csv" : "https://services.odata.org/V4/TripPinService", text: $session.request.location)
                 .textFieldStyle(.roundedBorder)
@@ -246,7 +249,9 @@ private struct NativeQueryApproval: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(Design.Space.s)
             }
             .background(Design.Palette.fill, in: RoundedRectangle(cornerRadius: Design.Radius.control))
-            Text("\(AppIdentity.name) opens SQLite databases read-only, and remembers this approval until you clear it in Data source settings.")
+            Text(session.request.kind == .sqlServer
+                 ? "The statement runs with the permissions of your sign-in. \(AppIdentity.name) remembers this approval until you clear it in Data source settings."
+                 : "\(AppIdentity.name) opens SQLite databases read-only, and remembers this approval until you clear it in Data source settings.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Back") { session.back() }

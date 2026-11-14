@@ -15,9 +15,14 @@ final class GetDataCatalogTests: XCTestCase {
 
     func testOnlyEngineBackedConnectorsCanBeStarted() {
         let available = Set(DataConnector.all.filter(\.isAvailable).map(\.id))
-        XCTAssertEqual(available, ["excel", "csv", "xml", "json", "folder", "sqlite", "web", "odata", "python", "r", "blank"])
-        // Every kind the session implements is offered exactly once.
-        for kind in SourceKind.allCases { XCTAssertEqual(DataConnector.all.filter { $0.kind == kind }.count, 1, "\(kind)") }
+        XCTAssertEqual(available, ["excel", "csv", "xml", "json", "folder", "sqlite", "sqlserver", "azure-sql", "azure-synapse", "fabric-warehouses",
+                                   "web", "odata", "python", "r", "blank"])
+        // Every kind the session implements is offered exactly once, except the SQL Server family: SQL Server, Azure SQL,
+        // Synapse SQL and Fabric warehouses all speak TDS and share one form.
+        for kind in SourceKind.allCases {
+            XCTAssertEqual(DataConnector.all.filter { $0.kind == kind }.count, kind == .sqlServer ? 4 : 1, "\(kind)")
+        }
+        XCTAssertEqual(DataConnector.connector(for: .sqlServer)?.id, "sqlserver")
     }
 
     func testUnavailableConnectorsSayWhatIsMissing() {
@@ -25,7 +30,7 @@ final class GetDataCatalogTests: XCTestCase {
             XCTAssertNotNil(c.unavailableReason, c.name)
             XCTAssertFalse((c.unavailableReason ?? "").isEmpty, c.name)
         }
-        XCTAssertEqual(DataConnector.connector("sqlserver")?.unavailableReason, "Needs a database driver, which this app does not include.")
+        XCTAssertEqual(DataConnector.connector("oracle")?.unavailableReason, "Needs a database driver, which this app does not include.")
         XCTAssertEqual(DataConnector.connector("postgresql")?.isAvailable, false)
         XCTAssertEqual(DataConnector.connector("parquet")?.unavailableReason, "Needs a Parquet reader, which this app does not include.")
         XCTAssertNil(DataConnector.connector("csv")?.unavailableReason)

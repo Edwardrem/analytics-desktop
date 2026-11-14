@@ -3,6 +3,7 @@ import AppKit
 import UniformTypeIdentifiers
 import FacetCore
 import FacetInterop
+import FacetQuery
 
 /// Power BI file formats and the document's file lifecycle: PBIP projects (open, save, reload on external edits),
 /// `.pbit` templates (export, import), `.pbix` reports (pages and queries only — the data model can't be decoded),
@@ -158,10 +159,16 @@ enum DataSourceFiles {
             notes.append("“\(file)” lists \(connections.count) connections; a data source file opens one, so only \(first.summary) was opened. "
                          + "Use Get Data for " + connections.dropFirst().map(\.summary).joined(separator: "; ") + ".")
         }
-        if first.isDirectQuery {
-            notes.append("“\(file)” asks for DirectQuery, which a \(connector.name) source doesn't support; its data is imported.")
+        var location = first.location
+        if connector.kind == .sqlServer, let source = MScript.steps(of: first.mScript).first, let r = SourcePlanner.request(fromSource: source.expression) {
+            location = SQLServerConnection.location(server: r.location, database: r.database)   // the form splits it again
         }
-        return .navigator(connector: connector, location: first.location, notes: notes)
+        if first.isDirectQuery {
+            notes.append(connector.kind == .sqlServer
+                         ? "“\(file)” asks for DirectQuery: choose DirectQuery under Data connectivity mode before you connect."
+                         : "“\(file)” asks for DirectQuery, which a \(connector.name) source doesn't support; its data is imported.")
+        }
+        return .navigator(connector: connector, location: location, notes: notes)
     }
 
     /// Opens Get Data in `store`'s window for the data source file at `url`.

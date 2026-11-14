@@ -2,7 +2,7 @@ import Foundation
 
 /// What a connector reads, for the ones this app implements.
 enum SourceKind: String, Codable, CaseIterable, Sendable {
-    case csv, excel, json, xml, folder, sqlite, web, odata, python, r, blank
+    case csv, excel, json, xml, folder, sqlite, sqlServer, web, odata, python, r, blank
 }
 
 /// One entry of the Get Data catalog. The catalog lists everything Power BI Desktop offers; an entry is either
@@ -73,7 +73,7 @@ struct DataConnector: Identifiable, Hashable {
         missing("sharepoint-folder", "SharePoint folder", .file, "folder.badge.gearshape", Missing.sharePoint),
         // Database
         works("sqlite", "SQLite database", .database, "cylinder", .sqlite),
-        missing("sqlserver", "SQL Server database", .database, "cylinder.split.1x2", Missing.driver),
+        works("sqlserver", "SQL Server database", .database, "cylinder.split.1x2", .sqlServer),
         missing("access", "Access database", .database, "cylinder", Missing.windowsOnly),
         missing("ssas", "SQL Server Analysis Services database", .database, "cube", Missing.driver),
         missing("oracle", "Oracle database", .database, "cylinder", Missing.driver),
@@ -99,7 +99,7 @@ struct DataConnector: Identifiable, Hashable {
         missing("fabric-models", "Power BI semantic models", .fabric, "chart.bar.doc.horizontal", Missing.fabric),
         missing("fabric-dataflows", "Dataflows", .fabric, "arrow.triangle.branch", Missing.fabric),
         missing("fabric-datamarts", "Datamarts", .fabric, "building.columns", Missing.fabric),
-        missing("fabric-warehouses", "Warehouses", .fabric, "building.2", Missing.fabric),
+        works("fabric-warehouses", "Warehouses", .fabric, "building.2", .sqlServer),
         missing("fabric-lakehouses", "Lakehouses", .fabric, "water.waves", Missing.fabric),
         missing("fabric-sql", "SQL databases", .fabric, "cylinder", Missing.fabric),
         missing("fabric-mirrored", "Mirrored databases", .fabric, "cylinder.split.1x2", Missing.fabric),
@@ -108,8 +108,8 @@ struct DataConnector: Identifiable, Hashable {
         missing("dataverse", "Dataverse", .powerPlatform, "circle.hexagongrid", Missing.powerPlatform),
         missing("pp-dataflows", "Power Platform dataflows", .powerPlatform, "arrow.triangle.branch", Missing.powerPlatform),
         // Azure
-        missing("azure-sql", "Azure SQL database", .azure, "cylinder", Missing.azure),
-        missing("azure-synapse", "Azure Synapse Analytics SQL", .azure, "cylinder.split.1x2", Missing.azure),
+        works("azure-sql", "Azure SQL database", .azure, "cylinder", .sqlServer),
+        works("azure-synapse", "Azure Synapse Analytics SQL", .azure, "cylinder.split.1x2", .sqlServer),
         missing("azure-as", "Azure Analysis Services database", .azure, "cube", Missing.azure),
         missing("azure-postgres", "Azure Database for PostgreSQL", .azure, "cylinder", Missing.azure),
         missing("azure-blob", "Azure Blob Storage", .azure, "shippingbox", Missing.azure),
