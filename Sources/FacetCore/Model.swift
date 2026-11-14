@@ -398,6 +398,9 @@ public struct SemanticModel: Codable, Sendable {
     public var aiInstructions: String = ""
     public var verifiedAnswers: [VerifiedAnswer] = []
     public var qnaSynonyms: [String: [String]] = [:]
+    /// Q&A setup: terms taught as filters, and the questions asked in this file. Optional so older files open.
+    public var qnaTerms: [QnATerm]?
+    public var qnaQuestions: [QnAQuestionRecord]?
 
     public init() {}
 

@@ -13,6 +13,9 @@ struct DAXRunState {
     var elapsedMilliseconds: Double?
     var isRunning = false
     var hasRun = false
+    /// The text that failed and where it starts in the tab (a selection may have run); nil after a success.
+    var failedText: String?
+    var failedOffset = 0
     /// Identifies the run in flight; a result for any other token is stale and ignored.
     var token: UUID?
 }
@@ -177,6 +180,19 @@ final class DAXQuerySession: ObservableObject {
         }
     }
 
+    /// Puts an accepted fix in place of the text that failed and runs it. False, and nothing changes, when
+    /// that tab is no longer active or its text there was edited since the run.
+    @discardableResult
+    func applyFix(_ query: String, tab id: UUID, original: String, offset: Int) -> Bool {
+        guard let tab = activeTab, tab.id == id, offset >= 0 else { return false }
+        let text = tab.text as NSString
+        let range = NSRange(location: offset, length: (original as NSString).length)
+        guard NSMaxRange(range) <= text.length, text.substring(with: range) == original else { return false }
+        replace(range, with: query, select: NSRange(location: offset, length: (query as NSString).length))
+        run(useSelection: true)
+        return true
+    }
+
     func formatQuery() {
         guard let tab = activeTab else { return }
         let formatted = LanguageSupport.dax.format(tab.text)
@@ -245,10 +261,11 @@ final class DAXQuerySession: ObservableObject {
             case .success(let tables):
                 state.results = tables.map { DAXResultModel(table: $0, model: model) }
                 state.selectedResult = 0
-                state.error = nil; state.issues = []
+                state.error = nil; state.issues = []; state.failedText = nil; state.failedOffset = 0
                 self.record(DAXHistoryEntry(milliseconds: outcome.ms, rows: tables.reduce(0) { $0 + $1.rowCount }, text: text))
             case .failure(let error):
                 state.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                state.failedText = text; state.failedOffset = offset
                 // Ranges are relative to what ran; shift them when only a selection ran.
                 state.issues = outcome.issues.map { issue in
                     var i = issue
