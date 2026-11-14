@@ -114,34 +114,6 @@ extension DocumentStore {
         }
     }
 
-    /// Place a visual on the phone canvas, stacked under what is already there.
-    func addToMobileLayout(_ ids: [UUID]) {
-        guard !ids.isEmpty else { return }
-        let phone = PageSize.phone
-        updatePage(name: ids.count == 1 ? "Add to Mobile Layout" : "Add All to Mobile Layout") { p in
-            let margin = 12.0
-            var y = (p.visuals.compactMap { $0.mobileFrame.map { $0.y + $0.height } }.max() ?? 0) + margin
-            for id in ids {
-                guard let i = p.visuals.firstIndex(where: { $0.id == id }), p.visuals[i].mobileFrame == nil else { continue }
-                let f = p.visuals[i].frame
-                let width = phone.width - margin * 2
-                var height = min(300, max(60, f.height * width / max(1, f.width)))
-                let room = phone.height - margin - y
-                if room >= 60 { height = min(height, room) } else { y = phone.height - margin - height }
-                p.visuals[i].mobileFrame = Frame(x: margin, y: max(margin, y), width: width, height: height)
-                y += height + margin
-            }
-            p.hasMobileLayout = true
-        }
-    }
-    func removeFromMobileLayout(_ ids: [UUID]) {
-        let set = Set(ids)
-        updatePage(name: "Remove from Mobile Layout") { p in
-            for i in p.visuals.indices where set.contains(p.visuals[i].id) { p.visuals[i].mobileFrame = nil }
-            p.hasMobileLayout = p.visuals.contains { $0.mobileFrame != nil }
-        }
-        selection.subtract(set)
-    }
 }
 
 // MARK: - Pane

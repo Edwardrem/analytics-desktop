@@ -58,8 +58,3 @@ enum CoreCharts {
         }
     }
 }
-
-extension ChartGallery {
-    static func partToWholeSamples() -> [Sample] { [] }
-    static func scatterSamples() -> [Sample] { [] }
-}

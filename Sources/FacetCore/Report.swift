@@ -481,6 +481,8 @@ public struct VisualSpec: Codable, Identifiable, Hashable, Sendable {
     public var altText: String = ""
     /// Report page tooltip to show on hover, when set.
     public var tooltipPageID: UUID?
+    /// Formatting that applies only in the phone layout, layered over `format` (card → property → value).
+    public var mobileFormat: FormatBag?
 
     public init(type: VisualType, frame: Frame, name: String? = nil) {
         self.type = type; self.frame = frame; self.name = name ?? type.displayName
@@ -521,6 +523,8 @@ public struct VisualData: Sendable {
     public var queryMilliseconds: Double = 0
     /// The DAX query that produced this data (for Performance Analyzer / copy query).
     public var daxQuery: String = ""
+    /// The title a measure supplies (a `.title` conditional format), evaluated under the visual's filters.
+    public var dynamicTitle: String?
 
     public init(table: DataTable = DataTable(), roles: [String: [Int]] = [:], fields: [FieldRef?] = [],
                 formats: [String] = [], totals: [Value] = [], error: String? = nil) {
@@ -585,6 +589,9 @@ public struct Page: Codable, Identifiable, Hashable, Sendable {
     public var interactions: [UUID: [UUID: InteractionMode]] = [:]
     /// Named visual groups (id → name) for the Selection pane.
     public var groups: [UUID: String] = [:]
+    /// Tooltip pages: the fields this page is the tooltip for. A visual left on the automatic tooltip
+    /// shows this page when it uses one of them.
+    public var tooltipFields: [FieldRef]?
 
     public init(name: String) { self.name = name }
     public func visual(_ id: UUID) -> VisualSpec? { visuals.first { $0.id == id } }

@@ -23,7 +23,9 @@ enum FieldDrag {
 extension DocumentStore {
     /// The frame a visual occupies in the layout being edited (desktop or phone).
     func frame(of v: VisualSpec) -> Frame { mobileLayout ? (v.mobileFrame ?? v.frame) : v.frame }
-    var canvasSize: PageSize { mobileLayout ? .phone : currentPage.size }
+    var canvasSize: PageSize {
+        mobileLayout ? PageSize(width: MobileLayout.width, height: MobileLayout.canvasHeight(currentPage)) : currentPage.size
+    }
 
     func context(for spec: VisualSpec, interactive: Bool = true) -> VisualContext {
         var c = VisualContext()
@@ -37,11 +39,30 @@ extension DocumentStore {
         c.activeBookmarkID = activeBookmarkID
         let id = spec.id
         c.onSelect = { [weak self] points, additive in self?.selectPoints(points, in: id, additive: additive) }
-        c.onSlicerChange = { [weak self] state in self?.setSlicerState(state, for: id) }
+        c.onSlicerChange = { [weak self] state in self?.changeSlicer(state, for: id) }
+        c.slicerApplyButtons = report.settings.slicerApplyButtons
         c.onAction = { [weak self] action in self?.perform(action, from: id) }
         c.onDrill = { [weak self] action in self?.drill(action, in: id) }
         c.onSpecChange = { [weak self] new in
             self?.updateVisual(id, name: "Change Visual", coalesce: "spec-\(id)") { $0 = new }
+        }
+        c.modernTooltips = report.settings.modernTooltips
+        c.drillthroughTargets = { [weak self] point in
+            self?.drillthroughTargets(for: point).map { NavItem(id: $0.id, name: $0.name) } ?? []
+        }
+        c.canRunAction = { [weak self] action in
+            guard let self else { return true }
+            if action.kind == .applyAllSlicers { return !ReportRuntime.of(self).pendingSlicers(on: self.currentPage).isEmpty }
+            return ReportActions.canRun(action, selections: self.pointSelections, page: self.currentPage, report: self.report)
+        }
+        if interactive, let page = TooltipPages.page(for: spec, in: report), page.id != currentPageID {
+            c.pageTooltip = { [weak self] point in
+                guard let self else { return nil }
+                return AnyView(TooltipPageView(runtime: ReportRuntime.of(self), store: self, page: page, point: point, sourceID: id))
+            }
+        }
+        if !spec.type.isPageElement, !spec.type.isSlicer {
+            c.onSeeRecords = { [weak self] point in self?.showRecords(for: id, point: point) }
         }
         c.extensionView = { [weak self] spec, data, ctx in
             guard let self else { return nil }
@@ -59,20 +80,25 @@ struct ReportCanvas: View {
     @State private var dropTargeted = false
 
     var body: some View {
-        GeometryReader { geo in
-            let size = store.canvasSize
-            let scale = store.fitToWindow
-                ? max(0.1, min((geo.size.width - 64) / size.width, (geo.size.height - 64) / size.height))
-                : store.zoom
-            ScrollView([.horizontal, .vertical]) {
-                page(scale: scale)
-                    .frame(width: size.width * scale, height: size.height * scale)
-                    .padding(32)
-                    .frame(minWidth: geo.size.width, minHeight: geo.size.height)
+        HStack(spacing: 0) {
+            if store.mobileLayout {
+                MobileVisualsPanel()
+                Hairline(vertical: true)
             }
-            .background(wallpaper)
-            .onChange(of: scale) { _, s in if store.fitToWindow { store.zoom = s } }
-            .onAppear { if store.fitToWindow { store.zoom = scale } }
+            GeometryReader { geo in
+                let size = store.canvasSize
+                let scale = PageView.scale(mode: PageView.mode(fitToWindow: store.fitToWindow, fitToWidth: store.fitToWidth),
+                                           page: size, viewport: geo.size, zoom: store.zoom)
+                ScrollView([.horizontal, .vertical]) {
+                    page(scale: scale)
+                        .frame(width: size.width * scale, height: size.height * scale)
+                        .padding(PageView.padding)
+                        .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: store.fitToWidth && store.fitToWindow ? .top : .center)
+                }
+                .background(wallpaper)
+                .onChange(of: scale) { _, s in if store.fitToWindow { store.zoom = s } }
+                .onAppear { if store.fitToWindow { store.zoom = scale } }
+            }
         }
     }
 
@@ -99,12 +125,21 @@ struct ReportCanvas: View {
                 .contentShape(Rectangle())
                 .gesture(marqueeGesture(scale: scale))
                 .onTapGesture {
+                    ReportRuntime.of(store).spotlightID = nil
                     store.selection = []
                     store.clearPointSelections()
                     store.editInteractionsFor = nil
                 }
-            if store.showGridlines { GridOverlay(spacing: 24).allowsHitTesting(false) }
-            if visuals.isEmpty, !store.mobileLayout { StartSurface().frame(width: size.width, height: size.height) }
+            if store.showGridlines || store.mobileLayout {
+                GridOverlay(spacing: store.mobileLayout ? MobileLayout.grid * 2 : 24).allowsHitTesting(false)
+            }
+            if visuals.isEmpty {
+                if store.mobileLayout {
+                    EmptyState(systemImage: "iphone", title: "Build the phone layout",
+                               message: "Drag visuals here from Page visuals, or use Auto-create.")
+                        .frame(width: size.width, height: size.height).allowsHitTesting(false)
+                } else { StartSurface().frame(width: size.width, height: size.height) }
+            }
             ForEach(visuals) { spec in
                 VisualContainer(spec: spec, scale: scale, guides: $guides)
             }
@@ -128,8 +163,13 @@ struct ReportCanvas: View {
         .scaleEffect(scale, anchor: .topLeading)
         .frame(width: size.width * scale, height: size.height * scale, alignment: .topLeading)
         .dropDestination(for: String.self) { items, location in
-            guard let field = items.compactMap(FieldDrag.decode).first else { return false }
             let p = CGPoint(x: location.x / scale, y: location.y / scale)
+            if store.mobileLayout {
+                guard let id = items.compactMap(MobileLayout.draggedVisual).first else { return false }
+                store.placeOnMobileLayout(id, at: p)
+                return true
+            }
+            guard let field = items.compactMap(FieldDrag.decode).first else { return false }
             if let hit = visuals.reversed().first(where: { store.frame(of: $0).cgRect.contains(p) && !$0.type.wells.isEmpty }) {
                 store.addField(field, to: hit.id)
                 store.selection = [hit.id]
@@ -203,16 +243,19 @@ struct VisualContainer: View {
     @State private var resizeOrigin: Frame?
 
     private var isSelected: Bool { store.selection.contains(spec.id) }
+    private var spotlight: UUID? { ReportRuntime.of(store).spotlightID }
     private var locked: Bool { store.lockObjects || spec.isLocked }
 
     var body: some View {
         let frame = store.frame(of: spec)
         let data = store.visualData[spec.id] ?? VisualData()
         ZStack(alignment: .topLeading) {
-            VisualView(spec: spec, data: data, context: store.context(for: spec))
+            VisualView(spec: ReportRuntime.of(store).withPendingSlicer(store.mobileLayout ? MobileLayout.effectiveSpec(spec) : spec),
+                       data: data, context: store.context(for: spec))
                 .frame(width: frame.width, height: frame.height)
                 .rotationEffect(.degrees(frame.rotation))
                 .opacity(store.editInteractionsFor != nil && store.editInteractionsFor != spec.id ? 0.92 : 1)
+                .opacity(spotlight != nil && spotlight != spec.id ? 0.18 : 1)
                 // Page elements have no inner interactions, so the whole body moves them.
                 .gesture(spec.type.isPageElement && spec.type != .textBox && spec.type != .button && !isNavigator
                          ? moveGesture : nil)
@@ -228,7 +271,7 @@ struct VisualContainer: View {
                     .padding(6).background(.regularMaterial, in: Capsule())
                     .frame(width: frame.width, height: frame.height).allowsHitTesting(false)
             }
-            if let source = store.editInteractionsFor, source != spec.id {
+            if let source = store.editInteractionsFor, source != spec.id, !spec.type.isPageElement {
                 InteractionPicker(source: source, target: spec)
                     .frame(width: frame.width, alignment: .trailing).offset(y: -30 / scale)
             } else if (hovering || isSelected) && !store.presenting {
@@ -258,6 +301,8 @@ struct VisualContainer: View {
             store.formatPainterSource = nil
             return
         }
+        // While editing interactions, the visual clicked becomes the one whose effect is being set.
+        if store.editInteractionsFor != nil, !spec.type.isPageElement { store.editInteractionsFor = spec.id }
         if additive {
             if isSelected { store.selection.remove(spec.id) } else { store.selection.insert(spec.id) }
         } else if !isSelected {
@@ -381,145 +426,5 @@ struct SelectionChrome: View {
             }
         }
         .frame(width: frame.width, height: frame.height)
-    }
-}
-
-/// The quiet strip above a visual: a grip to move it, drill controls, focus and more.
-struct VisualHeader: View {
-    @EnvironmentObject var store: DocumentStore
-    let spec: VisualSpec
-    let scale: Double
-    let moveGesture: AnyGesture<Void>
-
-    var body: some View {
-        let levels = spec.fields(.category).count
-        HStack(spacing: 2) {
-            Image(systemName: "line.3.horizontal").font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-                .frame(width: 26, height: 22).contentShape(Rectangle())
-                .gesture(moveGesture).help("Drag to move")
-            if levels > 1 {
-                IconButton("arrow.up", help: "Drill up") { store.drill(.up, in: spec.id) }.disabled(spec.drillLevel == 0)
-                IconButton("arrow.down.to.line", help: "Go to the next level") { store.drill(.down(nil), in: spec.id) }
-                    .disabled(spec.drillLevel >= levels - 1)
-                IconButton("arrow.triangle.branch", help: "Expand all down one level") { store.drill(.expandAll, in: spec.id) }
-                    .disabled(spec.drillLevel >= levels - 1)
-            }
-            if !spec.type.isPageElement {
-                if !(store.filters(for: spec, on: store.currentPage).isEmpty) {
-                    Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10)).foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22).help("Filters affect this visual")
-                }
-                IconButton("arrow.up.left.and.arrow.down.right", help: "Focus mode") { store.focusVisualID = spec.id }
-            }
-            if let accessory = Features.visualHeaderAccessory?(spec, store) { accessory }
-            Menu {
-                VisualContextMenu(spec: spec)
-            } label: {
-                Image(systemName: "ellipsis").font(.system(size: 12, weight: .medium)).frame(width: 26, height: 22)
-            }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More options")
-        }
-        .padding(.horizontal, 3)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Design.Palette.hairline))
-        .scaleEffect(1 / scale, anchor: .bottomTrailing)
-    }
-}
-
-/// Filter / highlight / none chooser shown on every other visual while editing interactions.
-struct InteractionPicker: View {
-    @EnvironmentObject var store: DocumentStore
-    let source: UUID
-    let target: VisualSpec
-
-    var body: some View {
-        let current = store.interaction(from: source, to: target, on: store.currentPage)
-        HStack(spacing: 2) {
-            button(.filter, "line.3.horizontal.decrease.circle", "Filter", current)
-            if DocumentStore.highlightable.contains(target.type) {
-                button(.highlight, "chart.bar.fill", "Highlight", current)
-            }
-            button(.none, "nosign", "None", current)
-        }
-        .padding(3)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-    }
-    private func button(_ mode: InteractionMode, _ symbol: String, _ help: String, _ current: InteractionMode) -> some View {
-        IconButton(symbol, help: help, isOn: current == mode) {
-            store.updatePage(name: "Edit Interactions", invalidates: .visuals(nil)) { p in
-                var m = p.interactions[source] ?? [:]
-                m[target.id] = mode
-                p.interactions[source] = m
-            }
-        }
-    }
-}
-
-struct VisualContextMenu: View {
-    @EnvironmentObject var store: DocumentStore
-    let spec: VisualSpec
-
-    var body: some View {
-        Button("Copy") { ensureSelected(); store.copySelection() }
-        Button("Cut") { ensureSelected(); store.cutSelection() }
-        Button("Duplicate") { ensureSelected(); store.duplicateSelection() }
-        Button("Delete", role: .destructive) { ensureSelected(); store.deleteSelection() }
-        Divider()
-        if !spec.type.isPageElement {
-            Button("Focus Mode") { store.focusVisualID = spec.id }
-            Button("Show as a Table") { store.showAsTableID = spec.id }
-            Button("Copy Visual as Image") { VisualExport.copyImage(of: spec, store: store) }
-            Menu("Export Data") {
-                Button("CSV…") { VisualExport.exportData(of: spec, store: store, format: "csv") }
-                Button("Excel…") { VisualExport.exportData(of: spec, store: store, format: "xlsx") }
-                Button("JSON…") { VisualExport.exportData(of: spec, store: store, format: "json") }
-            }
-            Button(store.editInteractionsFor == spec.id ? "Done Editing Interactions" : "Edit Interactions") {
-                store.editInteractionsFor = store.editInteractionsFor == spec.id ? nil : spec.id
-            }
-            Divider()
-        }
-        Button("Format Painter") { store.formatPainterSource = spec.id }
-        Menu("Arrange") {
-            Button("Bring to Front") { ensureSelected(); store.reorder(.front) }
-            Button("Bring Forward") { ensureSelected(); store.reorder(.forward) }
-            Button("Send Backward") { ensureSelected(); store.reorder(.backward) }
-            Button("Send to Back") { ensureSelected(); store.reorder(.back) }
-        }
-        if store.selection.count > 1 { Button("Group") { store.groupSelection() } }
-        if spec.groupID != nil { Button("Ungroup") { ensureSelected(); store.ungroupSelection() } }
-        Button(spec.isLocked ? "Unlock" : "Lock") {
-            store.updateVisual(spec.id, name: "Lock", invalidates: .layout) { $0.isLocked.toggle() }
-        }
-        Button("Hide") { store.updateVisual(spec.id, name: "Hide Visual", invalidates: .layout) { $0.isHidden = true } }
-    }
-    private func ensureSelected() {
-        if !store.selection.contains(spec.id) { store.selection = store.withGroupMembers([spec.id]) }
-    }
-}
-
-/// Shown on an empty page: what to do first, said once, quietly.
-struct StartSurface: View {
-    @EnvironmentObject var store: DocumentStore
-    var body: some View {
-        let hasData = !store.model.tables.isEmpty
-        VStack(spacing: Design.Space.l) {
-            Image(systemName: hasData ? "square.grid.2x2" : "cylinder.split.1x2")
-                .font(.system(size: 40, weight: .ultraLight)).foregroundStyle(.tertiary)
-            Text(hasData ? "Build a visual" : "Add data to begin")
-                .font(.system(size: 22, weight: .semibold)).foregroundStyle(store.theme.foregroundColor)
-            Text(hasData ? "Drag a field here, or choose a visual from the toolbar."
-                         : "Connect to a file, a database, or your Microsoft account.")
-                .font(Design.Typeface.body).foregroundStyle(store.theme.secondaryColor)
-            if !hasData {
-                HStack(spacing: Design.Space.m) {
-                    Button("Get Data…") { AppCommands.run("data.get", store) }.buttonStyle(.borderedProminent)
-                    Button("Try Sample Data") { AppCommands.run("data.sample", store) }
-                    Button("Open…") { AppCommands.run("file.open", store) }
-                }
-                .controlSize(.large)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

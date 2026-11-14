@@ -31,6 +31,19 @@ public struct VisualContext {
     public var onSpecChange: (VisualSpec) -> Void = { _ in }
     /// Host-supplied renderer for visuals implemented outside this module (AI visuals, scripted visuals).
     public var extensionView: ((VisualSpec, VisualData, VisualContext) -> AnyView?)?
+    /// Modern visual tooltips: drill and drillthrough actions in the tooltip footer.
+    public var modernTooltips = true
+    /// A report page tooltip for the hovered data point, shown instead of the default tooltip card when non-nil.
+    public var pageTooltip: ((DataPointSelection) -> AnyView?)?
+    /// Pages the data point can drill through to (empty = no drillthrough offered).
+    public var drillthroughTargets: (DataPointSelection) -> [NavItem] = { _ in [] }
+    /// Whether a button's action can run right now (a drillthrough button needs a valid selection).
+    public var canRunAction: (ActionSpec) -> Bool = { _ in true }
+    /// Show the underlying records of a data point, when the host can.
+    public var onSeeRecords: ((DataPointSelection) -> Void)?
+    /// The report asks every slicer for an Apply button (query reduction); a slicer's own
+    /// `format["slicer"]["applyButton"]` still wins.
+    public var slicerApplyButtons = false
 
     public init() {}
 
@@ -98,6 +111,7 @@ public struct VisualView: View {
     }
 
     private func titleText(_ f: ResolvedFormat) -> String {
+        if let t = data.dynamicTitle, !t.isEmpty { return t }
         if let t = spec.fmt("title", "text")?.stringValue { return t }
         if spec.type.isPageElement { return "" }
         return VisualTitles.automatic(for: spec)
