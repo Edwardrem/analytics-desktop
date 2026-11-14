@@ -100,6 +100,9 @@ public struct QueryEnvironment: Sendable {
     public var networkTimeout: TimeInterval = 100
     /// Extra directories searched for command-line database clients (psql, mysql, sqlcmd, isql) before PATH and Homebrew.
     public var toolSearchPaths: [String] = []
+    /// Database servers (lower-cased host names) whose TLS certificate is not verified ("Trust server certificate",
+    /// set per source by the user after a warning). Every other server's certificate must be valid for its name.
+    public var trustServerCertificateHosts: Set<String> = []
     /// Largest file (or decompressed archive entry) a file connector will read, in bytes. Larger inputs fail with a clear error.
     public var maxSourceBytes: Int = 4 << 30
 

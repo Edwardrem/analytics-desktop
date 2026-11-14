@@ -49,6 +49,10 @@ final class DirectQuerySession {
     /// The source a query reads (its first `Sqlite.Database("…")` file, or its database server), so fetches can be
     /// counted per source; a query whose source can't be told counts as a source of its own.
     nonisolated static func sourceKey(_ script: String, query: String) -> String {
+        if let r = script.range(of: #"Sql\.Database\s*\(\s*"((?:[^"]|"")*)""#, options: .regularExpression) {
+            let literal = script[r].drop { $0 != "\"" }.dropFirst().dropLast()
+            return "sql:" + literal.replacingOccurrences(of: "\"\"", with: "\"").lowercased()
+        }
         if let r = script.range(of: #"Sqlite\.Database\s*\(\s*"((?:[^"]|"")*)""#, options: .regularExpression) {
             let literal = script[r].drop { $0 != "\"" }.dropFirst().dropLast()
             return "sqlite:" + literal.replacingOccurrences(of: "\"\"", with: "\"")

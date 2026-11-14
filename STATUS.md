@@ -27,9 +27,9 @@ Microsoft cloud features (sign-in, OneDrive and SharePoint, OneLake, Publish, se
 | 11. Performance and optimisation | 7 | 4 | 0 | 0 | 11 |
 | 12. Developer and pro-code features | 7 | 3 | 2 | 2 | 14 |
 | 13. Files, publishing, and export | 11 | 3 | 1 | 0 | 15 |
-| 14. Options, settings, and preview features | 11 | 10 | 3 | 1 | 25 |
+| 14. Options, settings, and preview features | 12 | 10 | 2 | 1 | 25 |
 | 15. What Desktop does not do | 1 | 1 | 0 | 10 | 12 |
-| **All** | **222** | **66** | **28** | **29** | **345** |
+| **All** | **223** | **66** | **27** | **29** | **345** |
 
 Section 15 lists what Power BI Desktop itself does not do, so N/A there is the expected result. Its Done and Partial rows are extras.
 
@@ -363,7 +363,7 @@ The 72 unavailable connector entries all behave the same way:
 | Custom connector trust | Missing | No custom connectors can run; Settings states this |
 | Certificate revocation checks | Missing | No revocation policy set; macOS default TLS trust only |
 | Script and visual warnings | Partial | Scripts off until allowed, blocked steps say how to allow them; no per-run prompt; no custom visuals |
-| Group policy and registry controls | Partial | A configuration profile can lock any Settings option; no keys to disable sign-in, export or updates |
+| Group policy and registry controls | Partial | A configuration profile can lock any Settings option; no keys to disable sign-in or export (automatic update checks can be locked off) |
 | Entra ID sign-in incl. sovereign clouds | Done | PKCE and device code; Public, US Government and China; not live-tested |
 | Encrypted data-source credentials | Missing | No credentials reach the query engine; the Keychain store is used only by the self-check |
 
@@ -436,7 +436,7 @@ Settings no longer offers these toggles: background data, cache size, unrestrict
 | Security | Partial | Native query approval works; no web-preview or ArcGIS consent; others replaced by notes |
 | Privacy | Partial | Combine and Ignore work; "Always ask per file" behaves like Combine and never asks |
 | Regional Settings | Partial | Model language and import locale applied; app is English only, no app-language option |
-| Updates and Usage Data | Missing | No updater, no telemetry; Settings states both |
+| Updates and Usage Data | Done | Settings ▸ Updates: automatic daily checks of GitHub Releases (on/off), opt-in betas, signed in-app install; no telemetry |
 | Diagnostics | Done | Version details, tracing (timings and row counts, never values), Traces and crash reports folders |
 | Preview features | Done | Five toggles, each gating its feature |
 | Auto recovery | Done | Toggle, interval and location applied; global only |

@@ -72,13 +72,17 @@ final class DataSourceFileTests: XCTestCase {
                        "https://example.com/a.csv")
         XCTAssertEqual(try connector(#"{"details": {"protocol": "odata", "address": {"url": "https://example.com/odata"}}}"#)?.0, "odata")
 
+        // SQL Server opens its form with the server and the database.
+        let sql = try connector(#"{"details": {"protocol": "tds", "address": {"server": "srv", "database": "Sales"}}}"#)
+        XCTAssertEqual(sql?.0, "sqlserver")
+        XCTAssertEqual(sql?.1, "srv;Sales")
         // Sources the catalog lists but can't connect to say why, in the catalog's own words.
-        guard case .unavailable(let sql) = try plan(#"{"details": {"protocol": "tds", "address": {"server": "srv", "database": "Sales"}}}"#) else {
-            return XCTFail("SQL Server has no working connector here")
+        guard case .unavailable(let ssas) = try plan(#"{"details": {"protocol": "analysis-services", "address": {"server": "srv", "database": "Model"}}}"#) else {
+            return XCTFail("Analysis Services has no working connector here")
         }
-        XCTAssertTrue(sql.contains("SQL Server srv / Sales"), sql)
-        XCTAssertTrue(sql.contains("SQL Server database"), sql)
-        XCTAssertTrue(sql.contains(DataConnector.Missing.driver), sql)
+        XCTAssertTrue(ssas.contains("Analysis Services srv / Model"), ssas)
+        XCTAssertTrue(ssas.contains("SQL Server Analysis Services database"), ssas)
+        XCTAssertTrue(ssas.contains(DataConnector.Missing.driver), ssas)
         guard case .unavailable(let parquet) = try plan(file("/data/t.parquet")) else { return XCTFail("parquet") }
         XCTAssertTrue(parquet.contains(DataConnector.Missing.parquet), parquet)
         guard case .unavailable(let unknown) = try plan(file("/data/archive.bin")) else { return XCTFail("unknown file type") }
@@ -108,7 +112,7 @@ final class DataSourceFileTests: XCTestCase {
         XCTAssertNil(store.status)
 
         let sql = DocumentStore(services: .live())
-        DataSourceFiles.startGetData(from: try pbids(#"{"details": {"protocol": "tds", "address": {"server": "srv"}}}"#, name: "sql.pbids"), in: sql)
+        DataSourceFiles.startGetData(from: try pbids(#"{"details": {"protocol": "analysis-services", "address": {"server": "srv"}}}"#, name: "sql.pbids"), in: sql)
         XCTAssertNil(sql.sheet)
         XCTAssertEqual(sql.status?.kind, .error)
 

@@ -17,8 +17,44 @@ Analytics Desktop is not a Microsoft product and is not affiliated with Microsof
 swift build                    # debug build of every target
 swift test                     # all test bundles
 Scripts/build-app.sh --open    # release build → dist/Analytics Desktop.app (ad-hoc signed), then open it
+                               # (--version X.Y.Z and --build N set the bundle's version)
 ```
 To see the app with data straight away, use **Data ▸ Load Sample Data**.
+
+## Install
+1. Download `AnalyticsDesktop-<version>.zip` from the
+   [releases page](https://github.com/Edwardrem/analytics-desktop/releases), unzip it, and move
+   **Analytics Desktop.app** to your Applications folder.
+2. Open it. Releases are ad-hoc signed, not notarised (there is no Apple Developer ID), so the first time macOS
+   says it can't check the app and won't open it. On macOS 15 and later, Control-click ▸ Open no longer gets
+   past this. Do one of these instead:
+   - Open **System Settings ▸ Privacy & Security**, scroll to the message about Analytics Desktop, click
+     **Open Anyway**, and confirm.
+   - Or, in Terminal, remove the download's quarantine flag and open the app normally:
+     `xattr -dr com.apple.quarantine "/Applications/Analytics Desktop.app"`
+
+You only do this once. Updates the app installs itself open without it (see below).
+
+## Updates
+Analytics Desktop updates itself from this repository's GitHub releases.
+- **Checking.** It checks a minute after it opens, then once a day. You can turn this off, or opt in to beta
+  releases, in **Settings ▸ Updates**. **Help ▸ Check for Updates…** checks at once. A check is one
+  unauthenticated request to GitHub's public release list. It sends nothing beyond the request itself: no
+  identifier, no usage data, nothing about your documents.
+- **What's New.** When a newer version is out, a What's New window shows its release notes and those of every
+  version you skipped. Its buttons are **Install and Relaunch**, **Remind Me Later** (asks again tomorrow) and
+  **Skip This Version**. The window opens again after an update installs, and from **Help ▸ What's New**.
+- **Installing.** The app downloads `AnalyticsDesktop-<version>.zip` and `AnalyticsDesktop-<version>.zip.sig`.
+  It checks the Ed25519 signature against the public key built into the app (`Resources/UpdatePublicKey.txt`)
+  and refuses the update on any mismatch. Only then does it unpack the zip and check that it is this app, at the
+  offered version, newer than yours. It then quits. A small helper swaps the new copy in, keeps the old one
+  until the new one has launched, and puts the old one back if it doesn't launch. The app's folder must be
+  writable by you, so keep the app in Applications (or `~/Applications`), not on a disk image or in Downloads.
+- **Publishing a release** (owner). Run `Scripts/make-update-key.sh` once to make the signing key and commit
+  `Resources/UpdatePublicKey.txt`. Then add a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` and push a
+  tag `vX.Y.Z`. `.github/workflows/release.yml` tests, builds, signs with the `UPDATE_SIGNING_KEY` secret, and
+  publishes the zip, its `.sig` and `latest.json`. `Scripts/release.sh <version>` does the same locally into
+  `dist/`.
 
 ## Microsoft account (optional)
 OneDrive, SharePoint, the OneLake catalog, Publish and sensitivity labels need your own Microsoft Entra app
@@ -94,7 +130,8 @@ smoke suite that drives the real store and services. It:
 - **PBIP safety rules.** A project's report and model folders must be inside the folder that holds its `.pbip`,
   so a thin report bound to a model in another project folder won't open. A project that contains symbolic
   links can't be saved in place; use Save As.
-- **Bundle id.** The app's bundle id is still `com.facet.app`.
+- **Signing.** Releases are ad-hoc signed and not notarised, so the first open needs the step under Install.
+  Updates are authenticated by the app's own Ed25519 signature check instead.
 
 `STATUS.md` lists every item in `Microsoft Power BI Desktop — Complete Feature Reference.md` as done,
 partial or missing.

@@ -6,7 +6,7 @@ extension MLibrary {
     static let registrars: [(MLibrary) -> Void] = [
         registerCore, registerRecord,
         registerTable, registerList, registerText, registerNumber, registerDateTime,
-        registerFiles, registerSQL, registerServerDatabases, registerWeb, registerWebTables, registerScripts, registerAI,
+        registerFiles, registerSQL, registerSQLServer, registerServerDatabases, registerWeb, registerWebTables, registerScripts, registerAI,
     ]
 
     /// Build a date from calendar components, or throw M's out-of-range error.

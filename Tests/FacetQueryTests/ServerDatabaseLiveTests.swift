@@ -24,6 +24,8 @@ final class ServerDatabaseLiveTests: XCTestCase {
         var user: String
         var password: String
         var kind: String
+        /// Hosts whose certificate isn't verified (`trust=1`), as Data source settings would record them.
+        var trustedHosts: Set<String> = []
     }
 
     final class Credentials: CredentialProvider, @unchecked Sendable {
@@ -39,15 +41,16 @@ final class ServerDatabaseLiveTests: XCTestCase {
         }
         let q = Dictionary((url.queryItems ?? []).map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
         var options: [String] = []
-        if q["trust"] == "1" { options.append("TrustServerCertificate = true") }
         if q["encrypt"] == "0" { options.append("EncryptConnection = false") }
         return Target(function: function, server: "\(host):\(url.port ?? port)", database: String(url.path.dropFirst()),
-                      options: "[" + options.joined(separator: ", ") + "]", user: url.user ?? "", password: url.password ?? "", kind: kind)
+                      options: "[" + options.joined(separator: ", ") + "]", user: url.user ?? "", password: url.password ?? "", kind: kind,
+                      trustedHosts: q["trust"] == "1" ? [host.lowercased()] : [])
     }
 
     private func environment(_ t: Target, password: String? = nil) -> QueryEnvironment {
         var env = QueryEnvironment(credentials: Credentials(user: t.user, password: password ?? t.password))
         env.requireNativeQueryApproval = false
+        env.trustServerCertificateHosts = t.trustedHosts
         return env
     }
     private func source(_ t: Target, extra: String = "") -> String {
@@ -116,6 +119,14 @@ final class ServerDatabaseLiveTests: XCTestCase {
         // Wrong password.
         do { _ = try MInterpreter(environment: environment(t, password: "wrong-\(UUID())")).evaluate(source(t)); XCTFail("expected an error") } catch {
             XCTAssertEqual(MError.wrap(error).reason, "DataSource.Error")
+        }
+        // A certificate trusted only per host: without the host in the list, a self-signed server is refused.
+        if !t.trustedHosts.isEmpty {
+            var untrusted = t
+            untrusted.trustedHosts = []
+            do { _ = try eval(untrusted, source(untrusted)); XCTFail("expected the certificate to be refused") } catch {
+                XCTAssertTrue(MError.wrap(error).message.contains("certificate"), MError.wrap(error).message)
+            }
         }
     }
 

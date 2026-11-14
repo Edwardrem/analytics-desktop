@@ -54,7 +54,6 @@ extension MLibrary {
         }
         // Connectors that need a client driver this build does not ship: fail with an actionable message.
         let unavailable: [(String, String)] = [
-            ("Sql.Database", "SQL Server"), ("Sql.Databases", "SQL Server"),
             ("Oracle.Database", "Oracle"), ("Odbc.DataSource", "ODBC"), ("Odbc.Query", "ODBC"), ("OleDb.DataSource", "OLE DB"),
             ("AnalysisServices.Database", "Analysis Services"), ("Snowflake.Databases", "Snowflake"), ("GoogleBigQuery.Database", "Google BigQuery"),
         ]

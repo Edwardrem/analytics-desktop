@@ -18,10 +18,7 @@ final class GetDataServerTests: XCTestCase {
         XCTAssertEqual(SourcePlanner.sourceExpression(request(.mysql, "my:3307", "shop")), #"MySQL.Database("my:3307", "shop")"#)
         XCTAssertEqual(SourcePlanner.sourceExpression(request(.mariadb, "m", "d")), #"MariaDB.Contents("m", "d")"#)
         XCTAssertEqual(SourcePlanner.sourceExpression(request(.redshift, "c", "dev")), #"AmazonRedshift.Database("c", "dev")"#)
-        var trusted = request(.postgresql, "localhost", "d")
-        trusted.trustServerCertificate = true
-        XCTAssertEqual(SourcePlanner.sourceExpression(trusted), #"PostgreSQL.Database("localhost", "d", [TrustServerCertificate = true])"#)
-        var plain = trusted
+        var plain = request(.postgresql, "localhost", "d")
         plain.encrypt = false
         XCTAssertEqual(SourcePlanner.sourceExpression(plain), #"PostgreSQL.Database("localhost", "d", [EncryptConnection = false])"#)
         // A typed statement becomes a folding native query, as for SQLite.
@@ -31,14 +28,22 @@ final class GetDataServerTests: XCTestCase {
     }
 
     func testRequestReadBackFromSource() throws {
-        let r = try XCTUnwrap(SourcePlanner.request(fromSource: #"PostgreSQL.Database("db:5433", "sales", [TrustServerCertificate = true])"#))
+        let r = try XCTUnwrap(SourcePlanner.request(fromSource: #"PostgreSQL.Database("db:5433", "sales", [CommandTimeout = #duration(0, 0, 5, 0)])"#))
         XCTAssertEqual(r.kind, .postgresql)
         XCTAssertEqual(r.location, "db:5433")
         XCTAssertEqual(r.database, "sales")
-        XCTAssertTrue(r.trustServerCertificate)
         XCTAssertTrue(r.encrypt)
         XCTAssertEqual(SourcePlanner.request(fromSource: #"MariaDB.Contents("m", "d", [EncryptConnection = false])"#)?.encrypt, false)
         XCTAssertNil(SourcePlanner.request(fromSource: #"MySQL.Database("only-server")"#))
+    }
+
+    func testCertificateTrustIsKeptPerHost() {
+        // The key "Trust server certificate" stores, matching what the connectors look up: the host without port, lower-cased.
+        XCTAssertEqual(ServerDatabaseHost.name("DB.Example.com:5433"), "db.example.com")
+        XCTAssertEqual(ServerDatabaseHost.name("db.example.com,3307"), "db.example.com")
+        XCTAssertEqual(ServerDatabaseHost.name("[::1]:5432"), "::1")
+        XCTAssertNil(ServerDatabaseHost.name("  "))
+        XCTAssertNil(ServerDatabaseHost.name("db:notaport"))
     }
 
     func testDataSourceValidationAndName() {

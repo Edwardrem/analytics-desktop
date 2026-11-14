@@ -43,6 +43,7 @@ struct ServerSource {
     var options: MRecord?
     var address: ServerAddress
     var encrypt = true
+    /// True when the user chose not to verify this host's certificate (`QueryEnvironment.trustServerCertificateHosts`).
     var trustServerCertificate = false
     var limits = WireLimits()
     /// Hand-written SQL from the `Query` option.
@@ -52,9 +53,10 @@ struct ServerSource {
     var kind: String { product.rawValue }
     var location: String { server + ";" + database }
 
-    init(product: Product, server: String, database: String, options: MRecord?, maxBytes: Int) throws {
+    init(product: Product, server: String, database: String, options: MRecord?, maxBytes: Int, trustedHosts: Set<String> = []) throws {
         self.product = product; self.server = server; self.database = database; self.options = options
         address = try ServerAddress.parse(server, defaultPort: product.defaultPort)
+        trustServerCertificate = trustedHosts.contains(address.host.lowercased())
         guard !database.trimmingCharacters(in: .whitespaces).isEmpty else { throw MError.dataSource("\(product.function) needs a database name.") }
         limits.maxResultBytes = maxBytes
         guard let options else { return }
@@ -69,7 +71,6 @@ struct ServerSource {
         if let s = try seconds("CommandTimeout") { limits.commandTimeout = s }
         if let s = try seconds("ConnectionTimeout") { limits.connectTimeout = s }
         encrypt = try options.logical("EncryptConnection") ?? true
-        trustServerCertificate = try options.logical("TrustServerCertificate") ?? false
         query = try options.text("Query")
     }
 
@@ -80,12 +81,12 @@ struct ServerSource {
     }
     static let metaField = "Facet.ServerDatabase"
 
-    static func from(metadata r: MRecord, maxBytes: Int) throws -> ServerSource? {
+    static func from(metadata r: MRecord, maxBytes: Int, trustedHosts: Set<String>) throws -> ServerSource? {
         guard let p = try r.text("Product"), let product = Product(rawValue: p), let server = try r.text("Server"),
               let database = try r.text("Database") else { return nil }
         var options: MRecord?
         if case .record(let o)? = try r.get("Options") { options = o }
-        return try ServerSource(product: product, server: server, database: database, options: options, maxBytes: maxBytes)
+        return try ServerSource(product: product, server: server, database: database, options: options, maxBytes: maxBytes, trustedHosts: trustedHosts)
     }
 
     // MARK: Credentials
@@ -142,6 +143,15 @@ public extension MTable {
     /// True for the navigation table of a database server connector (`PostgreSQL.Database`, `MySQL.Database`, …),
     /// whose objects are addressed by `[Schema = …, Item = …]`.
     var isServerDatabaseNavigation: Bool { meta?.has(ServerSource.metaField) ?? false }
+}
+
+public enum ServerDatabaseHost {
+    /// The lower-cased host of a server typed for `PostgreSQL.Database`, `MySQL.Database`, … (`host`, `host:port`,
+    /// `host,port`, `[v6]:port`): the key the connectors look up in `QueryEnvironment.trustServerCertificateHosts`.
+    public static func name(_ server: String) -> String? {
+        guard let a = try? ServerAddress.parse(server, defaultPort: 1), !a.host.isEmpty else { return nil }
+        return a.host.lowercased()
+    }
 }
 
 /// Native query parameters: a list binds positionally; a record binds `@name` markers by name.
@@ -201,7 +211,7 @@ extension MLibrary {
         for product in [ServerSource.Product.postgres, .redshift, .mysql, .mariadb] {
             lib.fn(product.function, 2...3) { a, ctx in
                 let source = try ServerSource(product: product, server: try a.text(0), database: try a.text(1), options: try a.optRecord(2),
-                                              maxBytes: ctx.environment.maxSourceBytes)
+                                              maxBytes: ctx.environment.maxSourceBytes, trustedHosts: ctx.environment.trustServerCertificateHosts)
                 try ctx.noteDataSource(kind: source.kind, location: source.location)
                 let db = try source.open(ctx)
                 if let sql = source.query {
@@ -246,7 +256,8 @@ extension MLibrary {
     /// `Value.NativeQuery` against a server database (nil when the target isn't one).
     static func serverNativeQuery(_ a: MArgs, _ ctx: MInterpreter) throws -> MValue? {
         guard case .table(let target) = a[0], case .record(let meta)? = try target.meta?.get(ServerSource.metaField),
-              let source = try ServerSource.from(metadata: meta, maxBytes: ctx.environment.maxSourceBytes) else { return nil }
+              let source = try ServerSource.from(metadata: meta, maxBytes: ctx.environment.maxSourceBytes,
+                                                          trustedHosts: ctx.environment.trustServerCertificateHosts) else { return nil }
         let db = try source.open(ctx)
         let (sql, parameters) = try NativeParameters.bind(try a.text(1), a[2], dialect: db.dialect)
         try ctx.approveNativeQuery(try a.text(1), kind: source.kind, location: source.location)

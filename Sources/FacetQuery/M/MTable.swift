@@ -17,14 +17,22 @@ public enum MFoldOperation {
     case rowCount
     /// `Table.Distinct` over all columns.
     case distinct
-    /// `Table.Group` (global, ordinal keys): key columns and (new column, aggregate function, type).
-    case group(keys: [String], aggregates: [(name: String, function: MFunction, type: MType)])
-    /// `Table.NestedJoin` with another table: keys, the right table, the new column and the `JoinKind` number.
-    case nestedJoin(leftKeys: [String], right: MTable, rightKeys: [String], newColumn: String, kind: Int)
-    /// `Table.Join` (flat) with another table and the `JoinKind` number.
-    case join(leftKeys: [String], right: MTable, rightKeys: [String], kind: Int)
-    /// `Table.ExpandTableColumn` with explicit columns and new names.
-    case expandTableColumn(column: String, fields: [String], newNames: [String])
+    /// `Table.Group` (global, case-sensitive keys): key columns and `{name, each …, type}` aggregations.
+    case group(keys: [String], aggregations: [MGroupAggregation])
+    /// `Table.Join` with key columns and a `JoinKind` value.
+    case join(right: MTable, leftKeys: [String], rightKeys: [String], kind: Int)
+    /// `Table.NestedJoin`: the right rows matching each left row, as a new table column.
+    case nestedJoin(right: MTable, leftKeys: [String], rightKeys: [String], newColumn: String, kind: Int)
+    /// `Table.ExpandTableColumn` with explicit column names.
+    case expandTableColumn(column: String, names: [String], newNames: [String])
+}
+
+/// One aggregation of `Table.Group`.
+public struct MGroupAggregation {
+    public var name: String
+    public var function: MFunction
+    public var type: MType?
+    public init(name: String, function: MFunction, type: MType?) { self.name = name; self.function = function; self.type = type }
 }
 
 /// A lazily loaded table backing store (SQL sources). Schema is known up front; rows load on demand.

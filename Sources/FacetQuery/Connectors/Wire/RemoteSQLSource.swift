@@ -115,20 +115,20 @@ final class RemoteSQLSource: MTableSource {
             q.columns = ["Count"]; q.types = [.int64]; q.order = []
             q.selectList = "COUNT(*) AS " + d.quote("Count")
             return next(q)
-        case .group(let keys, let aggregates):
-            return group(keys: keys, aggregates: aggregates, ctx)
-        case .nestedJoin(let leftKeys, let right, let rightKeys, let newColumn, let kind):
+        case .group(let keys, let aggregations):
+            return group(keys: keys, aggregates: aggregations, ctx)
+        case .nestedJoin(let right, let leftKeys, let rightKeys, let newColumn, let kind):
             guard let plan = JoinPlan(left: self, leftKeys: leftKeys, right: right, rightKeys: rightKeys, kind: kind),
                   !query.columns.contains(newColumn) else { return nil }
             return PendingNestedJoin(plan: plan, newColumn: newColumn, rightType: right.tableType, interpreter: interpreter)
-        case .join(let leftKeys, let right, let rightKeys, let kind):
+        case .join(let right, let leftKeys, let rightKeys, let kind):
             guard let plan = JoinPlan(left: self, leftKeys: leftKeys, right: right, rightKeys: rightKeys, kind: kind) else { return nil }
             return plan.flat(interpreter: interpreter)
         case .expandTableColumn: return nil
         }
     }
 
-    private func group(keys: [String], aggregates: [(name: String, function: MFunction, type: MType)], _ ctx: MInterpreter) -> MTableSource? {
+    private func group(keys: [String], aggregates: [MGroupAggregation], _ ctx: MInterpreter) -> MTableSource? {
         guard keys.allSatisfy(query.columns.contains), Set(keys).count == keys.count else { return nil }
         let names = keys + aggregates.map(\.name)
         guard Set(names).count == names.count else { return nil }
@@ -143,7 +143,7 @@ final class RemoteSQLSource: MTableSource {
         if !inner.wheres.isEmpty { s += " WHERE " + inner.wheres.joined(separator: " AND ") }
         if !keys.isEmpty { s += " GROUP BY " + keys.map(d.quote).joined(separator: ", ") }
         let keyTypes = keys.map { k in query.types[query.columns.firstIndex(of: k) ?? 0] }
-        return next(Query(from: "(" + s + ") AS " + d.quote("_"), columns: names, types: keyTypes + aggregates.map(\.type),
+        return next(Query(from: "(" + s + ") AS " + d.quote("_"), columns: names, types: keyTypes + aggregates.map { $0.type ?? .any },
                           parameters: query.parameters))
     }
 }

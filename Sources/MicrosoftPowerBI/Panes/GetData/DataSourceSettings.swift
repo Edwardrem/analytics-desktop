@@ -111,6 +111,7 @@ struct DataSourceSettingsSheet: View {
         switch kind {
         case "Folder": return "folder"
         case "SQLite", "PostgreSQL", "MySQL", "MariaDB", "AmazonRedshift": return "cylinder"
+        case "SQL": return "cylinder.split.1x2"
         case "Web", "OData": return "globe"
         default: return "doc"
         }

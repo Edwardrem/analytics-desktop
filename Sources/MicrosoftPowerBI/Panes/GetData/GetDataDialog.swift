@@ -172,6 +172,9 @@ private struct ConnectionForm: View {
                 Button("Browse…") { browse() }
             }
             if kind == .sqlite { databaseOptions }
+        case .sqlServer:
+            SQLServerFields(session: session)
+            databaseOptions
         case .web, .odata:
             TextField(kind == .web ? "https://example.com/data.csv" : "https://services.odata.org/V4/TripPinService", text: $session.request.location)
                 .textFieldStyle(.roundedBorder)
@@ -214,13 +217,7 @@ private struct ConnectionForm: View {
         Toggle("Encrypt connection", isOn: $session.request.encrypt)
             .help("Use TLS and verify the server's certificate")
         if session.request.encrypt {
-            Toggle("Trust server certificate", isOn: $session.request.trustServerCertificate)
-                .help("Accept a certificate that doesn't verify, such as a self-signed one")
-            if session.request.trustServerCertificate {
-                Label("The certificate won't be checked, so another server could pose as this one. Use this only on a network you trust.",
-                      systemImage: "exclamationmark.triangle")
-                    .font(Design.Typeface.caption).foregroundStyle(Design.Palette.caution).fixedSize(horizontal: false, vertical: true)
-            }
+            ServerTrustToggle(server: session.request.location)
         } else {
             Label("Without encryption, data and sign-in exchanges travel in the clear. A password is never sent in clear text.",
                   systemImage: "exclamationmark.triangle")
@@ -274,14 +271,16 @@ private struct NativeQueryApproval: View {
             Label("Native Database Query", systemImage: "exclamationmark.shield").font(Design.Typeface.headline)
             Text("You are about to run a native database query. Native queries can make changes to the database. Run it only if you trust the statement below.")
                 .font(Design.Typeface.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(session.request.kind.isServer ? session.request.location + " · " + session.request.database : session.request.location)
+            Text(session.request.kind.isServer || session.request.kind == .sqlServer ? session.request.location + " · " + session.request.database : session.request.location)
                 .font(Design.Typeface.caption).foregroundStyle(.tertiary).lineLimit(1).truncationMode(.middle)
             ScrollView {
                 Text(session.pendingNativeQuery).font(Design.Typeface.mono).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(Design.Space.s)
             }
             .background(Design.Palette.fill, in: RoundedRectangle(cornerRadius: Design.Radius.control))
-            Text(session.request.kind.isServer
+            Text(session.request.kind == .sqlServer
+                 ? "The statement runs with the permissions of your sign-in. \(AppIdentity.name) remembers this approval until you clear it in Data source settings."
+                 : session.request.kind.isServer
                  ? "The statement runs on the server with the database user's permissions. \(AppIdentity.name) remembers this approval until you clear it in Data source settings."
                  : "\(AppIdentity.name) opens SQLite databases read-only, and remembers this approval until you clear it in Data source settings.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -439,5 +438,39 @@ private struct NavigatorView: View {
             }
         }
         .padding(Design.Space.m)
+    }
+}
+
+/// "Trust server certificate" for one database server host. It is kept per host in the app's settings
+/// (`QuerySecurity.trustedServerCertificateHosts`, shared with SQL Server), never written into the query.
+private struct ServerTrustToggle: View {
+    let server: String
+    @State private var trust = false
+
+    private var host: String? { ServerDatabaseHost.name(server) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
+            Toggle("Trust server certificate", isOn: $trust)
+                .disabled(host == nil)
+                .onChange(of: trust) { _, on in
+                    guard let host else { return }
+                    var all = QuerySecurity.shared.trustedServerCertificateHosts
+                    if on { all.insert(host) } else { all.remove(host) }
+                    QuerySecurity.shared.trustedServerCertificateHosts = all
+                }
+                .help("Accept a certificate that doesn't verify, such as a self-signed one, for this server only")
+            if trust {
+                Label("The certificate won't be checked, so another server could pose as this one. Use this only on a network you trust.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(Design.Typeface.caption).foregroundStyle(Design.Palette.caution).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear(perform: refresh)
+        .onChange(of: server) { _, _ in refresh() }
+    }
+
+    private func refresh() {
+        trust = host.map(QuerySecurity.shared.trustedServerCertificateHosts.contains) ?? false
     }
 }

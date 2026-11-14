@@ -122,9 +122,15 @@ final class ServerFoldingTests: XCTestCase {
 
     func testOptionsAndCredentials() throws {
         let s = try ServerSource(product: .postgres, server: "db.example.com", database: "sales",
-                                 options: MRecord(names: ["CommandTimeout", "TrustServerCertificate"], values: [.duration(90), .logical(true)]), maxBytes: 1 << 20)
+                                 options: MRecord(names: ["CommandTimeout"], values: [.duration(90)]), maxBytes: 1 << 20,
+                                 trustedHosts: ["db.example.com"])
         XCTAssertEqual(s.limits.commandTimeout, 90)
-        XCTAssertTrue(s.trustServerCertificate)
+        XCTAssertTrue(s.trustServerCertificate, "the host is in the per-host trust list")
+        // Trust is per host (case-insensitive, any port): another host is still verified.
+        XCTAssertFalse(try ServerSource(product: .postgres, server: "other.example.com", database: "sales", options: nil, maxBytes: 1,
+                                        trustedHosts: ["db.example.com"]).trustServerCertificate)
+        XCTAssertTrue(try ServerSource(product: .mysql, server: "DB.example.com:3307", database: "d", options: nil, maxBytes: 1,
+                                       trustedHosts: ["db.example.com"]).trustServerCertificate)
         XCTAssertTrue(s.encrypt, "encrypted unless turned off")
         XCTAssertEqual(s.location, "db.example.com;sales")
         XCTAssertEqual(s.address.port, 5432)

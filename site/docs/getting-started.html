@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting started · Analytics Desktop</title>
+<meta name="description" content="Install Analytics Desktop on your Mac, open it the first time, and build your first report.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="24" height="24"> Analytics Desktop</a>
+    <nav class="nav" aria-label="Site">
+      <a href="../index.html">Home</a>
+      <a href="../features.html">Features</a>
+      <a href="../releases.html">Releases</a>
+      <a href="index.html" aria-current="page">Docs</a>
+      <a href="https://github.com/Edwardrem/analytics-desktop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap docs">
+    <nav aria-label="Docs"><ul><li><a href="index.html">All docs</a></li><li><a href="getting-started.html" aria-current="page">Getting started</a></li><li><a href="microsoft-account.html">Microsoft account</a></li><li><a href="data-sources.html">Data sources</a></li><li><a href="updates.html">Updates</a></li><li><a href="privacy.html">Privacy</a></li></ul></nav>
+    <article class="prose">
+<h1>Getting started</h1>
+<p>Analytics Desktop runs on macOS 15 Sequoia or later, on a Mac with Apple silicon. It is a beta: check the <a href="../features.html#limits">known limits</a> first.</p>
+
+<h2 id="install">Install</h2>
+<ol>
+  <li>Download the latest zip from the <a href="../releases.html">Releases</a> page.</li>
+  <li>Open the zip (Safari unzips it for you) and drag <b>Analytics Desktop</b> into your Applications folder.</li>
+</ol>
+
+<h2 id="first-open">Open it the first time</h2>
+<p>Releases are ad-hoc signed and are not notarized by Apple, because the project has no Apple Developer ID yet. macOS therefore blocks the first open of a downloaded copy.</p>
+<ol>
+  <li>Open Analytics Desktop. macOS says it can’t verify that the app is free of malware. Click <b>Done</b>.</li>
+  <li>Open <b>System Settings ▸ Privacy &amp; Security</b>. Under Security, click <b>Open Anyway</b> next to the Analytics Desktop message, then confirm with your password.</li>
+</ol>
+<p>On macOS 15, Control-clicking the app and choosing Open no longer skips this check, so use System Settings. If you prefer Terminal, this removes the download mark instead:</p>
+<pre><code>xattr -dr com.apple.quarantine "/Applications/Analytics Desktop.app"</code></pre>
+<p>You do this once. Later versions install from inside the app and are checked with the project’s own signature; see <a href="updates.html">Updates</a>.</p>
+
+<h2 id="first-report">Your first report</h2>
+<ol>
+  <li>To look around with data straight away, choose <b>Data ▸ Load Sample Data</b>.</li>
+  <li>To use your own data, choose <b>Get Data</b> on the Home tab of the ribbon and pick a source, such as an Excel workbook or a CSV file. See <a href="data-sources.html">Data sources</a>.</li>
+  <li>In the Navigator, tick the tables you want. Choose <b>Load</b>, or <b>Transform Data</b> to clean them first in the Power Query Editor, then <b>Close &amp; Apply</b>.</li>
+  <li>Pick a visual in the Visualizations pane and drag fields onto it from the Data pane.</li>
+</ol>
+<p>The views down the left side of the window are the same as in Power BI Desktop for Windows: Report, Table, Model, DAX query and TMDL.</p>
+
+<h2 id="files">Saving and opening files</h2>
+<table>
+  <thead><tr><th>Format</th><th>Open</th><th>Save</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>.facet</code></td><td>Yes</td><td>Yes</td><td>The app’s own package: model, data and report in one file</td></tr>
+    <tr><td>PBIP (PBIR + TMDL)</td><td>Yes</td><td>Yes</td><td>Model and report as text, without data; good for Git. Reloads when its files change on disk.</td></tr>
+    <tr><td><code>.pbit</code></td><td>Yes</td><td>Yes</td><td>Template: model and report, without data</td></tr>
+    <tr><td><code>.pbix</code></td><td>Yes</td><td>No</td><td>Pages and queries only; the data model inside a <code>.pbix</code> can’t be decoded</td></tr>
+    <tr><td><code>.pbids</code></td><td>Yes</td><td>No</td><td>Opens a new document at that connection</td></tr>
+    <tr><td>Theme JSON</td><td>Yes</td><td>Yes</td><td>Report themes</td></tr>
+  </tbody>
+</table>
+<p><b>File ▸ Export to PDF…</b> writes every visible page, and each visual can export its data as CSV, Excel or JSON.</p>
+
+<h2 id="optional">Optional extras</h2>
+<ul>
+  <li><b>Microsoft account.</b> For OneDrive, SharePoint, the OneLake catalog, Publish and sensitivity labels. See <a href="microsoft-account.html">Microsoft account</a>.</li>
+  <li><b>Assistant.</b> Chat about your data, write and explain DAX, and summarise pages. It uses your own Anthropic API key, entered in <b>Settings ▸ Assistant</b> and kept in the macOS Keychain.</li>
+  <li><b>Python and R.</b> Script sources, steps and visuals run on your installed interpreter once you allow scripts in <b>Settings ▸ Scripting</b>.</li>
+</ul>
+    </article>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Analytics Desktop is not affiliated with or endorsed by Microsoft. Power BI is a trademark of Microsoft.</p>
+    <p><a href="privacy.html">Privacy</a> · <a href="https://github.com/Edwardrem/analytics-desktop">Source on GitHub</a></p>
+  </div>
+</footer>
+</body>
+</html>

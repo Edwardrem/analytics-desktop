@@ -30,6 +30,8 @@ final class GetDataSession: ObservableObject {
     @Published var stage: Stage = .catalog
     @Published var connector: DataConnector?
     @Published var request = SourceRequest(kind: .csv)
+    /// The SQL Server sign-in typed into the form (saved to the Keychain on connect).
+    @Published var sqlSignIn = SQLServerSignIn()
     @Published var isWorking = false
     @Published var error: String?
     /// Objects of a multi-table source; empty when the source is a single table.
@@ -77,11 +79,12 @@ final class GetDataSession: ObservableObject {
         guard let kind = connector.kind else { return }
         self.connector = connector
         request = SourceRequest(kind: kind, location: location)
-        // A recent database server is remembered as "server;database".
-        if kind.isServer, let split = location.firstIndex(of: ";") {
+        // A recent database server is remembered as "server;database", as data source files give it.
+        if kind.isServer || kind == .sqlServer, let split = location.firstIndex(of: ";") {
             request.location = String(location[..<split])
             request.database = String(location[location.index(after: split)...])
         }
+        sqlSignIn = SQLServerSignIn(method: SQLServerConnection.defaultMethod(for: request.location))
         reset()
         if kind == .blank { Task { await finish(.transform) } } else { stage = .form }
     }
@@ -112,7 +115,7 @@ final class GetDataSession: ObservableObject {
 
     /// The database a native query would run against, as the engine names it (kind and location).
     private var nativeQuerySource: (kind: String, location: String) {
-        if request.kind.isServer, let s = SourcePlanner.dataSource(request) { return (s.kind, s.location) }
+        if request.kind.isServer || request.kind == .sqlServer, let s = SourcePlanner.dataSource(request) { return (s.kind, s.location) }
         return ("SQLite", (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath)
     }
     var pendingNativeQuery: String { request.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -126,7 +129,16 @@ final class GetDataSession: ObservableObject {
     func connect() async {
         if let message = SourcePlanner.validationMessage(request) { error = message; return }
         reset()
-        if request.kind.isDatabase, !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
+        if request.kind == .sqlServer {
+            let stored = SQLServerConnection.hasStoredCredential(server: request.location, database: request.database)
+            if let message = SQLServerConnection.validationMessage(server: request.location, database: request.database, signIn: sqlSignIn, hasStoredCredential: stored) {
+                error = message; return
+            }
+            do { try SQLServerConnection.save(sqlSignIn, server: request.location, database: request.database) } catch {
+                self.error = "The sign-in couldn't be saved in the Keychain: \(error.localizedDescription)"; return
+            }
+        }
+        if request.kind.isDatabase || request.kind == .sqlServer, !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
            !security.isApproved(query: pendingNativeQuery, kind: nativeQuerySource.kind, location: nativeQuerySource.location) {
             stage = .approval
             return
@@ -196,7 +208,7 @@ final class GetDataSession: ObservableObject {
                 shown = try await sample(script)
             }
         }
-        let typed = request.kind.isDatabase || [.python, .r].contains(request.kind)
+        let typed = request.kind.isDatabase || [.sqlServer, .python, .r].contains(request.kind)
         if detectTypes, !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)
@@ -283,7 +295,7 @@ final class GetDataSession: ObservableObject {
                 // One record per location: OData reads its feed through Web.Contents, which is the same source.
                 for s in engine.dataSourcesAccessed where !sources.contains(where: { $0.location == s.location }) { sources.append(s) }
             }
-            let directQuery = request.kind.isDatabase && request.directQuery
+            let directQuery = (request.kind.isDatabase || request.kind == .sqlServer) && request.directQuery
             if directQuery {
                 // The same check as the storage-mode menu: DirectQuery only when every step folds into SQL.
                 for table in tables {

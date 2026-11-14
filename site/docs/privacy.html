@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Analytics Desktop</title>
+<meta name="description" content="Analytics Desktop sends no telemetry. Update checks talk only to GitHub, and your data stays on your Mac unless you publish or save it to the cloud.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../css/site.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="../index.html"><img src="../favicon.svg" alt="" width="24" height="24"> Analytics Desktop</a>
+    <nav class="nav" aria-label="Site">
+      <a href="../index.html">Home</a>
+      <a href="../features.html">Features</a>
+      <a href="../releases.html">Releases</a>
+      <a href="index.html" aria-current="page">Docs</a>
+      <a href="https://github.com/Edwardrem/analytics-desktop">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap docs">
+    <nav aria-label="Docs"><ul><li><a href="index.html">All docs</a></li><li><a href="getting-started.html">Getting started</a></li><li><a href="microsoft-account.html">Microsoft account</a></li><li><a href="data-sources.html">Data sources</a></li><li><a href="updates.html">Updates</a></li><li><a href="privacy.html" aria-current="page">Privacy</a></li></ul></nav>
+    <article class="prose">
+<h1>Privacy</h1>
+<p>Analytics Desktop has no telemetry. It doesn’t collect usage data or crash reports, and it has no account with this project. Your reports and data stay on your Mac unless you choose to send them somewhere.</p>
+
+<h2 id="network">When the app goes online</h2>
+<p>The app makes network requests only for these, and only to the hosts named:</p>
+<ul>
+  <li><b>Update checks</b> go only to GitHub (<code>api.github.com</code>, and <code>github.com</code> and <code>objects.githubusercontent.com</code> for downloads). They send nothing beyond the request itself. You can turn them off. See <a href="updates.html">Updates</a>.</li>
+  <li><b>Data sources you connect to</b>, such as a web page or OData feed, are read from wherever you point them.</li>
+  <li><b>Microsoft services</b>, only after you sign in: opening and saving in OneDrive or SharePoint, the OneLake catalog, Publish to the Power BI service, and sensitivity labels. Publish uploads the model and report definitions, without data. See <a href="microsoft-account.html">Microsoft account</a>.</li>
+  <li><b>The assistant</b>, only if you add your own Anthropic API key and use it. Your question goes to Anthropic’s API with the parts of the report and model it needs to answer, which can include table and column names, formulas and query results.</li>
+</ul>
+<p>Nothing else leaves your Mac. In particular, data is never uploaded unless you publish, save to the cloud, or use the assistant.</p>
+
+<h2 id="on-device">On your Mac</h2>
+<ul>
+  <li>Microsoft sign-in tokens and your Anthropic API key are kept in the macOS Keychain. Microsoft tokens are sent only to Microsoft hosts.</li>
+  <li>Diagnostic tracing is off unless you turn it on in Settings ▸ Diagnostics. Traces record timings and row counts, never values, and stay in a local folder.</li>
+  <li>Python and R scripts run on your own interpreter, and only after you allow scripts.</li>
+  <li>The local agent server (Settings ▸ Developer) is off by default. When on, it listens only on your Mac and needs a token for each session.</li>
+</ul>
+
+<h2 id="website">This website</h2>
+<p>This site is static and hosted on GitHub Pages. It uses no cookies and no analytics. The Home and Releases pages ask GitHub’s public API for the list of releases from your browser, and keep the answer for ten minutes in your browser’s session storage. GitHub’s own privacy statement covers its servers.</p>
+    </article>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Analytics Desktop is not affiliated with or endorsed by Microsoft. Power BI is a trademark of Microsoft.</p>
+    <p><a href="privacy.html">Privacy</a> · <a href="https://github.com/Edwardrem/analytics-desktop">Source on GitHub</a></p>
+  </div>
+</footer>
+</body>
+</html>

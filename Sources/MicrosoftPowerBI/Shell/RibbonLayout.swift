@@ -349,6 +349,8 @@ enum RibbonLayout {
             ]),
             RibbonGroup(title: "About", items: [
                 large("help.about", "About", "info.circle"),
+                small("help.checkForUpdates", "Check for updates", "arrow.down.circle"),
+                small("help.whatsNew", "What's new", "sparkles"),
             ]),
             more([.help, .account]),
         ]),

@@ -13,14 +13,14 @@ struct SourceRequest: Equatable, Sendable {
     var delimiter = ","
     /// Code page for text files (65001 = UTF-8).
     var encoding = 65001
+    /// Database name (SQL Server and the other database servers; the server is `location`).
+    var database = ""
     /// Optional SQL statement for database sources.
     var nativeQuery = ""
     var directQuery = false
-    /// Database name, for database servers (the server is `location`).
-    var database = ""
-    /// Database servers: TLS (on unless turned off) and whether to accept a certificate that doesn't verify.
+    /// PostgreSQL, MySQL, MariaDB and Redshift: TLS, on unless turned off. Whether a certificate is checked is a per-host
+    /// setting (`QuerySecurity.trustedServerCertificateHosts`), never part of the query.
     var encrypt = true
-    var trustServerCertificate = false
     var webContent: WebContentKind = .csv
 
     init(kind: SourceKind, location: String = "") { self.kind = kind; self.location = location }
@@ -72,6 +72,10 @@ enum SourcePlanner {
         case .xml: return "Xml.Tables(File.Contents(\(location)))"
         case .folder: return "Folder.Files(\(location))"
         case .sqlite: return "Sqlite.Database(\(location))"
+        case .sqlServer:
+            let sql = r.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            let database = MSyntax.text(r.database.trimmingCharacters(in: .whitespacesAndNewlines))
+            return "Sql.Database(\(location), \(database)" + (sql.isEmpty ? "" : ", [Query = \(MSyntax.text(sql))]") + ")"
         case .odata: return "OData.Feed(\(location), null, [Implementation = \"2.0\"])"
         case .python: return "Python.Execute(\(MSyntax.text(r.location)))"
         case .r: return "R.Execute(\(MSyntax.text(r.location)))"
@@ -79,7 +83,6 @@ enum SourcePlanner {
         case .postgresql, .mysql, .mariadb, .redshift:
             var options: [String] = []
             if !r.encrypt { options.append("EncryptConnection = false") }
-            if r.encrypt && r.trustServerCertificate { options.append("TrustServerCertificate = true") }
             let database = MSyntax.text(r.database.trimmingCharacters(in: .whitespacesAndNewlines))
             return "\(serverFunction(r.kind))(\(location), \(database)\(options.isEmpty ? "" : ", [" + options.joined(separator: ", ") + "]"))"
         case .web:
@@ -157,17 +160,16 @@ enum SourcePlanner {
         var items: [NavigatorItem] = []
         for row in 0..<rowCount {
             let kind = text("Kind", row) ?? "Table"
-            let name = labels[row] ?? "Table \(row + 1)"
+            var name = labels[row] ?? "Table \(row + 1)"
+            if let schema = text("Schema", row), schema != "main", let item = text("Item", row), name == item { name = schema + "." + item }
             let key: String, step: String
-            if t.isServerDatabaseNavigation, let schema = text("Schema", row), let item = text("Item", row) {
+            if let schema = text("Schema", row), let item = text("Item", row) {
+                // Database tables, as Power BI selects them: the same name can exist in several schemas.
                 key = "[Schema = \(MSyntax.text(schema)), Item = \(MSyntax.text(item))]"
                 step = "\(schema)_\(item)"
             } else if let item = text("Item", row), text("Kind", row) != nil, labelName == "Name" {
                 key = "[Item = \(MSyntax.text(item)), Kind = \(MSyntax.text(kind))]"
                 step = "\(item)_\(kind)"
-            } else if let schema = text("Schema", row), let item = text("Item", row) {
-                key = "[Schema = \(MSyntax.text(schema)), Item = \(MSyntax.text(item))]"
-                step = "\(schema)_\(item)"
             } else if labelsAreKeys, let l = labels[row] {
                 key = "[\(labelName) = \(MSyntax.text(l))]"
                 step = l
@@ -291,8 +293,15 @@ enum SourcePlanner {
             if case .record(let fields)? = args[safe: 2] {
                 for (name, value) in fields {
                     if name == "EncryptConnection", case .literal(.logical(let b)) = value { r.encrypt = b }
-                    if name == "TrustServerCertificate", case .literal(.logical(let b)) = value { r.trustServerCertificate = b }
                 }
+            }
+            return r
+        case "Sql.Database":
+            guard let server = text(args.first), let database = text(args[safe: 1]) else { return nil }
+            var r = make(.sqlServer, server)
+            r.database = database
+            if case .record(let fields)? = args[safe: 2] {
+                for (name, value) in fields where name == "Query" { r.nativeQuery = text(value) ?? "" }
             }
             return r
         case "OData.Feed": return text(args.first).map { make(.odata, $0) }
@@ -342,6 +351,9 @@ enum SourcePlanner {
         case .csv, .json, .xml, .excel, .sqlite:
             return ((location as NSString).lastPathComponent as NSString).deletingPathExtension
         case .folder: return (location as NSString).lastPathComponent
+        case .sqlServer:
+            let database = r.database.trimmingCharacters(in: .whitespacesAndNewlines)
+            return database.isEmpty ? "Query" : database
         case .web, .odata:
             let parts = URLComponents(string: location)
             let last = ((parts?.path ?? "") as NSString).lastPathComponent
@@ -363,6 +375,7 @@ enum SourcePlanner {
         case .csv, .excel, .json, .xml: return QueryDataSource(kind: "File", location: location)
         case .folder: return QueryDataSource(kind: "Folder", location: location)
         case .sqlite: return QueryDataSource(kind: "SQLite", location: location)
+        case .sqlServer: return QueryDataSource(kind: "SQL", location: SQLServerConnection.location(server: location, database: r.database))
         case .web, .odata:
             guard let parts = URLComponents(string: location), let scheme = parts.scheme?.lowercased(), let host = parts.host else { return nil }
             return QueryDataSource(kind: r.kind == .web ? "Web" : "OData", location: "\(scheme)://\(host)")
@@ -378,6 +391,9 @@ enum SourcePlanner {
         switch r.kind {
         case .blank: return nil
         case .python, .r: return location.isEmpty ? "Type the script to run." : nil
+        case .sqlServer:
+            return SQLServerConnection.validationMessage(server: location, database: r.database, signIn: SQLServerSignIn(method: .microsoftAccount),
+                                                         hasStoredCredential: true)
         case .web, .odata:
             guard !location.isEmpty else { return "Type the address." }
             guard let parts = URLComponents(string: location), let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),

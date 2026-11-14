@@ -6,6 +6,7 @@ import FacetQuery
 @MainActor
 enum FeatureRegistration {
     static func register() {
+        IdentityMigration.runAtLaunch()
         SettingsFeature.register()
         FieldPanesFeature.register()
         ReportPanesFeature.register()
@@ -22,5 +23,6 @@ enum FeatureRegistration {
         FileFormatsFeature.register()
         DataExporters.register()
         AgentBridgeFeature.register()
+        UpdatesFeature.register()
     }
 }
