@@ -172,6 +172,28 @@ final class ZipTests: XCTestCase {
         XCTAssertThrowsError(try ZipArchive(data: Data("not a zip at all, sorry".utf8))) { XCTAssertEqual($0 as? ZipError, .notAZip) }
     }
 
+    // MARK: Hostile size fields
+
+    /// Rewrites the uncompressed size the central directory records for entry `index` (the ZIP64 field when present).
+    private func declare(_ size: UInt64, forEntry index: Int, in bytes: inout Data) throws {
+        var from = bytes.startIndex
+        var record = 0
+        for _ in 0...index {
+            let r = try XCTUnwrap(bytes.range(of: Data([0x50, 0x4b, 0x01, 0x02]), in: from..<bytes.endIndex))
+            record = r.lowerBound
+            from = r.upperBound
+        }
+        let nameLength = Int(bytes[record + 28]) | Int(bytes[record + 29]) << 8
+        let extraLength = Int(bytes[record + 30]) | Int(bytes[record + 31]) << 8
+        if extraLength >= 12 {
+            let at = record + 46 + nameLength + 4
+            bytes.replaceSubrange(at..<(at + 8), with: withUnsafeBytes(of: size.littleEndian) { Data($0) })
+        } else {
+            let at = record + 24
+            bytes.replaceSubrange(at..<(at + 4), with: withUnsafeBytes(of: UInt32(truncatingIfNeeded: size).littleEndian) { Data($0) })
+        }
+    }
+
     func testTinyFilesWithAZip64LocatorAreRefusedWithoutCrashing() {
         // 42–55 bytes is too short to hold the ZIP64 record the locator points at.
         for count in 42...60 {
@@ -181,6 +203,67 @@ final class ZipTests: XCTestCase {
             XCTAssertThrowsError(try ZipArchive(data: bytes), "\(count) bytes")
             XCTAssertThrowsError(try PBIXPackage.read(data: bytes, name: "Tiny"), "\(count) bytes as a .pbix")
         }
+    }
+
+    func testDeclaredSizesThatWrapAroundAreRefused() throws {
+        let w = ZipWriter()
+        w.forceZip64 = true
+        try w.add(path: "a.txt", data: Data("ten bytes!".utf8), compression: .stored)
+        try w.add(path: "b.txt", data: Data("x".utf8), compression: .stored)
+        var bytes = try w.finish()
+        try declare(UInt64.max - 5, forEntry: 1, in: &bytes)
+        var open = ZipArchive.Limits()
+        open.maxEntrySize = .max
+        open.maxCompressionRatio = .max
+        // 10 + (2^64 - 6) wraps to 4 bytes in unchecked arithmetic.
+        XCTAssertThrowsError(try ZipArchive(data: bytes, limits: open)) {
+            guard case ZipError.tooLarge = $0 else { return XCTFail("\($0)") }
+        }
+    }
+
+    func testAnEntryOverTheEntryLimitIsRefusedWhenOpened() throws {
+        let bytes = try ZipWriter.archive([(path: "small.txt", data: Data("ok".utf8)), (path: "big.bin", data: randomData(5_000))], compression: .stored)
+        var tight = ZipArchive.Limits()
+        tight.maxEntrySize = 1_000
+        XCTAssertThrowsError(try ZipArchive(data: bytes, limits: tight)) {
+            XCTAssertEqual($0 as? ZipError, .tooLarge("“big.bin” expands to 5000 bytes"))
+        }
+        // `extractAll` never gets an archive like this, so it writes nothing.
+        tight.maxEntrySize = 5_000
+        XCTAssertNoThrow(try ZipArchive(data: bytes, limits: tight).extractAll(to: Fixtures.tempDir("entry-limit")))
+    }
+
+    func testAnImpossibleCompressionRatioIsRefusedWhenOpened() throws {
+        var bytes = try ZipWriter.archive([(path: "data.bin", data: randomData(50_000))], compression: .stored)
+        try declare(50_000 * 2_000, forEntry: 0, in: &bytes)
+        XCTAssertThrowsError(try ZipArchive(data: bytes)) {
+            guard case ZipError.tooLarge(let m) = $0, m.contains("claims to expand") else { return XCTFail("\($0)") }
+        }
+        // Real deflate output at its best ratio still opens.
+        let zeros = try ZipWriter.archive([(path: "zeros.bin", data: Data(repeating: 0, count: 5_000_000))])
+        let entry = try XCTUnwrap(ZipArchive(data: zeros).entries.first)
+        XCTAssertGreaterThan(entry.uncompressedSize / entry.compressedSize, 500)
+    }
+
+    func testAPbixWithALargeDataModelStillOpens() throws {
+        // The DataModel entry is never read, so the per-entry limit applied at open must not refuse a big one
+        // (1 GB here; .pbix entries were capped at 512 MB before).
+        let layout = try XCTUnwrap(#"{"sections":[{"name":"s1","displayName":"Overview","visualContainers":[]}]}"#.data(using: .utf16LittleEndian))
+        var pbix = try ZipWriter.archive([("Version", Data("1.28".utf16.flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] })),
+                                          ("Report/Layout", layout), ("DataModel", randomData(1_000_000))])
+        try declare(1_000_000_000, forEntry: 2, in: &pbix)
+        let (doc, warnings) = try PBIXPackage.read(data: pbix, name: "Big")
+        XCTAssertEqual(doc.report.pages.map(\.name), ["Overview"])
+        XCTAssertTrue(warnings.contains { $0.message == PBIXPackage.dataModelLimitNote })
+    }
+
+    func testReadingStopsAtTheTotalLimit() throws {
+        let body = Data(String(repeating: "total ", count: 100_000).utf8)   // 600 KB
+        let bytes = try ZipWriter.archive([(path: "a.txt", data: body)])
+        let zip = try ZipArchive(data: bytes, limits: .init(maxTotalUncompressedSize: 1_000_000))
+        XCTAssertEqual(try zip.data(named: "a.txt"), body)
+        // A second pass would produce 1.2 MB from an archive allowed 1 MB in all.
+        XCTAssertThrowsError(try zip.data(named: "a.txt")) { XCTAssertEqual($0 as? ZipError, .tooLarge("extraction exceeded the safety limit")) }
     }
 
     func testExtractAll() throws {
