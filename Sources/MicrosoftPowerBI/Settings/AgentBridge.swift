@@ -31,7 +31,7 @@ final class AgentBridge: ObservableObject {
 
     func start() async {
         guard server == nil else { return }
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+        let version = AppIdentity.version
         let dispatcher = MCPDispatcher(serverName: "\(AppIdentity.name) modeling", serverVersion: version, tools: { AgentTools.all })
         let s = MCPServer(dispatcher: dispatcher)
         do {

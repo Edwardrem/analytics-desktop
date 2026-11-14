@@ -1,4 +1,5 @@
 import Foundation
+import FacetCore
 import AppKit
 import Combine
 
@@ -41,10 +42,10 @@ public enum MicrosoftSignInState: Equatable {
 ///
 /// Implements OAuth 2.0 authorization-code + PKCE with a loopback redirect, and the device-code flow,
 /// directly on `URLSession` (no MSAL). Refresh tokens and account records live in the Keychain
-/// (service `com.facet.microsoft`); access tokens are held in memory only. Nothing secret is logged.
+/// (service `AppIdentity.keychainService("microsoft")`); access tokens are held in memory only. Nothing secret is logged.
 @MainActor
 public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessTokenProviding {
-    public nonisolated static let keychainService = "com.facet.microsoft"
+    public nonisolated static let keychainService = AppIdentity.keychainService("microsoft")
     private static let accountsKey = "accounts"
     private static let activeAccountDefaultsKey = "com.facet.microsoft.activeAccountID"
     /// Tokens are refreshed this long before they expire.

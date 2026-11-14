@@ -18,6 +18,8 @@ final class CommandSweepSmokeTests: XCTestCase {
         "help.dax": "opens the DAX reference in the browser",
         "help.powerQuery": "opens the M reference in the browser",
         "help.about": "opens the system About panel",
+        "help.checkForUpdates": "asks GitHub for releases over the network (UpdateCheckTests runs the check against a stub)",
+        "help.whatsNew": "opens the What's New window and fetches release notes from GitHub (UpdateCheckTests covers the check)",
         "externalTools.openFolder": "opens a folder in Finder",
         "account.signIn": "opens Microsoft sign-in in the browser once a client ID is set",
         "account.signOut": "removes the signed-in Microsoft accounts from the Keychain",
