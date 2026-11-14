@@ -59,6 +59,7 @@ enum StatCharts {
             return SharedFormatCards.statAxes()
                 + [c.number("size", "Marker size", 3.5, ScatterChart.markerSizes),
                    c.number("transparency", "Transparency %", 20, 0...100)]
+                + SharedFormatCards.legend()
                 + SharedFormatCards.plotArea()
         default:
             return []
