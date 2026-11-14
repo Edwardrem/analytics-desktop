@@ -230,7 +230,7 @@ private struct SecuritySettings: View {
                     .font(Design.Typeface.caption).foregroundStyle(.secondary)
             }
             Section("Credentials") {
-                Text("Data source credentials and account tokens are stored in your macOS Keychain, never in documents.")
+                Text("Account tokens and the assistant key are stored in your macOS Keychain, never in documents. Data sources are read without credentials: Web and OData use anonymous access.")
                     .font(Design.Typeface.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
