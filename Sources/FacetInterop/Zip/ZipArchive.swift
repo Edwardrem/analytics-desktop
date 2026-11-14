@@ -65,10 +65,15 @@ public final class ZipArchive {
     private var producedTotal: UInt64 = 0
     private let lock = NSLock()
 
-    /// Opens an archive file (memory-mapped, so large archives are not loaded up front).
+    /// Opens an archive file (memory-mapped, so large archives are not loaded up front). Only a regular file is
+    /// opened (a link is followed to its target); a device, pipe or folder is refused rather than read without end.
     public convenience init(url: URL, limits: Limits = Limits()) throws {
+        let target = url.resolvingSymlinksInPath()
+        guard (try? target.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else {
+            throw ZipError.io("“\(url.lastPathComponent)” is not a file that can be opened.")
+        }
         let d: Data
-        do { d = try Data(contentsOf: url, options: .mappedIfSafe) }
+        do { d = try Data(contentsOf: target, options: .mappedIfSafe) }
         catch { throw ZipError.io("Couldn't open “\(url.lastPathComponent)”: \(error.localizedDescription)") }
         try self.init(data: d, limits: limits)
     }

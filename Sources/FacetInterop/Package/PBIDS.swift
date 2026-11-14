@@ -21,13 +21,13 @@ public enum PBIDS {
         public var isDirectQuery: Bool { mode.caseInsensitiveCompare("DirectQuery") == .orderedSame }
     }
 
+    /// Reads at most `maxFileSize` bytes, and only from a regular file: a link is followed to its target, and a
+    /// device, pipe or folder is refused rather than read without end.
     public static func read(from url: URL) throws -> [Connection] {
-        let size = ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.intValue ?? 0
+        let target = url.resolvingSymlinksInPath()
+        let size = (try? target.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
         guard size <= maxFileSize else { throw InteropError.invalidFormat("“\(url.lastPathComponent)” is too large to be a data source file.") }
-        let data: Data
-        do { data = try Data(contentsOf: url) }
-        catch { throw InteropError.io("Couldn't read “\(url.lastPathComponent)”: \(error.localizedDescription)") }
-        return try parse(data)
+        return try parse(try BoundedFile.read(target, limit: maxFileSize))
     }
 
     public static func parse(_ data: Data) throws -> [Connection] {
@@ -121,11 +121,12 @@ public enum FacetArchive {
         return l
     }()
 
-    /// True when `url` is a regular file that starts with a ZIP signature (rather than a package folder).
+    /// True when `url` is a regular file that starts with a ZIP signature (rather than a package folder). A pipe or
+    /// device is never opened, so this can't block.
     public static func isArchive(_ url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), !isDirectory.boolValue,
-              let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        let target = url.resolvingSymlinksInPath()
+        guard (try? target.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true,
+              let handle = try? FileHandle(forReadingFrom: target) else { return false }
         defer { try? handle.close() }
         let head = (try? handle.read(upToCount: 4)) ?? Data()
         return head.count == 4 && head[head.startIndex] == 0x50 && head[head.startIndex + 1] == 0x4B

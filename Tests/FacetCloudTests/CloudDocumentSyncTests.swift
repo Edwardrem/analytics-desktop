@@ -42,6 +42,29 @@ final class CloudDocumentSyncTests: XCTestCase {
 
     private static let sales = #"{"id":"i1","name":"Sales.facet","size":5,"file":{},"eTag":"\"e1\"","webUrl":"https://contoso-my.sharepoint.com/Sales.facet","parentReference":{"driveId":"d1","id":"p1","path":"/drive/root:/Reports/2026"}}"#
 
+    func testOnlyRegularFilesAreUploaded() async throws {
+        stub { _, _, _ in .json(#"{"id":"x","name":"x"}"#) }
+        let pipe = work.appendingPathComponent("pipe.facet")
+        XCTAssertEqual(mkfifo(pipe.path, 0o600), 0)
+        let device = work.appendingPathComponent("zero.facet")
+        try FileManager.default.createSymbolicLink(atPath: device.path, withDestinationPath: "/dev/zero")
+        let graph = GraphClient(tokenProvider: StubTokenProvider(), sessionConfiguration: SelfCheckURLProtocol.configuration())
+        let folder: URL = work
+        for url in [pipe, device, folder] {
+            do { _ = try await graph.upload(fileAt: url, named: "x.facet"); XCTFail("uploaded \(url.lastPathComponent)") }
+            catch let e as CloudAPIError { XCTAssertTrue(e.message.contains("not a file that can be uploaded"), e.message) }
+            do { _ = try await graph.replaceContent(of: .item(driveID: "d1", itemID: "i1"), withFileAt: url); XCTFail("replaced with \(url.lastPathComponent)") }
+            catch let e as CloudAPIError { XCTAssertTrue(e.message.contains("not a file that can be uploaded"), e.message) }
+        }
+        XCTAssertTrue(seen.value.isEmpty, "nothing was sent")
+        // A link to a real file is followed.
+        let real = try file("real.facet", "PK")
+        let link = work.appendingPathComponent("link.facet")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: real)
+        _ = try await graph.upload(fileAt: link, named: "link.facet")
+        XCTAssertEqual(seen.value.last?.body, Data("PK".utf8))
+    }
+
     // MARK: Open
 
     func testDownloadMakesAWorkingCopyAndRemembersTheVersion() async throws {
