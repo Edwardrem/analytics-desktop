@@ -46,6 +46,8 @@ final class GetDataSession: ObservableObject {
     @Published var promoteHeaders = false
     /// Set when the run finished and the dialog should close.
     @Published var isDone = false
+    /// A source refused its credentials (or needs some): the dialog asks for them, then tries again.
+    @Published var credentialPrompt: QueryDataSource?
     /// Opened from the Power Query Editor: Transform adds the queries there instead of opening the editor.
     var insideEditor = false
     private var headersDecided = false
@@ -112,16 +114,21 @@ final class GetDataSession: ObservableObject {
         combine = nil; scripts = [:]; headersDecided = false; promoteHeaders = false
     }
 
-    /// The database a native query would run against, as the engine names it.
-    private var nativeQueryLocation: String {
-        if request.kind == .sqlServer { return SQLServerConnection.location(server: request.location, database: request.database) }
-        return (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath
+    /// The source a hand-written query would run against, named as the engine names it (nil: no query typed).
+    var nativeQuerySource: QueryDataSource? {
+        guard !pendingNativeQuery.isEmpty else { return nil }
+        if request.kind == .sqlite {
+            return QueryDataSource(kind: "SQLite", location: (request.location.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).expandingTildeInPath)
+        }
+        if request.kind == .sqlServer {
+            return QueryDataSource(kind: "SQL", location: SQLServerConnection.location(server: request.location, database: request.database))
+        }
+        return CloudSourcePlanner.nativeQuerySource(request)
     }
-    private var nativeQueryKind: String { request.kind == .sqlServer ? "SQL" : "SQLite" }
     var pendingNativeQuery: String { request.nativeQuery.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     func approveNativeQuery() async {
-        security.approve(query: pendingNativeQuery, kind: nativeQueryKind, location: nativeQueryLocation)
+        if let s = nativeQuerySource { security.approve(query: pendingNativeQuery, kind: s.kind, location: s.location) }
         await connect()
     }
 
@@ -138,15 +145,15 @@ final class GetDataSession: ObservableObject {
                 self.error = "The sign-in couldn't be saved in the Keychain: \(error.localizedDescription)"; return
             }
         }
-        if [.sqlite, .sqlServer].contains(request.kind), !pendingNativeQuery.isEmpty, security.requiresNativeQueryApproval,
-           !security.isApproved(query: pendingNativeQuery, kind: nativeQueryKind, location: nativeQueryLocation) {
+        if let s = nativeQuerySource, security.requiresNativeQueryApproval,
+           !security.isApproved(query: pendingNativeQuery, kind: s.kind, location: s.location) {
             stage = .approval
             return
         }
         isWorking = true
         defer { isWorking = false }
         do {
-            if request.kind == .web {
+            if request.kind.readsWebContents {
                 let probe = engine(with: "\"\"", named: Self.scratchName)
                 let address = request.location.trimmingCharacters(in: .whitespacesAndNewlines)
                 if case .binary(let data) = try await probe.evaluateExpression("Web.Contents(\(MSyntax.text(address)))") {
@@ -160,9 +167,24 @@ final class GetDataSession: ObservableObject {
             items = try SourcePlanner.navigatorItems(from: value) ?? []
             stage = .navigator
             if let first = items.first { checked = [first.id]; await focus(first.id) } else { await focus(nil) }
-            if request.kind == .folder { planCombine() }
+            if request.kind.listsFiles, items.isEmpty { planCombine() }
         } catch {
             self.error = MError.wrap(error).description
+            askForCredentials(error)
+        }
+    }
+
+    /// Opens the credentials dialog when an error says a source needs credentials.
+    func askForCredentials(_ error: Error) {
+        if let s = MError.wrap(error).credentialSource { credentialPrompt = QueryDataSource(kind: s.kind, location: s.location) }
+    }
+
+    /// Credentials were saved: run the step that failed again.
+    func retryAfterCredentials() async {
+        credentialPrompt = nil
+        switch stage {
+        case .navigator: await focus(focused)
+        default: await connect()
         }
     }
 
@@ -177,7 +199,9 @@ final class GetDataSession: ObservableObject {
 
     private func planCombine() {
         guard let table = preview?.table, let ext = table.column("Extension") else { return }
-        combine = SourcePlanner.combinePlan(extensions: ext.values.map(\.asString)) { Self.sampleText(of: $0, in: table) }
+        // Cloud listings aren't sampled (that would download a file): their text files are read as comma-separated.
+        let local = request.kind == .folder
+        combine = SourcePlanner.combinePlan(extensions: ext.values.map(\.asString)) { local ? Self.sampleText(of: $0, in: table) : nil }
     }
 
     // MARK: Preview and scripts
@@ -198,8 +222,9 @@ final class GetDataSession: ObservableObject {
             script = MScript.script(from: steps)
             shown = try await sample(script)
         }
-        let textual = request.kind == .csv || (request.kind == .web && request.webContent == .csv)
-        let headerCandidate = textual || request.kind == .excel || (request.kind == .web && [.excel, .html].contains(request.webContent))
+        let web = request.kind.readsWebContents
+        let textual = request.kind == .csv || (web && request.webContent == .csv)
+        let headerCandidate = textual || request.kind == .excel || (web && [.excel, .html].contains(request.webContent))
         if headerCandidate, !combined {
             let looksLikeHeaders = SourcePlanner.looksLikeHeaderRow(shown.table)
             if textual, !headersDecided { promoteHeaders = detectTypes && looksLikeHeaders; headersDecided = true }
@@ -208,7 +233,7 @@ final class GetDataSession: ObservableObject {
                 shown = try await sample(script)
             }
         }
-        let typed = [.sqlite, .sqlServer, .python, .r].contains(request.kind)
+        let typed = [.sqlite, .sqlServer, .python, .r, .parquet, .kusto].contains(request.kind)
         if detectTypes, !typed, let types = Transform.detectTypes(in: shown.untypedTable) {
             script = MScript.appending(types, to: script)
             shown = try await sample(script)
@@ -233,6 +258,7 @@ final class GetDataSession: ObservableObject {
             guard mine == generation else { return }
             preview = nil
             previewError = MError.wrap(error).description
+            askForCredentials(error)
         }
     }
 
@@ -287,7 +313,7 @@ final class GetDataSession: ObservableObject {
                 for definition in definitions {
                     switch results[definition.name] {
                     case .success(var table)?: table.name = definition.name; tables.append(table)
-                    case .failure(let e)?: failures.append("\(definition.name): \(MError.wrap(e).description)")
+                    case .failure(let e)?: failures.append("\(definition.name): \(MError.wrap(e).description)"); askForCredentials(e)
                     case nil: failures.append("\(definition.name): no result.")
                     }
                 }
@@ -353,6 +379,7 @@ final class GetDataSession: ObservableObject {
             return true
         } catch {
             self.error = MError.wrap(error).description
+            askForCredentials(error)
             return false
         }
     }

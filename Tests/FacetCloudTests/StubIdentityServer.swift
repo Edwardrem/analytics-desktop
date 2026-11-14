@@ -29,6 +29,9 @@ final class StubIdentityServer: @unchecked Sendable {
     var devicePendingPolls = 2
     var deviceVerificationURI = "https://microsoft.com/devicelogin"
     var oversizedTokenResponse = false
+    /// Scopes the user has not consented to yet: refreshing for one fails with AADSTS65001 until an interactive
+    /// sign-in requests it.
+    var scopesNeedingConsent: Set<String> = []
 
     // What the server saw.
     private(set) var authorizeQueries: [[String: String]] = []
@@ -134,8 +137,12 @@ final class StubIdentityServer: @unchecked Sendable {
                     rejectedExchanges.append("pkce mismatch")
                     return oauthError("invalid_grant", "AADSTS501481: The Code_Verifier does not match the code_challenge.")
                 }
+                for scope in (form["scope"] ?? "").split(separator: " ") { scopesNeedingConsent.remove(String(scope)) }
                 return tokens(for: grant.user, nonce: grant.nonce, includeID: true)
             case "refresh_token":
+                if (form["scope"] ?? "").split(separator: " ").contains(where: { scopesNeedingConsent.contains(String($0)) }) {
+                    return .json(#"{"error":"invalid_grant","error_description":"AADSTS65001: The user or administrator has not consented to use the application.","error_codes":[65001],"suberror":"consent_required"}"#, status: 400)
+                }
                 guard !revokeAllRefreshTokens, let token = form["refresh_token"], let user = refreshTokens.removeValue(forKey: token) else {
                     return oauthError("invalid_grant", "AADSTS700082: The refresh token has expired due to inactivity.")
                 }

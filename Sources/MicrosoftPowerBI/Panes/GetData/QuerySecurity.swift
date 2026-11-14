@@ -11,7 +11,7 @@ struct RecentSource: Codable, Identifiable, Hashable {
 
     var displayName: String {
         switch kind {
-        case .web, .odata: return location
+        case .web, .odata, .oneDriveFile, .sharePointFolder, .sharePointList, .dataverse, .dynamics365, .azureBlobs, .azureDataLake, .lakehouse, .kusto, .semanticModel: return location
         case .python, .r: return location.split(whereSeparator: \.isNewline).first.map(String.init) ?? location
         default: return (location as NSString).lastPathComponent
         }
@@ -22,9 +22,11 @@ struct RecentSource: Codable, Identifiable, Hashable {
 /// native database queries, the script permission and the recent sources list. Backed by `UserDefaults`; the
 /// privacy, native query, scripting and import locale options are the ones Settings shows.
 final class QuerySecurity: @unchecked Sendable {
-    static let shared = QuerySecurity()
+    static let shared = QuerySecurity(credentials: AppCredentials.shared)
 
     private let defaults: UserDefaults
+    /// Stored data source credentials and Microsoft tokens for the engine (nil: every source is read anonymously).
+    let credentials: CredentialProvider?
     private let lock = NSLock()
     private enum Key {
         static let privacy = "query.privacyLevels"
@@ -40,7 +42,9 @@ final class QuerySecurity: @unchecked Sendable {
     }
     static let maxRecentSources = 20
 
-    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+    init(defaults: UserDefaults = .standard, credentials: CredentialProvider? = nil) {
+        self.defaults = defaults; self.credentials = credentials
+    }
 
     static func sourceKey(kind: String, location: String) -> String { "\(kind):\(location)" }
 
@@ -165,10 +169,10 @@ final class QuerySecurity: @unchecked Sendable {
 
     // MARK: Environment
 
-    /// The engine environment for this user: privacy levels with the firewall, native queries limited to the
-    /// approved ones, scripts only when allowed.
+    /// The engine environment for this user: stored credentials and Microsoft sign-in, privacy levels with the
+    /// firewall, native queries limited to the approved ones, scripts only when allowed.
     func environment(baseDirectory: URL?) -> QueryEnvironment {
-        var env = QueryEnvironment(baseDirectory: baseDirectory)
+        var env = QueryEnvironment(baseDirectory: baseDirectory, credentials: credentials)
         env.privacyLevels = privacyLevels
         env.enforcePrivacyFirewall = !ignorePrivacyLevels
         env.requireNativeQueryApproval = requiresNativeQueryApproval

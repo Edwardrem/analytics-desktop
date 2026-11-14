@@ -13,6 +13,7 @@ struct DataSourceSettingsSheet: View {
     @State private var revision = 0
     @State private var ignorePrivacy = QuerySecurity.shared.ignorePrivacyLevels
     @State private var allowScripts = QuerySecurity.shared.allowScripts
+    @State private var editing: QueryDataSource?
 
     enum Scope: String, CaseIterable { case file = "Data sources in current file", global = "Global permissions" }
 
@@ -21,7 +22,12 @@ struct DataSourceSettingsSheet: View {
         _ = revision
         switch scope {
         case .file: return store.doc.dataSources.map { QueryDataSource(kind: $0.kind, location: $0.location) }
-        case .global: return security.sourcesWithPermissions
+        case .global:
+            var all = security.sourcesWithPermissions
+            for s in AppCredentials.shared.storedSources where !all.contains(where: { $0.kind.lowercased() == s.kind.lowercased() && AppCredentials.normalized($0.location) == AppCredentials.normalized(s.location) }) {
+                all.append(s)
+            }
+            return all
         }
     }
 
@@ -38,7 +44,7 @@ struct DataSourceSettingsSheet: View {
             if sources.isEmpty {
                 EmptyState(systemImage: "lock.shield", title: scope == .file ? "This file has no data sources" : "No stored permissions",
                            message: scope == .file ? "Sources appear here after you load data with Get Data."
-                                                   : "Privacy levels and approved native queries you set are listed here.")
+                                                   : "Credentials, privacy levels and approved native queries you set are listed here.")
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) { ForEach(sources, id: \.self) { row($0); Hairline() } }
@@ -53,13 +59,14 @@ struct DataSourceSettingsSheet: View {
                 HStack {
                     Button("Clear All Permissions") {
                         security.clearAllPermissions()
+                        AppCredentials.shared.removeAll()
                         allowScripts = false
                         store.mutate("Clear Permissions", invalidates: .model) { d in
                             for i in d.dataSources.indices { d.dataSources[i].privacy = .none }
                         }
                         revision += 1
                     }
-                    .help("Forget every privacy level, approved native query and the script permission")
+                    .help("Forget every saved credential, privacy level, approved native query and the script permission")
                     Spacer()
                     Button("Close") { dismiss() }.keyboardShortcut(.defaultAction)
                 }
@@ -68,6 +75,9 @@ struct DataSourceSettingsSheet: View {
             .padding(Design.Space.m)
         }
         .frame(minWidth: 640, idealWidth: 700, minHeight: 440)
+        .sheet(item: $editing) { source in
+            CredentialsSheet(kind: source.kind, location: source.location, onSaved: { revision += 1 })
+        }
     }
 
     private func row(_ source: QueryDataSource) -> some View {
@@ -76,7 +86,8 @@ struct DataSourceSettingsSheet: View {
             Image(systemName: symbol(source.kind)).foregroundStyle(.secondary).frame(width: 20)
             VStack(alignment: .leading, spacing: 1) {
                 Text(source.location).lineLimit(1).truncationMode(.middle).help(source.location)
-                Text(approved == 0 ? "\(source.kind) · Anonymous" : "\(source.kind) · Anonymous · \(approved) approved native quer\(approved == 1 ? "y" : "ies")")
+                let method = ["File", "Folder", "SQLite"].contains(source.kind) ? "Local file" : AppCredentials.shared.methodTitle(kind: source.kind, location: source.location)
+                Text(approved == 0 ? "\(source.kind) · \(method)" : "\(source.kind) · \(method) · \(approved) approved native quer\(approved == 1 ? "y" : "ies")")
                     .font(Design.Typeface.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: Design.Space.s)
@@ -94,14 +105,18 @@ struct DataSourceSettingsSheet: View {
                 if scope == .file, ["File", "Folder", "SQLite"].contains(source.kind) {
                     Button("Change Source…") { changeSource(source) }
                 }
+                if !["File", "Folder", "SQLite"].contains(source.kind) {
+                    Button("Edit Permissions…") { editing = source }
+                }
                 Button("Clear Permissions") {
                     security.clearPermissions(kind: source.kind, location: source.location)
+                    AppCredentials.shared.remove(kind: source.kind, location: source.location)
                     mirrorPrivacy(.none, source)
                     revision += 1
                 }
             } label: { Image(systemName: "ellipsis.circle") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-            .help("Change the source or clear its permissions")
+            .help("Edit the credentials, change the source or clear its permissions")
         }
         .controlSize(.small)
         .padding(.horizontal, Design.Space.m).padding(.vertical, Design.Space.s)
@@ -113,6 +128,11 @@ struct DataSourceSettingsSheet: View {
         case "SQLite": return "cylinder"
         case "SQL": return "cylinder.split.1x2"
         case "Web", "OData": return "globe"
+        case "SharePoint": return "folder.badge.person.crop"
+        case "AzureBlobs", "AzureDataLakeStorage": return "shippingbox"
+        case "CommonDataService": return "circle.hexagongrid"
+        case "AzureDataExplorer": return "magnifyingglass"
+        case "AnalysisServices": return "chart.bar.doc.horizontal"
         default: return "doc"
         }
     }

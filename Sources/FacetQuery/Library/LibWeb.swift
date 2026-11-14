@@ -20,7 +20,16 @@ extension MLibrary {
             if case .record(let h)? = try options.get("Headers") {
                 for (n, v) in zip(h.names, try h.forcedValues()) { headers[n] = try MConvert.text(v, culture: "en-US") }
             }
-            switch ctx.credential(kind: "Web", location: text) ?? ctx.credential(kind: "Web", location: location) ?? .anonymous {
+            let stored = ctx.credential(kind: "Web", location: text) ?? ctx.credential(kind: "Web", location: location)
+            // A OneDrive for work or school or SharePoint Online file: read through Microsoft Graph with the signed-in
+            // organizational account unless the source was given other credentials.
+            if scheme == "https", SharePointSource.isSharePointHost(host), options.names.isEmpty, stored == nil || { if case .oauth? = stored { return true }; return false }() {
+                guard let url = parts.url else { throw MError.dataSource("'\(text)' isn't a valid web address.") }
+                let data = try SharePointSource.download(ctx, url: url)
+                try ctx.checkSize(data.count, of: "The file at '\(location)'")
+                return .binary(data)
+            }
+            switch stored ?? .anonymous {
             case .anonymous, .accountKey, .sasToken: break
             case .basic(let user, let password): headers["Authorization"] = "Basic " + Data("\(user):\(password)".utf8).base64EncodedString()
             case .bearer(let token): headers["Authorization"] = "Bearer " + token
@@ -46,6 +55,10 @@ extension MLibrary {
             done.wait()
             if let e = result.2 { throw MError.dataSource("Web.Contents couldn't reach '\(location)': \(e.localizedDescription)") }
             let status = (result.1 as? HTTPURLResponse)?.statusCode ?? 0, data = result.0 ?? Data()
+            if [401, 403].contains(status), !manual.contains(status) {
+                throw MError.credentials(kind: "Web", location: location,
+                    "Access to '\(location)' was refused (\(status)): the credentials are missing or wrong. Edit them in Data source settings.")
+            }
             if status >= 400, !manual.contains(status) {
                 throw MError.dataSource("Web.Contents failed to get contents from '\(url.absoluteString)' (\(status)): \(HTTPURLResponse.localizedString(forStatusCode: status)).")
             }
@@ -67,10 +80,9 @@ extension MLibrary {
         }
         let unavailable: [(String, String)] = [
             ("Web.BrowserContents", "browser-rendered page"),
-            ("SharePoint.Files", "SharePoint folder"), ("SharePoint.Contents", "SharePoint folder"), ("SharePoint.Tables", "SharePoint list"),
-            ("AzureStorage.Blobs", "Azure Blob Storage"), ("AzureStorage.DataLake", "Azure Data Lake Storage"),
+            ("SharePoint.Contents", "SharePoint folder navigation"),
             ("PowerBI.Dataflows", "Power BI dataflows"), ("PowerPlatform.Dataflows", "Power Platform dataflows"),
-            ("CommonDataService.Database", "Dataverse"), ("Salesforce.Data", "Salesforce"), ("Exchange.Contents", "Exchange"),
+            ("Salesforce.Data", "Salesforce"), ("Exchange.Contents", "Exchange"),
             ("ActiveDirectory.Domains", "Active Directory"), ("Hdfs.Files", "Hadoop (HDFS)"),
         ]
         for (name, product) in unavailable {

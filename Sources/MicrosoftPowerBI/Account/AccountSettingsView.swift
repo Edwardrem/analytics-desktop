@@ -18,7 +18,7 @@ struct MicrosoftAccountSettingsView: View {
             }
             Section("Accounts") {
                 if runtime.accounts.isEmpty {
-                    Text(runtime.isConfigured ? "No Microsoft account is signed in." : "Save the app registration above, then sign in.")
+                    Text(runtime.isConfigured ? "No Microsoft account is signed in." : "Sign-in needs an application ID; see App registration above.")
                         .font(Design.Typeface.caption).foregroundStyle(.secondary)
                 } else {
                     ForEach(runtime.accounts) { account in
@@ -31,6 +31,7 @@ struct MicrosoftAccountSettingsView: View {
                 HStack {
                     Button(runtime.accounts.isEmpty ? "Sign In…" : "Add Account…") { signingIn = SignInRequest() }
                         .disabled(!runtime.isConfigured)
+                        .help(runtime.isConfigured ? "Sign in with a work or school Microsoft account" : MicrosoftAuthConfiguration.missingRegistration)
                     if runtime.accounts.count > 1 {
                         Button("Sign Out of All", role: .destructive) { runtime.manager.removeAll() }
                     }

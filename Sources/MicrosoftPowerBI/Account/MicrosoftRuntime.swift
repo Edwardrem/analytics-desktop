@@ -19,8 +19,8 @@ struct CloudServices {
     }
 }
 
-/// The app's Microsoft account stack: one account manager (sign-in, tokens in the Keychain) built on the user's own
-/// Entra app registration, and the Graph / Power BI / Fabric clients for the configured cloud.
+/// The app's Microsoft account stack: one account manager (sign-in, tokens in the Keychain) built on the app's default
+/// multi-tenant registration (or the user's override), and the Graph / Power BI / Fabric clients for the configured cloud.
 @MainActor
 final class MicrosoftRuntime: ObservableObject {
     static let shared = MicrosoftRuntime()
@@ -48,18 +48,24 @@ final class MicrosoftRuntime: ObservableObject {
     }
 
     var isConfigured: Bool { manager.configuration.isConfigured }
+    /// The app ships a default registration (Info.plist `AnalyticsEntraClientID`).
+    var hasDefaultRegistration: Bool { !manager.configuration.defaultClientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var accounts: [MicrosoftAccount] { manager.accounts }
     var activeAccount: MicrosoftAccount? { manager.activeAccount }
     var isSignedIn: Bool { activeAccount != nil }
     /// Power BI, Fabric and sensitivity labels need a work or school account.
     var hasWorkAccount: Bool { activeAccount.map { !$0.isPersonal } ?? false }
 
-    /// Validates and stores the app registration. Signing in again is needed only when the client or tenant changed.
+    /// Validates and stores the registration override. An empty client ID goes back to the app's default registration
+    /// (when it has one). Signing in again is needed only when the client or tenant changed.
     func updateRegistration(clientID: String, tenant: String, cloud: MicrosoftCloud) throws {
-        let problems = EntraRegistration.problems(clientID: clientID, tenant: tenant)
+        let problems = EntraRegistration.problems(clientID: clientID, tenant: tenant, allowDefault: hasDefaultRegistration)
         guard problems.isEmpty else { throw EntraRegistration.Invalid(problems: problems) }
-        manager.configuration = MicrosoftAuthConfiguration(clientID: clientID.trimmingCharacters(in: .whitespacesAndNewlines),
-                                                           tenant: EntraRegistration.normalizedTenant(tenant), cloud: cloud)
+        var c = MicrosoftAuthConfiguration(clientID: clientID.trimmingCharacters(in: .whitespacesAndNewlines),
+                                           tenant: EntraRegistration.normalizedTenant(tenant), cloud: cloud,
+                                           defaultClientID: manager.configuration.defaultClientID)
+        if c.tenant == MicrosoftAuthConfiguration.defaultTenant { c.tenant = "" }
+        manager.configuration = c
     }
 }
 
@@ -94,16 +100,20 @@ enum EntraRegistration {
 
     static func normalizedTenant(_ s: String) -> String {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return t.isEmpty ? "common" : t
+        return t.isEmpty ? MicrosoftAuthConfiguration.defaultTenant : t
     }
 
-    static func problems(clientID: String, tenant: String) -> [String] {
+    /// `allowDefault`: an empty client ID is fine because the app has its own registration.
+    static func problems(clientID: String, tenant: String, allowDefault: Bool = false) -> [String] {
         var out: [String] = []
-        if !isClientID(clientID) {
+        let empty = clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if empty && !allowDefault {
+            out.append(MicrosoftAuthConfiguration.missingRegistration)
+        } else if !empty && !isClientID(clientID) {
             out.append("The application (client) ID is a GUID such as 00000000-0000-0000-0000-000000000000; copy it from the app's Overview page.")
         }
         if !isTenant(tenant) {
-            out.append("The tenant is “common”, “organizations”, “consumers”, a tenant ID or a domain such as contoso.onmicrosoft.com.")
+            out.append("The tenant is “organizations” (any work or school account), “common”, “consumers”, a tenant ID or a domain such as contoso.onmicrosoft.com.")
         }
         return out
     }
@@ -126,9 +136,9 @@ enum AccountMessages {
     static let guidance: [(code: String, advice: String)] = [
         ("AADSTS50011", "Add the redirect URI \(EntraRegistration.redirectURI) to the app registration under Authentication ▸ Mobile and desktop applications."),
         ("AADSTS7000218", "Turn on “Allow public client flows” under Authentication ▸ Advanced settings in the app registration."),
-        ("AADSTS700016", "The application ID wasn't found in that tenant. Check the client ID, and set the tenant to “common” for an app that accepts any account."),
+        ("AADSTS700016", "The application ID wasn't found in that tenant. Check the client ID, and leave the tenant empty (“organizations”) for an app that accepts any work or school account."),
         ("AADSTS90002", "That tenant doesn't exist. Check the tenant in Settings ▸ Microsoft account."),
-        ("AADSTS50020", "This account isn't in the app's tenant. Use the tenant “common”, or sign in with an account from that tenant."),
+        ("AADSTS50020", "This account isn't in the app's tenant. Leave the tenant empty, or sign in with an account from that tenant."),
         ("AADSTS65001", "The app hasn't been granted the permissions it asks for. Sign in again and accept, or ask an administrator to grant consent."),
         ("AADSTS70011", "The app registration is missing a permission. Add the Microsoft Graph and Power BI delegated permissions listed in the registration steps."),
         ("AADSTS50076", "Your organization requires multi-factor authentication; finish it in the browser."),

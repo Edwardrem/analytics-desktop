@@ -13,6 +13,19 @@ public struct MError: Error, LocalizedError, CustomStringConvertible {
     public static func dataSource(_ message: String) -> MError { MError(message, reason: "DataSource.Error") }
     public static func dataFormat(_ message: String) -> MError { MError(message, reason: "DataFormat.Error") }
     public static func firewall(_ message: String) -> MError { MError(message, reason: "Formula.Firewall") }
+    /// A source refused the credentials it was given (or needs some): `DataSource.Error` whose detail names the source,
+    /// so the host app can ask for credentials and try again.
+    public static func credentials(kind: String, location: String, _ message: String) -> MError {
+        MError(message, reason: "DataSource.Error", detail: .record(MRecord([
+            ("DataSourceKind", .text(kind)), ("DataSourcePath", .text(location)), ("CredentialsRequired", .logical(true)),
+        ])))
+    }
+    /// The source of a `credentials(kind:location:_:)` error.
+    public var credentialSource: (kind: String, location: String)? {
+        guard reason == "DataSource.Error", case .record(let r)? = detail, case .logical(true)? = try? r.get("CredentialsRequired"),
+              let kind = (try? r.text("DataSourceKind")) ?? nil, let location = (try? r.text("DataSourcePath")) ?? nil else { return nil }
+        return (kind, location)
+    }
     public static func typeMismatch(expected: String, got: MValue) -> MError {
         MError("We cannot convert a value of type \(got.typeName) to type \(expected).", detail: got.isStructured ? nil : got)
     }

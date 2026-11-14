@@ -16,7 +16,9 @@ final class GetDataCatalogTests: XCTestCase {
     func testOnlyEngineBackedConnectorsCanBeStarted() {
         let available = Set(DataConnector.all.filter(\.isAvailable).map(\.id))
         XCTAssertEqual(available, ["excel", "csv", "xml", "json", "folder", "sqlite", "sqlserver", "azure-sql", "azure-synapse", "fabric-warehouses",
-                                   "web", "odata", "python", "r", "blank"])
+                                   "web", "odata", "python", "r", "blank",
+                                   "parquet", "sharepoint-folder", "onedrive-file", "sharepoint-list", "fabric-models", "fabric-lakehouses",
+                                   "dataverse", "dynamics365", "azure-blob", "azure-adls2", "azure-adx"])
         // Every kind the session implements is offered exactly once, except the SQL Server family: SQL Server, Azure SQL,
         // Synapse SQL and Fabric warehouses all speak TDS and share one form.
         for kind in SourceKind.allCases {
@@ -32,7 +34,9 @@ final class GetDataCatalogTests: XCTestCase {
         }
         XCTAssertEqual(DataConnector.connector("oracle")?.unavailableReason, "Needs a database driver, which this app does not include.")
         XCTAssertEqual(DataConnector.connector("postgresql")?.isAvailable, false)
-        XCTAssertEqual(DataConnector.connector("parquet")?.unavailableReason, "Needs a Parquet reader, which this app does not include.")
+        XCTAssertNil(DataConnector.connector("parquet")?.unavailableReason)
+        XCTAssertEqual(DataConnector.connector("fabric-warehouses")?.isAvailable, true)
+        XCTAssertEqual(DataConnector.connector("sharepoint-onprem")?.isAvailable, false)
         XCTAssertNil(DataConnector.connector("csv")?.unavailableReason)
     }
 

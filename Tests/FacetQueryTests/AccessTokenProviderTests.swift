@@ -23,11 +23,11 @@ final class AccessTokenProviderTests: CloudStubTestCase {
     }
 
     func testWebContentsSendsAnOrganizationalTokenForItsOwnHost() throws {
-        creds.stored["Web|https://contoso.sharepoint.com"] = .oauth(resource: "https://contoso.sharepoint.com/.default")
+        creds.stored["Web|https://api.contoso.example"] = .oauth(resource: "https://api.contoso.example/.default")
         CloudStub.handler = { _ in .json("{\"ok\":true}") }
-        _ = try eval("Web.Contents(\"https://contoso.sharepoint.com/_api/web\")")
-        XCTAssertEqual(creds.calls.map(\.host), ["contoso.sharepoint.com"])
-        XCTAssertEqual(CloudStub.requests.first.flatMap(bearer), "Bearer FAKE-TOKEN-for-https://contoso.sharepoint.com/.default")
+        _ = try eval("Web.Contents(\"https://api.contoso.example/v1/items\")")
+        XCTAssertEqual(creds.calls.map(\.host), ["api.contoso.example"])
+        XCTAssertEqual(CloudStub.requests.first.flatMap(bearer), "Bearer FAKE-TOKEN-for-https://api.contoso.example/.default")
     }
 
     func testWebContentsNeverSendsAnOrganizationalTokenOverHTTP() {

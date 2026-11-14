@@ -83,8 +83,8 @@ final class DataSourceFileTests: XCTestCase {
         XCTAssertTrue(ssas.contains("Analysis Services srv / Model"), ssas)
         XCTAssertTrue(ssas.contains("SQL Server Analysis Services database"), ssas)
         XCTAssertTrue(ssas.contains(DataConnector.Missing.driver), ssas)
-        guard case .unavailable(let parquet) = try plan(file("/data/t.parquet")) else { return XCTFail("parquet") }
-        XCTAssertTrue(parquet.contains(DataConnector.Missing.parquet), parquet)
+        guard case .navigator(let parquet, _, _) = try plan(file("/data/t.parquet")) else { return XCTFail("parquet opens Get Data") }
+        XCTAssertEqual(parquet.id, "parquet")
         guard case .unavailable(let unknown) = try plan(file("/data/archive.bin")) else { return XCTFail("unknown file type") }
         XCTAssertTrue(unknown.contains("can't read"), unknown)
     }

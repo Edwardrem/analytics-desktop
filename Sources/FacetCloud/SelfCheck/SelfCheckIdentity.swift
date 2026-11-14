@@ -19,7 +19,7 @@ extension FacetCloudSelfCheck {
         try secrets.setCodable([work, personal], account: "accounts")
         try secrets.setString("RT-1", account: "rt." + work.id)
         try secrets.setString("RT-P", account: "rt." + personal.id)
-        let manager = MicrosoftAccountManager(configuration: MicrosoftAuthConfiguration(clientID: "client-1"), secrets: secrets, defaults: defaults,
+        let manager = MicrosoftAccountManager(configuration: MicrosoftAuthConfiguration(clientID: "client-1", tenant: "common"), secrets: secrets, defaults: defaults,
                                               sessionConfiguration: SelfCheckURLProtocol.configuration(), openURL: { _ in false })
         c.equal(manager.accounts.map(\.id), [work.id, personal.id], "accounts restored from secret store")
         c.equal(manager.activeAccount?.id, work.id, "first account is active by default")

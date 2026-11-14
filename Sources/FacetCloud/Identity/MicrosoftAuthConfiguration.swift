@@ -63,22 +63,49 @@ public enum MicrosoftCloud: String, Codable, CaseIterable, Sendable {
 }
 
 /// Settings for signing in with the Microsoft identity platform. Persisted in `UserDefaults` (no secrets).
+///
+/// The app ships with a default multi-tenant app registration whose client ID is read from the bundle's Info.plist
+/// (`AnalyticsEntraClientID`); it is never written in code. `clientID` and `tenant` hold the user's optional override
+/// from Settings ▸ Microsoft account; empty means "use the app's default".
 public struct MicrosoftAuthConfiguration: Codable, Equatable, Sendable {
-    /// Application (client) ID of the user's own Entra app registration. Facet ships without one.
+    /// Info.plist key holding the default Entra application (client) ID.
+    public static let bundleClientIDKey = "AnalyticsEntraClientID"
+    /// The authority used when no tenant is set: any work or school account.
+    public static let defaultTenant = "organizations"
+
+    /// Application (client) ID override. Empty uses `defaultClientID`.
     public var clientID: String
-    /// `common` (work/school + personal), `organizations`, `consumers`, or a tenant ID / verified domain.
+    /// Tenant override: `organizations`, `common`, `consumers`, or a tenant ID / verified domain. Empty uses `defaultTenant`.
     public var tenant: String
     public var cloud: MicrosoftCloud
+    /// The app's own client ID from Info.plist (not persisted with the override).
+    public var defaultClientID: String = ""
 
-    public init(clientID: String = "", tenant: String = "common", cloud: MicrosoftCloud = .public) {
-        self.clientID = clientID; self.tenant = tenant; self.cloud = cloud
+    private enum CodingKeys: String, CodingKey { case clientID, tenant, cloud }
+
+    public init(clientID: String = "", tenant: String = "", cloud: MicrosoftCloud = .public, defaultClientID: String = "") {
+        self.clientID = clientID; self.tenant = tenant; self.cloud = cloud; self.defaultClientID = defaultClientID
     }
 
-    public var isConfigured: Bool { !clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    /// The client ID sign-in uses: the override when set, else the app's default.
+    public var effectiveClientID: String {
+        let own = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+        return own.isEmpty ? defaultClientID.trimmingCharacters(in: .whitespacesAndNewlines) : own
+    }
+    public var isConfigured: Bool { !effectiveClientID.isEmpty }
+    /// True when sign-in runs on the app's own registration (no override).
+    public var usesDefaultRegistration: Bool {
+        clientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !defaultClientID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var effectiveTenant: String {
         let t = tenant.trimmingCharacters(in: .whitespacesAndNewlines)
-        return t.isEmpty ? "common" : t
+        return t.isEmpty ? Self.defaultTenant : t
+    }
+
+    /// The default client ID shipped in a bundle's Info.plist, or "" when the key is missing or empty.
+    public static func bundledClientID(_ bundle: Bundle = .main) -> String {
+        ((bundle.object(forInfoDictionaryKey: bundleClientIDKey) as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/<endpoint>`
@@ -91,29 +118,37 @@ public struct MicrosoftAuthConfiguration: Codable, Equatable, Sendable {
 
     public static let defaultsKey = "com.facet.microsoft.authConfiguration"
 
-    public static func load(from defaults: UserDefaults = .standard) -> MicrosoftAuthConfiguration {
-        guard let data = defaults.data(forKey: defaultsKey),
-              let c = try? JSONDecoder().decode(MicrosoftAuthConfiguration.self, from: data) else {
-            return MicrosoftAuthConfiguration()
-        }
+    /// The saved override, with the default client ID from `bundle` (pass nil for none).
+    public static func load(from defaults: UserDefaults = .standard, bundle: Bundle? = .main) -> MicrosoftAuthConfiguration {
+        var c = defaults.data(forKey: defaultsKey).flatMap { try? JSONDecoder().decode(MicrosoftAuthConfiguration.self, from: $0) }
+            ?? MicrosoftAuthConfiguration()
+        c.defaultClientID = bundle.map { bundledClientID($0) } ?? ""
         return c
     }
     public func save(to defaults: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: Self.defaultsKey) }
     }
 
-    /// Step-by-step instructions for creating the Entra app registration Facet needs.
+    /// What is missing when no client ID is available anywhere.
+    public static let missingRegistration = """
+    This copy of \(AppIdentity.name) has no Microsoft application ID: the \(bundleClientIDKey) key in its Info.plist is empty, \
+    and no application ID is entered in Settings ▸ Microsoft account. Ask whoever gave you the app for a build with one, \
+    or enter your organization's own.
+    """
+
+    /// Step-by-step instructions for creating an Entra app registration of your own.
     public static let registrationInstructions = """
-    \(AppIdentity.name) does not ship with a Microsoft application ID. Register your own (free) app once, then paste its \
-    Application (client) ID into \(AppIdentity.name)'s Microsoft account settings:
+    To use your organization's own app registration, register a (free) app once and paste its Application (client) ID \
+    into Settings ▸ Microsoft account:
     1. Open the Microsoft Entra admin center (https://entra.microsoft.com) → Identity → Applications → App registrations → New registration.
-    2. Name it (for example "\(AppIdentity.name)"), and under Supported account types choose "Accounts in any organizational directory and personal Microsoft accounts".
+    2. Name it (for example "\(AppIdentity.name)"), and under Supported account types choose "Accounts in any organizational directory" (multi-tenant).
     3. Under Redirect URI choose the platform "Mobile and desktop applications" (public client/native) and enter http://localhost — then Register.
     4. In Authentication → Advanced settings, turn on "Allow public client flows" (needed for device-code sign-in).
     5. In API permissions → Add a permission, add these delegated permissions:
        • Microsoft Graph: User.Read, Files.ReadWrite.All, Sites.Read.All, offline_access (plus openid and profile)
        • Power BI Service: Workspace.Read.All, Report.Read.All, Dataset.ReadWrite.All, Dashboard.Read.All, Dataflow.Read.All, Capacity.Read.All (add Workspace.ReadWrite.All / Content.Create to publish)
-       • Optional — Microsoft Fabric (Power BI Service → Fabric scopes): Workspace.Read.All, Item.ReadWrite.All, OneLake.Read.All; Azure Storage: user_impersonation (OneLake files); Microsoft Graph InformationProtectionPolicy.Read (sensitivity labels)
+       • Data sources (each: user_impersonation): Azure SQL Database, Azure Storage (Blob, ADLS Gen2, OneLake), Dynamics CRM (Dataverse), Azure Data Explorer, Azure OSSRDBMS Database (PostgreSQL / MySQL); SharePoint: AllSites.Read
+       • Optional — Microsoft Fabric (Power BI Service → Fabric scopes): Workspace.Read.All, Item.ReadWrite.All, OneLake.Read.All; Microsoft Graph InformationProtectionPolicy.Read (sensitivity labels)
        Some organisations require an administrator to grant consent.
     6. Copy the Application (client) ID from the Overview page into \(AppIdentity.name).
     """
@@ -226,11 +261,13 @@ public enum MicrosoftAuthError: LocalizedError, Equatable {
     case browserFailed
     case signInAlreadyInProgress
     case network(String)
+    /// A token for `resource` was asked for a host that is not on the allow-list for it. Nothing was sent.
+    case hostNotAllowed(host: String, resource: String)
 
     public var errorDescription: String? {
         switch self {
         case .clientIDMissing:
-            return "Microsoft sign-in is not set up yet. " + MicrosoftAuthConfiguration.registrationInstructions
+            return "Microsoft sign-in is not set up. " + MicrosoftAuthConfiguration.missingRegistration + "\n" + MicrosoftAuthConfiguration.registrationInstructions
         case .noActiveAccount:
             return "No Microsoft account is signed in. Add an account first."
         case .accountNotFound:
@@ -270,6 +307,8 @@ public enum MicrosoftAuthError: LocalizedError, Equatable {
             return "A sign-in is already in progress. Finish or cancel it first."
         case .network(let why):
             return "Could not reach Microsoft sign-in: \(why)"
+        case .hostNotAllowed(let host, let resource):
+            return "\(AppIdentity.name) won't send your Microsoft sign-in for \(resource) to “\(host)”, because that isn't one of the Microsoft service addresses it is allowed to reach. Check the server or address."
         }
     }
 }
