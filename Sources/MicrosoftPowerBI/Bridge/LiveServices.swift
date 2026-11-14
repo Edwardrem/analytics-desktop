@@ -84,9 +84,12 @@ final class LiveCalculation: CalculationService {
         let drill = Self.drillPlan(spec)
         var groups: [(well: Well, field: FieldRef)] = []
         var values: [(well: Well, field: FieldRef)] = []
-        for well in spec.type.wells where well != .tooltips {
+        for well in spec.type.wells {
             for f in well == .category ? drill.category : spec.fields(well) {
-                if f.isAggregate {
+                if well == .tooltips {
+                    // Tooltip fields never group the visual: each is a value of the data point it describes.
+                    values.append((well, Self.tooltipValue(f, model: model)))
+                } else if f.isAggregate {
                     values.append((well, f))
                 } else if well.isGrouping {
                     groups.append((well, f))
@@ -194,6 +197,18 @@ final class LiveCalculation: CalculationService {
             out.daxQuery = dax
             return out
         }
+    }
+
+    /// A Tooltips-well field as the value it adds to each data point: measures and summarized
+    /// columns as they are; a column left unsummarized takes Power BI's default for the well:
+    /// numbers its default summarization, dates the earliest, anything else the first value.
+    static func tooltipValue(_ f: FieldRef, model: SemanticModel) -> FieldRef {
+        guard !f.isAggregate, f.kind == .column else { return f }
+        let column = model.table(f.table)?.column(f.name)
+        if column?.summarizeBy ?? .none != .none || column?.dataType.isNumeric == true { return f }
+        var out = f
+        out.aggregation = column?.dataType.isTemporal == true ? .min : .first
+        return out
     }
 
     // MARK: Field parameters
@@ -463,7 +478,10 @@ final class LiveAnalytics: AnalyticsService {
                                           sensitivity: item.value <= 0 ? 70 : item.value)
                 }
             case .clusters:
-                let numeric = data.table.columns.filter { $0.type.isNumeric }.map(\.name).prefix(4)
+                // Tooltip values describe the points; they are not dimensions to cluster on.
+                let tooltips = Set(data.indices(.tooltips))
+                let numeric = data.table.columns.indices.filter { !tooltips.contains($0) && data.table.columns[$0].type.isNumeric }
+                    .map { data.table.columns[$0].name }.prefix(4)
                 guard !numeric.isEmpty else { break }
                 let k = Int(item.secondaryValue)
                 if let (assignments, _) = try? Clustering.cluster(table: data.table, columns: Array(numeric),
