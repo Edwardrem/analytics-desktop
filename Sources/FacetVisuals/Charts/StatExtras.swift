@@ -86,7 +86,6 @@ struct HeatmapView: View {
         let availableH = max(10, size.height - L.origin.y - 4)
         L.cellWidth = availableW / CGFloat(colOrder.count)
         L.cellHeight = availableH / CGFloat(rowOrder.count)
-        let radius = CGFloat(style.format.double("heatmap", "radius", 2))
         let values = raw.map(\.v)
         L.scale = StatColorScale(style: style, card: "heatmap", values: values)
         L.caption = valueCaption
@@ -208,7 +207,6 @@ struct HeatmapView: View {
         for (d, v) in raw { byDay[calendar.startOfDay(for: d)] = v }
 
         // One year per row of blocks; months flow three across, 7 weekday rows tall.
-        let fs = env.labelSize
         let years = Array(Set(raw.map { calendar.component(.year, from: $0.date) })).sorted()
         let perRow = max(1, min(years.count, Int(size.width / 200)))
         let blockW = size.width / CGFloat(perRow)
@@ -262,7 +260,6 @@ struct HeatmapView: View {
     }
 
     private func dayHits(_ L: CalendarLayout) -> [ChartHit] {
-        let calendar = Calendar.current
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         return L.days.enumerated().map { i, d -> ChartHit in
