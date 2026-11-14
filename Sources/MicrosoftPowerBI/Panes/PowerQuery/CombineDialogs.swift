@@ -195,6 +195,8 @@ struct AppendQueriesDialog: View {
     @Environment(\.dismiss) private var dismiss
 
     private var tables: [String] { session.queries.filter { $0.kind == .table }.map(\.name) }
+    /// Tables that can be appended: appending a query to itself would be a cyclic reference.
+    private var candidates: [String] { asNew ? tables : tables.filter { $0 != session.selectedQuery?.name } }
     private var others: [String] { many ? chosen : [second] }
 
     var body: some View {
@@ -208,12 +210,12 @@ struct AppendQueriesDialog: View {
             }
             if many {
                 HStack(alignment: .top, spacing: Design.Space.m) {
-                    list("Available tables", tables.filter { !chosen.contains($0) }) { chosen.append($0) }
+                    list("Available tables", candidates.filter { !chosen.contains($0) }) { chosen.append($0) }
                     list("Tables to append", chosen) { t in chosen.removeAll { $0 == t } }
                 }
                 .frame(height: 200)
             } else {
-                Picker("Table to append", selection: $second) { ForEach(tables, id: \.self) { Text($0).tag($0) } }
+                Picker("Table to append", selection: $second) { ForEach(candidates, id: \.self) { Text($0).tag($0) } }
             }
         }
         .onAppear {
@@ -221,7 +223,7 @@ struct AppendQueriesDialog: View {
             if case .appendQueries(let list)? = edit?.transform {
                 many = list.count > 1; chosen = list; second = list.first ?? ""
             } else {
-                second = tables.first { $0 != primary } ?? ""
+                second = candidates.first { $0 != primary } ?? ""
             }
         }
     }
