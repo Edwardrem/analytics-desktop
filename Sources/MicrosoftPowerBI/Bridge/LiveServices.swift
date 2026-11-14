@@ -79,6 +79,7 @@ final class LiveCalculation: CalculationService {
     func visualData(spec original: VisualSpec, request: VisualRequest) -> VisualData {
         let start = CFAbsoluteTimeGetCurrent()
         if original.type.isSlicer { return slicerData(original, request) }
+        if original.type == .textBox { return textBoxData(original, request, start: start) }
 
         let spec = resolvingFieldParameters(original, filters: filterTables(request))
         let drill = Self.drillPlan(spec)
@@ -300,6 +301,49 @@ final class LiveCalculation: CalculationService {
             out.daxQuery = dax
             return out
         }
+    }
+
+    // MARK: Text boxes
+
+    /// A text box's dynamic values: each `{{Measure}}` or `{{=DAX}}` placeholder evaluated under the
+    /// page's filters, slicers and selections, as a one-row table with one column per placeholder,
+    /// named after it (what the text box renderer looks up). A placeholder that names no measure, or
+    /// whose expression fails, gets no column and stays a quiet token in the text.
+    private func textBoxData(_ spec: VisualSpec, _ request: VisualRequest, start: CFAbsoluteTime) -> VisualData {
+        let names = TextBoxPlaceholders.names(in: spec.content)
+        guard !names.isEmpty else { return VisualData() }
+        // A text box shows no data points, so a selection elsewhere filters it rather than highlighting.
+        let filters = filterTables(request) + request.highlights.flatMap(crossFilterTables)
+        var columns: [DataColumn] = [], formats: [String] = [], queries: [String] = []
+        for name in names {
+            guard let (expression, format) = textBoxExpression(name, filters: filters) else { continue }
+            let dax = "EVALUATE\n    CALCULATETABLE(\n        ROW(\(ModelDAX.string("Value")), \(expression))"
+                + filters.map { ",\n        " + $0 }.joined() + "\n    )"
+            queries.append(dax)
+            guard let table = try? engine.query(dax).first, table.rowCount > 0, table.columnCount > 0 else { continue }
+            columns.append(DataColumn(name: name, type: .any, values: [table[0, 0]]))
+            formats.append(format)
+        }
+        var out = VisualData(table: DataTable(name: spec.name, columns: columns), fields: columns.map { _ in nil },
+                             formats: formats, totals: columns.map { _ in .null })
+        out.daxQuery = queries.joined(separator: "\n\n")
+        out.queryMilliseconds = (CFAbsoluteTimeGetCurrent() - start) * 1000
+        return out
+    }
+
+    /// The DAX and format string of one placeholder: `=expression` as written, otherwise the
+    /// measure of that name (any table, case-insensitive). Nil when no measure has the name.
+    private func textBoxExpression(_ name: String, filters: [String]) -> (String, String)? {
+        if name.hasPrefix("=") {
+            let expression = name.dropFirst().trimmingCharacters(in: .whitespaces)
+            return expression.isEmpty ? nil : (expression, "")
+        }
+        for table in model.tables {
+            if let m = table.measures.first(where: { ModelDAX.same($0.name, name) }) {
+                return (ModelDAX.measure(m.name), formatString(for: .measure(table.name, m.name), filters: filters))
+            }
+        }
+        return nil
     }
 
     /// The format string of a value column. A measure's is the one in effect under the visual's
