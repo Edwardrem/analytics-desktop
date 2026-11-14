@@ -11,6 +11,8 @@ enum WhatsNewContent: Equatable {
     /// The notes of versions just installed (or of the running version, from Help ▸ What's New).
     case installed([Release], SemanticVersion)
     case upToDate(SemanticVersion)
+    /// GitHub has no releases of the app yet.
+    case noReleases(SemanticVersion)
     case failed(String)
 }
 
@@ -84,6 +86,7 @@ struct WhatsNewView: View {
         case .offer(let u): return "\(AppIdentity.name) \(u.version) is available"
         case .installed(_, let v): return "Welcome to \(AppIdentity.name) \(v)"
         case .upToDate: return "You're up to date"
+        case .noReleases: return "No releases yet"
         case .failed: return "Couldn't check for updates"
         }
     }
@@ -96,6 +99,7 @@ struct WhatsNewView: View {
             return "You have \(UpdateController.shared.installed). Here's what changed since then.\(beta)"
         case .installed(let r, _): return r.isEmpty ? "No release notes were published for this version." : "Here's what's new."
         case .upToDate(let v): return "\(AppIdentity.name) \(v) is the newest version."
+        case .noReleases(let v): return "No version of \(AppIdentity.name) has been published on GitHub yet, so there's nothing newer than \(v)."
         case .failed(let message): return message
         }
     }
@@ -108,7 +112,7 @@ struct WhatsNewView: View {
             releaseList(u.releases)
         case .installed(let releases, _):
             releaseList(releases)
-        case .upToDate, .failed:
+        case .upToDate, .noReleases, .failed:
             EmptyView()
         }
     }
@@ -136,6 +140,10 @@ struct WhatsNewView: View {
 
     @ViewBuilder private func footer(_ update: AvailableUpdate) -> some View {
         VStack(alignment: .leading, spacing: Design.Space.s) {
+            if !updates.canVerifyUpdates {
+                Label(UpdateController.missingKeyNote, systemImage: "lock.trianglebadge.exclamationmark").font(Design.Typeface.caption)
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
             if let error = model.error {
                 Label(error, systemImage: "exclamationmark.triangle").font(Design.Typeface.caption)
                     .foregroundStyle(Design.Palette.negative).fixedSize(horizontal: false, vertical: true)
@@ -169,7 +177,7 @@ struct WhatsNewView: View {
                         }
                     }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(model.installing)
+                    .disabled(model.installing || !updates.canVerifyUpdates)
                     .help("Downloads \(update.version.description), checks its signature, and replaces this copy of \(AppIdentity.name).")
                 }
             }
