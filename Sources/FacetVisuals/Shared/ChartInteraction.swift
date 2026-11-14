@@ -386,44 +386,56 @@ public enum TooltipActions {
     }
 }
 
-/// Two-thumb range slider used as the zoom slider under cartesian charts. `range` is a fraction 0…1.
+/// Two-thumb range slider used as the zoom slider under cartesian charts, and beside a scatter
+/// chart's Y axis when it runs vertically. `range` is a fraction 0…1, from the leading or bottom end.
 public struct ZoomSlider: View {
     @Binding var range: ClosedRange<Double>
     let theme: ThemeSpec
     var minimumSpan: Double = 0.02
     var maximumSpan: Double = 1
-    public init(range: Binding<ClosedRange<Double>>, theme: ThemeSpec, minimumSpan: Double = 0.02, maximumSpan: Double = 1) {
+    var axis: Axis = .horizontal
+    var label = "Zoom"
+    public init(range: Binding<ClosedRange<Double>>, theme: ThemeSpec, minimumSpan: Double = 0.02, maximumSpan: Double = 1,
+                axis: Axis = .horizontal, label: String = "Zoom") {
         self._range = range; self.theme = theme; self.minimumSpan = minimumSpan; self.maximumSpan = max(minimumSpan, maximumSpan)
+        self.axis = axis; self.label = label
     }
     @State private var dragStart: ClosedRange<Double>?
 
+    private var horizontal: Bool { axis == .horizontal }
+
     public var body: some View {
         GeometryReader { geo in
-            let w = geo.size.width
-            let x0 = range.lowerBound * w, x1 = range.upperBound * w
-            ZStack(alignment: .leading) {
-                Capsule().fill(theme.gridlineColor.opacity(0.7)).frame(height: 4)
-                Capsule().fill(theme.secondaryColor.opacity(0.55)).frame(width: max(8, x1 - x0), height: 4).offset(x: x0)
+            let length = horizontal ? geo.size.width : geo.size.height
+            let a = range.lowerBound * length, b = range.upperBound * length
+            ZStack(alignment: horizontal ? .leading : .bottom) {
+                Capsule().fill(theme.gridlineColor.opacity(0.7)).frame(width: horizontal ? nil : 4, height: horizontal ? 4 : nil)
+                Capsule().fill(theme.secondaryColor.opacity(0.55))
+                    .frame(width: horizontal ? max(8, b - a) : 4, height: horizontal ? 4 : max(8, b - a))
+                    .offset(along(a))
                     .contentShape(Rectangle().inset(by: -6))
-                    .gesture(drag(w) { s, d in
+                    .gesture(drag(length) { s, d in
                         let span = s.upperBound - s.lowerBound
                         let lo = max(0, min(1 - span, s.lowerBound + d))
                         return lo...(lo + span)
                     })
-                thumb.offset(x: x0 - 5).gesture(drag(w) { s, d in
+                thumb.offset(along(a - 5)).gesture(drag(length) { s, d in
                     min(max(0, s.upperBound - maximumSpan, s.lowerBound + d), s.upperBound - minimumSpan)...s.upperBound
                 })
-                thumb.offset(x: x1 - 5).gesture(drag(w) { s, d in
+                thumb.offset(along(b - 5)).gesture(drag(length) { s, d in
                     s.lowerBound...max(min(1, s.lowerBound + maximumSpan, s.upperBound + d), s.lowerBound + minimumSpan)
                 })
             }
-            .frame(height: geo.size.height)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
-        .frame(height: 12)
+        .frame(width: horizontal ? nil : 12, height: horizontal ? 12 : nil)
         .accessibilityElement()
-        .accessibilityLabel("Zoom")
+        .accessibilityLabel(label)
         .accessibilityValue("\(Int(range.lowerBound * 100)) to \(Int(range.upperBound * 100)) percent")
     }
+
+    /// An offset `distance` along the track: rightwards, or upwards from the bottom.
+    private func along(_ distance: CGFloat) -> CGSize { horizontal ? CGSize(width: distance, height: 0) : CGSize(width: 0, height: -distance) }
 
     private var thumb: some View {
         Circle().fill(theme.cardColor).frame(width: 10, height: 10)
@@ -431,12 +443,13 @@ public struct ZoomSlider: View {
             .contentShape(Circle().inset(by: -5))
     }
 
-    private func drag(_ width: CGFloat, _ update: @escaping (ClosedRange<Double>, Double) -> ClosedRange<Double>) -> some Gesture {
+    private func drag(_ length: CGFloat, _ update: @escaping (ClosedRange<Double>, Double) -> ClosedRange<Double>) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { v in
                 let start = dragStart ?? range
                 if dragStart == nil { dragStart = range }
-                range = update(start, Double(v.translation.width / max(width, 1)))
+                let moved = horizontal ? v.translation.width : -v.translation.height
+                range = update(start, Double(moved / max(length, 1)))
             }
             .onEnded { _ in dragStart = nil }
     }

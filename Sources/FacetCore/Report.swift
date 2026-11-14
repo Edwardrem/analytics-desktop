@@ -392,6 +392,10 @@ public struct AnalyticsItem: Codable, Identifiable, Hashable, Sendable {
     /// Anomalies: the fields an anomaly's possible explanations are looked for in ("Explain by");
     /// nil or empty tries the model's suitable fields.
     public var explainBy: [FieldRef]?
+    /// Error bars on a scatter chart: the axis they run along.
+    public enum ErrorAxis: String, Codable, CaseIterable, Sendable { case x, y, both }
+    /// Scatter error bars: X, Y or both; nil is Y, as Power BI starts them.
+    public var errorAxis: ErrorAxis?
     public init(kind: Kind) { self.kind = kind }
 }
 

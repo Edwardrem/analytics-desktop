@@ -393,6 +393,16 @@ private struct AnalyticsItemEditor: View {
                 .labelsHidden().controlSize(.small).fixedSize()
             }
         case .errorBars:
+            if spec.type == .scatter {
+                PropertyRow("Axis") {
+                    Picker("Error bar axis", selection: Binding(get: { item.errorAxis ?? .y }, set: { a in edit { $0.errorAxis = a == .y ? nil : a } })) {
+                        Text("Y-axis").tag(AnalyticsItem.ErrorAxis.y)
+                        Text("X-axis").tag(AnalyticsItem.ErrorAxis.x)
+                        Text("Both").tag(AnalyticsItem.ErrorAxis.both)
+                    }
+                    .labelsHidden().controlSize(.small).fixedSize()
+                }
+            }
             PropertyRow("Error") {
                 HStack(spacing: Design.Space.xs) {
                     Text("±").font(Design.Typeface.caption).foregroundStyle(.secondary)

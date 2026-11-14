@@ -142,7 +142,7 @@ enum BuildLogic {
         case .lineStackedColumn, .lineClusteredColumn:
             return refLines + [.trendLine, .errorBars]
         case .scatter:
-            return [.trendLine, .symmetryShading, .ratioLine, .clusters, .minLine, .maxLine, .averageLine, .medianLine]
+            return [.trendLine, .symmetryShading, .ratioLine, .clusters, .errorBars, .minLine, .maxLine, .averageLine, .medianLine]
         default:
             return []
         }
