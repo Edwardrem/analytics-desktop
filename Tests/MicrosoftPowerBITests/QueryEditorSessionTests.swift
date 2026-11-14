@@ -256,6 +256,18 @@ final class QueryEditorSessionTests: XCTestCase {
         XCTAssertTrue(s.query(named: "Sales")?.mScript.contains("[Y] = FiscalYear") ?? false, "renaming a parameter rewrites its uses")
     }
 
+    func testAFunctionQueryIsShownAsAFunctionAndInvoked() async throws {
+        let s = await session([QueryDefinition(name: "fxDouble", mScript: "(x as number) => x * 2")])
+        XCTAssertEqual(s.preview?.valueKind, "function")
+        XCTAssertEqual(s.queries[0].kind, .function, "the editor learns the query is a function")
+        XCTAssertEqual(FunctionInvokePanel.call("fxDouble", ["21"]), "fxDouble(21)")
+        XCTAssertEqual(FunctionInvokePanel.call("fx Name", ["a", ""]), "#\"fx Name\"(\"a\", null)")
+        let invoked = QueryDefinition(name: "Invoked Function", mScript: MScript.script(from: [MStep(name: "Source", expression: FunctionInvokePanel.call("fxDouble", ["21"]))]))
+        s.addQuery(invoked, name: "Invoke Function")
+        await s.waitForPreview()
+        XCTAssertEqual(s.preview?.table.columns.first?.values.first?.asDouble, 42)
+    }
+
     func testConvertingBetweenQueryAndParameter() async throws {
         let s = await session([QueryDefinition(name: "Rate", mScript: "let\n    Source = 0.25\nin\n    Source")])
         let id = s.queries[0].id

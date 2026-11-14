@@ -14,6 +14,7 @@ struct FilterClause: Equatable {
         case equals, notEquals, greater, greaterOrEqual, less, lessOrEqual
         case beginsWith, notBeginsWith, endsWith, notEndsWith, contains, notContains
         case isNull, isNotNull, isEarliest, isLatest
+        case inPrevious, inNext, inCurrent, yearToDate
 
         func title(for type: DataType) -> String {
             let temporal = type.isTemporal
@@ -34,16 +35,23 @@ struct FilterClause: Equatable {
             case .isNotNull: return "is not null"
             case .isEarliest: return "is earliest"
             case .isLatest: return "is latest"
+            case .inPrevious: return "is in the previous"
+            case .inNext: return "is in the next"
+            case .inCurrent: return "is in the current"
+            case .yearToDate: return "is year to date"
             }
         }
-        var needsValue: Bool { ![.isNull, .isNotNull, .isEarliest, .isLatest].contains(self) }
+        var needsValue: Bool { ![.isNull, .isNotNull, .isEarliest, .isLatest, .inCurrent, .yearToDate].contains(self) }
+        /// Relative date conditions take a unit (days, weeks, months, quarters, years).
+        var needsUnit: Bool { [.inPrevious, .inNext, .inCurrent].contains(self) }
 
         /// The operators offered for a column type.
         static func offered(for type: DataType) -> [Op] {
             let compare: [Op] = [.equals, .notEquals, .greater, .greaterOrEqual, .less, .lessOrEqual]
             switch type {
             case .text: return [.equals, .notEquals, .beginsWith, .notBeginsWith, .endsWith, .notEndsWith, .contains, .notContains, .isNull, .isNotNull]
-            case .date, .dateTime, .time: return compare + [.isEarliest, .isLatest, .isNull, .isNotNull]
+            case .date, .dateTime: return compare + [.inPrevious, .inNext, .inCurrent, .yearToDate, .isEarliest, .isLatest, .isNull, .isNotNull]
+            case .time: return compare + [.isEarliest, .isLatest, .isNull, .isNotNull]
             case .any: return compare + [.beginsWith, .endsWith, .contains, .notContains, .isNull, .isNotNull]
             default: return compare + [.isNull, .isNotNull]
             }
@@ -54,6 +62,7 @@ struct FilterClause: Equatable {
     var value = ""
     /// Joins this clause to the ones before it (ignored for the first).
     var and = true
+    var unit: RowFilter.DateUnit = .day
 
     func condition(type: DataType) -> RowFilter {
         let v = EditorValues.parse(value, as: type)
@@ -74,6 +83,14 @@ struct FilterClause: Equatable {
         case .isNotNull: return .isNotNull(column: column)
         case .isEarliest: return .date(column: column, .isEarliest)
         case .isLatest: return .date(column: column, .isLatest)
+        case .inPrevious:
+            let n = max(1, Int(value.trimmingCharacters(in: .whitespaces)) ?? 1)
+            return .date(column: column, n == 1 ? .inPrevious(unit) : .inPreviousN(n, unit))
+        case .inNext:
+            let n = max(1, Int(value.trimmingCharacters(in: .whitespaces)) ?? 1)
+            return .date(column: column, n == 1 ? .inNext(unit) : .inNextN(n, unit))
+        case .inCurrent: return .date(column: column, .inCurrent(unit))
+        case .yearToDate: return .date(column: column, .yearToDate)
         }
     }
 
@@ -122,6 +139,12 @@ struct FilterClause: Equatable {
             case .isNotNull(let col): return FilterClause(column: col, op: .isNotNull)
             case .date(let col, .isEarliest): return FilterClause(column: col, op: .isEarliest)
             case .date(let col, .isLatest): return FilterClause(column: col, op: .isLatest)
+            case .date(let col, .inPrevious(let u)): return FilterClause(column: col, op: .inPrevious, value: "1", unit: u)
+            case .date(let col, .inPreviousN(let n, let u)): return FilterClause(column: col, op: .inPrevious, value: "\(n)", unit: u)
+            case .date(let col, .inNext(let u)): return FilterClause(column: col, op: .inNext, value: "1", unit: u)
+            case .date(let col, .inNextN(let n, let u)): return FilterClause(column: col, op: .inNext, value: "\(n)", unit: u)
+            case .date(let col, .inCurrent(let u)): return FilterClause(column: col, op: .inCurrent, unit: u)
+            case .date(let col, .yearToDate): return FilterClause(column: col, op: .yearToDate)
             default: return nil
             }
         }
@@ -217,10 +240,16 @@ struct FilterRowsDialog: View {
                     }
                     .labelsHidden().frame(width: 170)
                     if clauses[i].op.needsValue {
-                        TextField(type.isTemporal ? "yyyy-mm-dd" : "Value", text: $clauses[i].value).textFieldStyle(.roundedBorder)
-                    } else {
-                        Spacer()
+                        TextField(clauses[i].op.needsUnit ? "1" : type.isTemporal ? "yyyy-mm-dd" : "Value", text: $clauses[i].value)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: clauses[i].op.needsUnit ? 60 : .infinity)
                     }
+                    if clauses[i].op.needsUnit {
+                        Picker("Unit", selection: $clauses[i].unit) {
+                            ForEach(RowFilter.DateUnit.allCases, id: \.self) { Text($0.rawValue.lowercased() + "s").tag($0) }
+                        }
+                        .labelsHidden().frame(width: 110)
+                    }
+                    if !clauses[i].op.needsValue || clauses[i].op.needsUnit { Spacer() }
                     IconButton("minus.circle", help: "Remove this condition") { clauses.remove(at: i) }.disabled(clauses.count == 1)
                 }
             }

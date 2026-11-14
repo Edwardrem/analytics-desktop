@@ -20,6 +20,8 @@ struct PreviewArea: View {
             } else if let preview = session.preview {
                 switch preview.valueKind {
                 case "table": grid(preview)
+                case "function":
+                    if let q = session.selectedQuery { FunctionInvokePanel(session: session, query: q) }
                 case "list", "record":
                     VStack(spacing: 0) {
                         shapeBanner(preview.valueKind)
@@ -110,6 +112,53 @@ struct PreviewArea: View {
         }
         .padding(Design.Space.l)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+// MARK: - Function
+
+/// A function query shows its parameters and Invoke, which adds a query calling it (as Power Query does).
+struct FunctionInvokePanel: View {
+    @ObservedObject var session: QueryEditorSession
+    let query: QueryDefinition
+    @State private var values: [String] = []
+
+    private var parameters: [String] { InvokeFunctionDialog.parameters(of: query.mScript) ?? [] }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Design.Space.s) {
+            Text("Enter Parameters").font(Design.Typeface.headline)
+            Text(query.name + "(" + parameters.joined(separator: ", ") + ")").font(Design.Typeface.mono).foregroundStyle(.secondary)
+            ForEach(parameters.indices, id: \.self) { i in
+                PropertyRow(parameters[i]) {
+                    TextField("Value", text: Binding(get: { values[safe: i] ?? "" }, set: { if values.indices.contains(i) { values[i] = $0 } }))
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            HStack {
+                Button("Invoke", action: invoke).keyboardShortcut(.defaultAction)
+                Button("Clear") { values = parameters.map { _ in "" } }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Design.Space.l)
+        .frame(maxWidth: 460, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onAppear { values = parameters.map { _ in "" } }
+        .onChange(of: query.mScript) { _, _ in values = parameters.map { _ in "" } }
+    }
+
+    /// The call with each typed value as an M literal (numbers and logicals as such, the rest as text, empty as null).
+    static func call(_ function: String, _ values: [String]) -> String {
+        let args = values.map { MSyntax.literal(ConditionalColumnDialog.output($0), type: .any) }
+        return MSyntax.identifier(function) + "(" + args.joined(separator: ", ") + ")"
+    }
+
+    private func invoke() {
+        let script = MScript.script(from: [MStep(name: "Source", expression: Self.call(query.name, values))])
+        var q = QueryDefinition(name: SourcePlanner.uniqueName("Invoked Function", taken: session.queryNames), mScript: script)
+        q.group = query.group
+        session.addQuery(q, name: "Invoke Function")
     }
 }
 

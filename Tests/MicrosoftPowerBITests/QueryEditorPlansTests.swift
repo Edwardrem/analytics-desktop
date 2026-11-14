@@ -139,6 +139,18 @@ final class QueryEditorPlansTests: XCTestCase {
         XCTAssertNil(FilterClause.clauses(of: .custom("[A] + [B] > 3"), types: types), "a custom condition is edited as a formula")
     }
 
+    func testRelativeDateClauses() throws {
+        let types: [String: DataType] = ["Day": .date]
+        let three = FilterClause(column: "Day", op: .inPrevious, value: "3", unit: .month).condition(type: .date)
+        XCTAssertEqual(three.mExpression(previous: "S"), "Date.IsInPreviousNMonths([Day], 3)")
+        XCTAssertEqual(FilterClause(column: "Day", op: .inNext, value: "1", unit: .week).condition(type: .date).mExpression(previous: "S"), "Date.IsInNextWeek([Day])")
+        XCTAssertEqual(FilterClause(column: "Day", op: .inCurrent, unit: .year).condition(type: .date).mExpression(previous: "S"), "Date.IsInCurrentYear([Day])")
+        let back = try XCTUnwrap(FilterClause.clauses(of: three, types: types))
+        XCTAssertEqual(back, [FilterClause(column: "Day", op: .inPrevious, value: "3", unit: .month)])
+        XCTAssertTrue(FilterClause.Op.offered(for: .date).contains(.yearToDate))
+        XCTAssertFalse(FilterClause.Op.offered(for: .text).contains(.inPrevious))
+    }
+
     // MARK: Dialog values
 
     func testTypedValues() {
