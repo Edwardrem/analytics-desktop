@@ -92,7 +92,9 @@ final class QueryEditorRenderTests: XCTestCase {
         let year = try XCTUnwrap(s.query(named: "Year")?.id)
         let dialogs: [EditorDialog] = [
             .rows(.keepTop), .rows(.keepRange), .rows(.removeAlternate), .chooseColumns, .goToColumn, .renameColumn("Region"),
-            .advancedEditor, .sourceSettings(step: 0), .queryProperties(sales), .renameQuery(sales), .createFunction(sales),
+            .advancedEditor, .sourceSettings(step: 0),
+            .changeTypeStep(TypeStepChange(stepIndex: 1, previous: "Source", existing: [("Region", .text)], changes: [("Region", .integer)], culture: nil)),
+            .queryProperties(sales), .renameQuery(sales), .createFunction(sales),
             .newGroup(moving: [sales]), .renameGroup("Lookups"), .manageParameters(select: year), .manageParameters(select: nil),
             .dependencies, .diagnostics(s.lastEvents, title: "Diagnostics"), .nativeQuery("select 1"), .script(python: true),
             .enterData, .dataSourceSettings, .recentSources, .newSource,

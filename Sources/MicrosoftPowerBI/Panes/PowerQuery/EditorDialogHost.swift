@@ -98,6 +98,7 @@ struct EditorDialogHost: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { session.dialog = .connect(connectorID: connector.id, location: location) }
         }
         case .dataSourceSettings: DataSourceSettingsSheet()
+        case .changeTypeStep(let change): ChangeTypeStepDialog(session: session, change: change)
         default: TransformDialogRouter(session: session, dialog: dialog)
         }
     }
@@ -121,6 +122,30 @@ private struct StepDialogLoader: View {
         case .runRScript: ScriptDialog(session: session, python: false, edit: edit)
         default: TransformDialogRouter(session: session, dialog: .editStep(edit))
         }
+    }
+}
+
+/// "Change Column Type": the selected step already converts the column.
+private struct ChangeTypeStepDialog: View {
+    @ObservedObject var session: QueryEditorSession
+    let change: TypeStepChange
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let step = session.steps[safe: change.stepIndex]?.name ?? "Changed Type"
+        VStack(alignment: .leading, spacing: Design.Space.m) {
+            Text("Change Column Type").font(Design.Typeface.headline)
+            Text("The step “\(step)” already changes the type of \(change.changes.filter { c in change.existing.contains { $0.column == c.column } }.map(\.column).joined(separator: ", ")). Replace that conversion, or add a new step that changes the type again?")
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Add New Step") { session.resolve(change, replace: false); dismiss() }
+                Button("Replace Current") { session.resolve(change, replace: true); dismiss() }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(Design.Space.l)
+        .frame(width: 460)
     }
 }
 

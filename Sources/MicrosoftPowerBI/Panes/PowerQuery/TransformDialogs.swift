@@ -200,7 +200,12 @@ struct ChangeTypeLocaleDialog: View {
         }
     }
     private func done() {
-        session.commit(.changeType(columns.map { ($0, type) }, culture: locale), editing: edit)
+        if edit == nil {
+            // Merged into a selected Changed Type step with this locale; a column it converts already gets a new step.
+            session.changeTypes(columns.map { ($0, type) }, culture: locale, ask: false)
+        } else {
+            session.commit(.changeType(columns.map { ($0, type) }, culture: locale), editing: edit)
+        }
         dismiss()
     }
 }

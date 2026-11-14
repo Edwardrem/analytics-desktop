@@ -11,6 +11,8 @@ enum EditorDialog: Identifiable {
     case goToColumn
     case renameColumn(String)
     case changeTypeWithLocale(columns: [String])
+    /// "Change Column Type": the selected Changed Type step already converts a column; replace or add a step.
+    case changeTypeStep(TypeStepChange)
     case replaceValues(columns: [String])
     case replaceErrors(columns: [String])
     case split(column: String, SplitKind)
@@ -96,6 +98,26 @@ enum EditorDialog: Identifiable {
             case .round: return .round(digits: Int(value))
             }
         }
+    }
+}
+
+/// A type change meeting a selected Changed Type step with the same locale.
+struct TypeStepChange {
+    var stepIndex: Int
+    var previous: String
+    var existing: [(column: String, type: DataType)]
+    var changes: [(column: String, type: DataType)]
+    var culture: String?
+
+    /// Whether the step already converts one of the columns (Power Query asks before replacing it).
+    var clashes: Bool { changes.contains { c in existing.contains { $0.column == c.column } } }
+    /// The step's conversions with the new ones: a column it already converts takes its new type in place.
+    var merged: [(column: String, type: DataType)] {
+        var out = existing
+        for c in changes {
+            if let i = out.firstIndex(where: { $0.column == c.column }) { out[i].type = c.type } else { out.append(c) }
+        }
+        return out
     }
 }
 

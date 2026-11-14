@@ -430,6 +430,54 @@ final class QueryEditorSessionTests: XCTestCase {
         XCTAssertTrue(chosen.monospaced)
     }
 
+    /// Type changes join the selected Changed Type step; changing a column it already converts asks
+    /// "Replace current" or "Add new step", as Power Query does.
+    func testChangingTypesJoinsTheSelectedTypeStepOrAsks() async throws {
+        let script = "let\n    Source = #table({\"A\", \"B\", \"C\"}, {{1, \"2\", \"3\"}})\nin\n    Source"
+        let s = await session([QueryDefinition(name: "T", mScript: script)])
+        func pick(_ column: String) { s.clickColumn(column, toggle: false, range: false) }
+        func type(_ column: String) -> DataType? { s.preview?.table.column(column)?.type }
+        pick("A"); await run("pq.type.text", s)
+        XCTAssertEqual(names(s), ["Source", "Changed Type"])
+        pick("B"); await run("pq.type.integer", s)
+        XCTAssertEqual(names(s), ["Source", "Changed Type"], "joined into the step")
+        XCTAssertEqual(s.steps.last?.expression, #"Table.TransformColumnTypes(Source, {{"A", type text}, {"B", Int64.Type}})"#)
+        XCTAssertEqual(type("A"), .text)
+        XCTAssertEqual(type("B"), .integer)
+        XCTAssertEqual(s.preview?.table.column("B")?.values, [.int(2)])
+
+        pick("A"); await run("pq.type.decimal", s)
+        guard case .changeTypeStep(let change)? = s.dialog else { return XCTFail("asks before changing A again") }
+        XCTAssertEqual(names(s), ["Source", "Changed Type"], "nothing changes until the answer")
+        s.dialog = nil
+        s.resolve(change, replace: true)
+        await s.waitForPreview()
+        XCTAssertEqual(names(s), ["Source", "Changed Type"])
+        XCTAssertEqual(s.steps.last?.expression, #"Table.TransformColumnTypes(Source, {{"A", type number}, {"B", Int64.Type}})"#)
+        XCTAssertEqual(type("A"), .decimal)
+
+        pick("A"); await run("pq.type.text", s)
+        guard case .changeTypeStep(let again)? = s.dialog else { return XCTFail("asks again") }
+        s.dialog = nil
+        s.resolve(again, replace: false)
+        await s.waitForPreview()
+        XCTAssertEqual(names(s), ["Source", "Changed Type", "Changed Type1"])
+        XCTAssertEqual(type("A"), .text)
+
+        // A different locale is a different step; with the same locale it joins without asking.
+        pick("C")
+        s.changeTypes([("C", .integer)], culture: "de-DE", ask: false)
+        await s.waitForPreview()
+        XCTAssertEqual(names(s).count, 4)
+        pick("B")
+        s.changeTypes([("B", .text)], culture: "de-DE", ask: false)
+        await s.waitForPreview()
+        XCTAssertEqual(names(s).count, 4)
+        XCTAssertNil(s.dialog)
+        XCTAssertEqual(type("B"), .text)
+        XCTAssertEqual(type("C"), .integer)
+    }
+
     /// The new editor's views switch the centre and show the diagram; with the preview feature off they are refused.
     func testNewEditorViewsFollowThePreviewSetting() async throws {
         let s = await session([QueryDefinition(name: "T", mScript: Self.table)])

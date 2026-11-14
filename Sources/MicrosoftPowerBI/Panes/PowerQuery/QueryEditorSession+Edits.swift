@@ -27,6 +27,28 @@ extension QueryEditorSession {
         }
     }
 
+    /// Change column types as Power Query does: into the selected step when it is a type change with the same
+    /// locale (asking first, when `ask`, if it already converts one of the columns), otherwise as a new step.
+    func changeTypes(_ changes: [(column: String, type: DataType)], culture: String?, ask: Bool = true) {
+        guard !changes.isEmpty else { return }
+        guard let index = currentStepIndex, let step = steps[safe: index], let recognized = Transform.recognize(step.expression),
+              case .changeType(let existing, let stepCulture) = recognized.transform, stepCulture == culture else {
+            return apply(.changeType(changes, culture: culture))
+        }
+        let change = TypeStepChange(stepIndex: index, previous: recognized.previous, existing: existing, changes: changes, culture: culture)
+        if !change.clashes { return replaceStep(at: index, with: .changeType(change.merged, culture: culture), previous: change.previous) }
+        if ask { dialog = .changeTypeStep(change) } else { apply(.changeType(changes, culture: culture)) }
+    }
+
+    /// The answer to "Change Column Type": replace the conversion in the current step, or add a new step.
+    func resolve(_ change: TypeStepChange, replace: Bool) {
+        if replace {
+            replaceStep(at: change.stepIndex, with: .changeType(change.merged, culture: change.culture), previous: change.previous)
+        } else {
+            apply(.changeType(change.changes, culture: change.culture))
+        }
+    }
+
     /// Replace a step's expression with a transform re-built by its settings dialog (the gear), keeping the
     /// step's name and the step it reads.
     func replaceStep(at index: Int, with transform: Transform, previous: String) {

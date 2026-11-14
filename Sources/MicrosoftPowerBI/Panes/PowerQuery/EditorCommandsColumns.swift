@@ -14,7 +14,7 @@ enum DataTypeCommands {
 
     static let all: [EditorCommand] = types.map { entry in
         EditorCommand(id: id(entry.type), title: entry.title, symbol: QueryCellText.typeSymbol(entry.type), blocker: Need.columns) { s in
-            s.apply(.changeType(s.selectedColumns.map { ($0, entry.type) }, culture: nil))
+            s.changeTypes(s.selectedColumns.map { ($0, entry.type) }, culture: nil)
         }
     }
 }
