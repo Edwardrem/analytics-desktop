@@ -81,30 +81,27 @@ private struct FilterRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.xs) {
             HStack(spacing: Design.Space.xs) {
-                Button { withAnimation(Design.Motion.quick) { expanded.toggle() } } label: {
-                    HStack(spacing: Design.Space.xs) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                            .rotationEffect(.degrees(expanded ? 90 : 0))
-                            .foregroundStyle(.tertiary).frame(width: 10)
-                        if !renaming {
+                if renaming {
+                    InlineRename(text: filter.displayName ?? filter.field.caption, isEditing: $renaming, font: Design.Typeface.bodyStrong) { name in
+                        store.renameFilter(id: filter.id, scope: scope, to: name)
+                    }
+                    .padding(.leading, 14)
+                    Spacer(minLength: 0)
+                } else {
+                    Button { withAnimation(Design.Motion.quick) { expanded.toggle() } } label: {
+                        HStack(spacing: Design.Space.xs) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .rotationEffect(.degrees(expanded ? 90 : 0))
+                                .foregroundStyle(.tertiary).frame(width: 10)
                             Text(filter.displayName ?? filter.field.caption).font(Design.Typeface.bodyStrong).lineLimit(1)
                             Text(typeName).font(Design.Typeface.caption).foregroundStyle(.secondary)
+                            Spacer(minLength: 0)
                         }
-                        Spacer(minLength: 0)
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .overlay(alignment: .leading) {
-                    if renaming {
-                        CommitTextField(filter.field.caption, text: filter.displayName ?? filter.field.caption) { name in
-                            store.renameFilter(id: filter.id, scope: scope, to: name)
-                            renaming = false
-                        }
-                        .padding(.leading, 14)
-                        .onExitCommand { renaming = false }
-                    }
+                    .buttonStyle(.plain)
+                    .simultaneousGesture(TapGesture(count: 2).onEnded { renaming = true })
                 }
                 if filter.isLocked {
                     Image(systemName: "lock.fill").font(.system(size: 9)).foregroundStyle(.tertiary)
@@ -113,7 +110,10 @@ private struct FilterRow: View {
                     Image(systemName: "eye.slash").font(.system(size: 9)).foregroundStyle(.tertiary)
                 }
                 Menu {
-                    Button("Rename…") { renaming = true }
+                    Button("Rename") { renaming = true }
+                    if filter.displayName != nil {
+                        Button("Use the Field's Name") { store.renameFilter(id: filter.id, scope: scope, to: "") }
+                    }
                     Button("Move Up") { store.moveFilter(id: filter.id, scope: scope, by: -1) }.disabled(position == 0)
                     Button("Move Down") { store.moveFilter(id: filter.id, scope: scope, by: 1) }.disabled(position >= count - 1)
                     Divider()
