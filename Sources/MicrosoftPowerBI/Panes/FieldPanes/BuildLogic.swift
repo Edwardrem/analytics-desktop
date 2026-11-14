@@ -264,6 +264,35 @@ enum ForecastCard {
     }
 }
 
+/// The Anomalies card's "Explain by" list: model columns, each once, as plain group-by fields.
+enum AnomalyCard {
+    private static func plain(_ f: FieldRef) -> FieldRef { FieldRef.column(f.table, f.name) }
+    private static func same(_ a: FieldRef, _ b: FieldRef) -> Bool {
+        a.table.caseInsensitiveCompare(b.table) == .orderedSame && a.name.caseInsensitiveCompare(b.name) == .orderedSame
+    }
+
+    static func adding(_ f: FieldRef, to list: [FieldRef]?) -> [FieldRef]? {
+        let list = list ?? []
+        guard f.kind == .column, !list.contains(where: { same($0, f) }) else { return list.isEmpty ? nil : list }
+        return list + [plain(f)]
+    }
+
+    static func removing(_ f: FieldRef, from list: [FieldRef]?) -> [FieldRef]? {
+        let rest = (list ?? []).filter { !same($0, f) }
+        return rest.isEmpty ? nil : rest
+    }
+
+    static func replacing(_ old: FieldRef, with new: FieldRef, in list: [FieldRef]?) -> [FieldRef]? {
+        guard new.kind == .column else { return list }
+        var out: [FieldRef] = []
+        for f in list ?? [] {
+            let next = same(f, old) ? plain(new) : f
+            if !out.contains(where: { same($0, next) }) { out.append(next) }
+        }
+        return out.isEmpty ? nil : out
+    }
+}
+
 // MARK: - Field operations on a visual
 
 extension DocumentStore {

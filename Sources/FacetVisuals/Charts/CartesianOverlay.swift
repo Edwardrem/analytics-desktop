@@ -59,7 +59,7 @@ extension CartesianPanel {
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
                     if context.isInteractive {
-                        ChartInteractionLayer(hits: hits(L: L, bars: bars, map: map, window: window), spec: spec, context: context,
+                        ChartInteractionLayer(hits: hits(L: L, R: R, bars: bars, map: map, window: window), spec: spec, context: context,
                                               allowsLasso: true, snapRadius: kind.drawsBars ? 0 : 14,
                                               highlight: kind.drawsBars ? .outline : .none) { hit in
                             let c = hit.map { $0.id % 10_000_000 }
@@ -103,7 +103,8 @@ extension CartesianPanel {
         return TooltipContent(title: model.categories[safe: cat]?.label ?? "", rows: rows)
     }
 
-    func hits(L: CartesianLayout, bars: [CartesianLayout.Bar], map: PlotMap, window: ClosedRange<Double>) -> [ChartHit] {
+    func hits(L: CartesianLayout, R: CartesianAnalytics.Resolved, bars: [CartesianLayout.Bar], map: PlotMap,
+              window: ClosedRange<Double>) -> [ChartHit] {
         var out: [ChartHit] = []
         if kind.drawsBars {
             // One hit per (category, series) cell; with cross-highlighting the baseline bar spans the cell.
@@ -141,7 +142,36 @@ extension CartesianPanel {
                 }
             }
         }
+        // Anomaly markers last, so they win over the point and column under them.
+        for a in R.anomalies where window.contains(a.x) {
+            let pt = map.point(a.x, a.y)
+            var hit = ChartHit(id: (1_000 + a.series + 1) * 10_000_000 + a.cat,
+                               path: Path(ellipseIn: CGRect(x: pt.x - 8, y: pt.y - 8, width: 16, height: 16)),
+                               selection: model.selection(category: a.cat, series: a.series),
+                               tooltip: anomalyTooltip(a),
+                               copyText: model.formatted(a.value, series: a.series),
+                               accessibilityLabel: "Anomaly, \(model.categories[safe: a.cat]?.label ?? ""), "
+                                   + model.formatted(a.value, series: a.series))
+            if let explain = context.onExplainAnomaly {
+                let source = a.source
+                hit.activate = { explain(source) }
+            }
+            out.append(hit)
+        }
         return out
+    }
+
+    private func anomalyTooltip(_ a: CartesianAnalytics.Anomaly) -> TooltipContent {
+        let name = model.series[safe: a.series]?.name ?? ""
+        var rows: [TooltipContent.Row] = [
+            .init(color: color(series: a.series, cat: a.cat, value: a.value), label: name,
+                  value: model.formatted(a.value, series: a.series), isEmphasized: true),
+            .init(label: "Expected", value: model.formatted(a.source.expected, series: a.series)),
+            .init(label: "Expected range", value: model.formatted(a.source.lower, series: a.series) + " – "
+                    + model.formatted(a.source.upper, series: a.series)),
+        ]
+        if context.onExplainAnomaly != nil { rows.append(.init(label: "Click to see possible explanations", value: "")) }
+        return TooltipContent(title: "Anomaly · " + (model.categories[safe: a.cat]?.label ?? ""), rows: rows)
     }
 
     // MARK: Canvas

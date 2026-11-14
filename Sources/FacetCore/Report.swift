@@ -389,6 +389,9 @@ public struct AnalyticsItem: Codable, Identifiable, Hashable, Sendable {
     public var seasonality: Int?
     /// Forecast: trailing points left out of the fit and forecast instead ("Ignore the last").
     public var ignoreLast: Int?
+    /// Anomalies: the fields an anomaly's possible explanations are looked for in ("Explain by");
+    /// nil or empty tries the model's suitable fields.
+    public var explainBy: [FieldRef]?
     public init(kind: Kind) { self.kind = kind }
 }
 

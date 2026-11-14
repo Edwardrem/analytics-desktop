@@ -61,6 +61,10 @@ enum ModelRefactor {
                 }
                 for i in spec.analytics.indices {
                     if let k = spec.analytics[i].seriesKey { spec.analytics[i].seriesKey = key(k) }
+                    if var by = spec.analytics[i].explainBy {
+                        for j in by.indices { change(&by[j]) }
+                        spec.analytics[i].explainBy = by
+                    }
                 }
                 if var m = spec.action?.conditionalMeasure { change(&m); spec.action?.conditionalMeasure = m }
                 d.report.pages[p].visuals[v] = spec

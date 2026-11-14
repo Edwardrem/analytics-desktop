@@ -407,6 +407,28 @@ private struct AnalyticsItemEditor: View {
                     Text("\(Int(item.value))%").font(Design.Typeface.caption).foregroundStyle(.secondary).monospacedDigit().frame(width: 34, alignment: .trailing)
                 }
             }
+            PropertyRow("Explain by") {
+                VStack(alignment: .leading, spacing: Design.Space.xs) {
+                    ForEach(item.explainBy ?? [], id: \.key) { f in
+                        HStack(spacing: Design.Space.xs) {
+                            FieldPickerButton(selection: f, allowsMeasures: false, allowsClear: false) { new in
+                                guard let new else { return }
+                                edit { $0.explainBy = AnomalyCard.replacing(f, with: new, in: $0.explainBy) }
+                            }
+                            MiniIconButton("minus", help: "Stop explaining anomalies by \(f.caption)") {
+                                edit { $0.explainBy = AnomalyCard.removing(f, from: $0.explainBy) }
+                            }
+                        }
+                    }
+                    FieldPickerButton(selection: nil, placeholder: "Add a field", allowsMeasures: false, allowsClear: false) { new in
+                        guard let new else { return }
+                        edit { $0.explainBy = AnomalyCard.adding(new, to: $0.explainBy) }
+                    }
+                    if (item.explainBy ?? []).isEmpty {
+                        Text("Leave empty to try the model's fields").font(Design.Typeface.caption).foregroundStyle(.tertiary)
+                    }
+                }
+            }
         case .clusters:
             PropertyRow("Clusters") {
                 HStack(spacing: Design.Space.xs) {

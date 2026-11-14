@@ -20,7 +20,12 @@ struct CartesianAnalytics {
     struct Trend: Identifiable { let id: Int; let x0: Double, y0: Double, x1: Double, y1: Double; let color: Color }
     struct BandPoint { let x: Double; let y: Double; let lo: Double; let hi: Double }
     struct ForecastLine: Identifiable { let id: Int; let points: [BandPoint]; let color: Color }
-    struct Anomaly: Identifiable { let id: Int; let x: Double; let y: Double; let color: Color }
+    struct Anomaly: Identifiable {
+        let id: Int; let x: Double; let y: Double; let color: Color
+        /// The series and category of the flagged point, and the overlay entry it was drawn from.
+        let series: Int; let cat: Int; let value: Double
+        let source: AnalyticsOverlays.Anomaly
+    }
     struct Band: Identifiable { let id: Int; let points: [BandPoint]; let color: Color }
     struct ErrorBar: Identifiable { let id: Int; let c: Double; let lo: Double; let hi: Double; let cap: Double }
 
@@ -195,7 +200,8 @@ struct CartesianAnalytics {
         for a in overlays.anomalies {
             guard let s = model.series.first(where: { $0.column == a.seriesColumn }), let c = cat(s, row: a.row), let v = s.values[c] else { continue }
             r.anomalies.append(Anomaly(id: nextID(), x: L.catPos[c], y: plotY(v, s),
-                                       color: aItem?.color.map { Color(hex: $0) } ?? style.theme.foregroundColor))
+                                       color: aItem?.color.map { Color(hex: $0) } ?? style.theme.foregroundColor,
+                                       series: s.index, cat: c, value: v, source: a))
         }
         return r
     }

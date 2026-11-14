@@ -72,6 +72,9 @@ extension DocumentStore {
                 return [VisualMenuAction(title: plan.title) { [weak self] in self?.explainChange(in: id, point: point) }]
             }
         }
+        if interactive, spec.analytics.contains(where: { $0.kind == .anomalies }) {
+            c.onExplainAnomaly = { [weak self] anomaly in self?.explainAnomaly(in: id, anomaly: anomaly) }
+        }
         if interactive, EmbedSetup.types.contains(spec.type) {
             c.onSetUp = { [weak self] spec in self?.setUpEmbed(spec.id) }
             if spec.type == .powerAutomate { c.onRunFlow = { [weak self] spec in self?.runFlow(spec) } }

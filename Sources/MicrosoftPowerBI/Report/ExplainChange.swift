@@ -92,7 +92,8 @@ enum ExplainChange {
                     context: context, excluded: excluded, preferred: preferred)
     }
 
-    private static func basic(_ field: FieldRef, _ value: Value) -> FilterSpec {
+    /// A basic filter that keeps one value of a field.
+    static func basic(_ field: FieldRef, _ value: Value) -> FilterSpec {
         var f = FieldRef(kind: field.kind, table: field.table, name: field.name)
         f.aggregation = .none
         var filter = FilterSpec(field: f)
@@ -103,8 +104,14 @@ enum ExplainChange {
     /// The fields an explanation can break the change down by: the visual's legend first, then the
     /// model's visible text and true/false columns with between 2 and `maxMembers` values.
     static func dimensions(for plan: Plan, model: SemanticModel, data: DataStore) -> [FieldRef] {
-        var out = plan.preferred
-        var seen = plan.excluded.union(out.map(\.key))
+        candidateFields(preferred: plan.preferred, excluded: plan.excluded, model: model, data: data)
+    }
+
+    /// `preferred`, then the model's visible text and true/false columns with between 2 and
+    /// `maxMembers` values, leaving out the `excluded` field keys; at most `maxDimensions`.
+    static func candidateFields(preferred: [FieldRef], excluded: Set<String>, model: SemanticModel, data: DataStore) -> [FieldRef] {
+        var out = preferred
+        var seen = excluded.union(out.map(\.key))
         let parameterTables = Set(model.fieldParameters.map { $0.name.lowercased() })
         for table in model.tables where !table.isHidden && !parameterTables.contains(table.name.lowercased()) {
             for column in table.columns where !column.isHidden && (column.dataType == .text || column.dataType == .boolean) {

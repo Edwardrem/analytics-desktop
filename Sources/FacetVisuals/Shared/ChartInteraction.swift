@@ -13,6 +13,9 @@ public struct ChartHit: Identifiable {
     /// Where the tooltip attaches and the keyboard focus ring is centred.
     public var anchor: CGPoint
     public var selection: DataPointSelection?
+    /// What a click, Return or the accessibility action does instead of selecting (an anomaly
+    /// marker opens its explanations). Nil = the mark selects its data point.
+    public var activate: (() -> Void)?
     let makeTooltip: () -> TooltipContent
     let copyOverride: String
     let labelOverride: String
@@ -201,7 +204,9 @@ public struct ChartInteractionLayer: View {
     @ViewBuilder private var accessibilityChildren: some View {
         ForEach(hits.prefix(400)) { h in
             Rectangle().accessibilityLabel(h.accessibilityLabel).accessibilityAddTraits(.isButton)
-                .accessibilityAction { if let s = h.selection { context.onSelect([s], false) } }
+                .accessibilityAction {
+                    if let act = h.activate { act() } else if let s = h.selection { context.onSelect([s], false) }
+                }
         }
     }
 
@@ -251,6 +256,11 @@ public struct ChartInteractionLayer: View {
     private func tap(at p: CGPoint) {
         focused = true
         let additive = NSEvent.modifierFlags.contains(.command)
+        if let i = hitIndex(at: p), let act = hits[i].activate {
+            // The second click of a double-click is the same activation, not another one.
+            if (NSApp?.currentEvent?.clickCount ?? 1) < 2 { act() }
+            return
+        }
         guard let i = hitIndex(at: p), let sel = hits[i].selection, !sel.fields.isEmpty else {
             if !additive { context.onSelect([], false) }
             return
@@ -268,6 +278,7 @@ public struct ChartInteractionLayer: View {
     }
 
     private func activateFocus() -> KeyPress.Result {
+        if let f = focusIndex, let act = hits[safe: f]?.activate { act(); return .handled }
         guard let f = focusIndex, let sel = hits[safe: f]?.selection else { return .ignored }
         context.onSelect([sel], NSEvent.modifierFlags.contains(.command))
         return .handled
