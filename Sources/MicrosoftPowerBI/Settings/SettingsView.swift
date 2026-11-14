@@ -282,10 +282,9 @@ private struct PreviewSettings: View {
 
 private struct DiagnosticsSettings: View {
     var body: some View {
-        let info = Bundle.main.infoDictionary
         Form {
             Section("Version") {
-                LabeledContent(AppIdentity.name, value: "\(info?["CFBundleShortVersionString"] as? String ?? "1.0") (\(info?["CFBundleVersion"] as? String ?? "dev"))")
+                LabeledContent(AppIdentity.name, value: "\(AppIdentity.version) (\(AppIdentity.build))")
                 LabeledContent("macOS", value: ProcessInfo.processInfo.operatingSystemVersionString)
                 LabeledContent("Architecture", value: architecture)
                 LabeledContent("Memory", value: ByteCountFormatter.string(fromByteCount: Int64(ProcessInfo.processInfo.physicalMemory), countStyle: .memory))

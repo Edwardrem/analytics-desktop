@@ -1,4 +1,5 @@
 import Foundation
+import FacetCore
 
 /// A block of the system prompt.
 public struct AssistantSystemBlock: Sendable, Equatable {
@@ -20,11 +21,11 @@ public struct AssistantRequest: Sendable {
 
 /// Client for the Anthropic Claude Messages API (`POST /v1/messages`) with SSE streaming.
 ///
-/// - The API key lives in the Keychain (service `com.facet.assistant`) and is never logged.
+/// - The API key lives in the Keychain (service `AppIdentity.keychainService("assistant")`) and is never logged.
 /// - Nothing is sent unless the app calls `stream`/`countTokens`; there is no telemetry.
 /// - `AssistantSession` builds on this to manage history, prompt caching and the tool-use loop.
 public final class AssistantClient: @unchecked Sendable {
-    public static let keychainService = "com.facet.assistant"
+    public static let keychainService = AppIdentity.keychainService("assistant")
     static let apiKeyAccount = "anthropic-api-key"
     static let apiVersion = "2026-10-21"
     static let fallbackBeta = "server-side-fallback-2026-07-01"

@@ -1,4 +1,5 @@
 import Foundation
+import FacetCore
 import Security
 
 /// A failure reported by the macOS Keychain.
@@ -137,7 +138,7 @@ public struct DataSourceCredential: Codable, Equatable, Sendable {
 /// Keychain-backed credential storage for data sources, keyed by source kind + location
 /// (matching `DataSourceRecord.kind` / `.location` in FacetCore).
 public final class DataSourceCredentialStore {
-    public static let defaultService = "com.facet.datasources"
+    public static let defaultService = AppIdentity.keychainService("datasources")
     private let store: SecretStoring
 
     public init(store: SecretStoring = KeychainStore(service: DataSourceCredentialStore.defaultService)) {
