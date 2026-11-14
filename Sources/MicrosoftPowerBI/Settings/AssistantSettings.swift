@@ -8,6 +8,7 @@ struct AssistantSettingsView: View {
     @State private var config = AssistantConfiguration.load()
     @State private var apiKeyDraft = ""
     @State private var hasKey = false
+    @State private var keyStatus: String?
     private let client = AssistantClient()
 
     var body: some View {
@@ -20,16 +21,27 @@ struct AssistantSettingsView: View {
                 SecureField("sk-ant-…", text: $apiKeyDraft)
                 HStack {
                     Button("Save Key") {
-                        do { try client.setAPIKey(apiKeyDraft); apiKeyDraft = ""; hasKey = client.isConfigured }
-                        catch { hasKey = false }
+                        do {
+                            try client.setAPIKey(apiKeyDraft)
+                            apiKeyDraft = ""
+                            keyStatus = nil
+                        } catch {
+                            keyStatus = "The key could not be saved to the Keychain: \(error.localizedDescription)"
+                        }
+                        keyChanged()
                     }
                     .disabled(apiKeyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
                     if hasKey {
                         Button("Remove Key", role: .destructive) {
-                            try? client.removeAPIKey()
-                            hasKey = client.isConfigured
+                            do { try client.removeAPIKey(); keyStatus = nil }
+                            catch { keyStatus = "The key could not be removed from the Keychain: \(error.localizedDescription)" }
+                            keyChanged()
                         }
                     }
+                }
+                if let keyStatus {
+                    Text(keyStatus).font(Design.Typeface.caption).foregroundStyle(Design.Palette.negative)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Link("Create a key at console.anthropic.com", destination: URL(string: "https://console.anthropic.com")!)
                     .font(Design.Typeface.caption)
@@ -72,6 +84,12 @@ struct AssistantSettingsView: View {
             client.configuration = new
             NotificationCenter.default.post(name: .assistantConfigurationChanged, object: nil)
         }
+    }
+
+    /// Every open Assistant pane and assistant feature re-reads whether a key is saved.
+    private func keyChanged() {
+        hasKey = client.isConfigured
+        NotificationCenter.default.post(name: .assistantConfigurationChanged, object: nil)
     }
 
     private var modelBinding: Binding<String> {

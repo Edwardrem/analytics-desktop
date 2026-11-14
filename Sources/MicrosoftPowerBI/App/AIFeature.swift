@@ -15,11 +15,17 @@ enum AIFeature {
             AnyView(AssistantPane(store: store))
         }
         DAXAssistant.install()
+        AppCommands.register(commands)
         if !SettingsSections.extra.contains(where: { $0.title == "Assistant" }) {
             SettingsSections.extra.append(SettingsSections.Section(
                 title: "Assistant", symbol: "sparkles",
                 view: { AnyView(AssistantSettingsView()) }))
         }
+    }
+
+    /// Assistant commands: measure descriptions (Data pane menu; the Model view properties panel links to the same sheet).
+    static func commands() -> [AppCommand] {
+        [MeasureDescriptions.command]
     }
 }
 

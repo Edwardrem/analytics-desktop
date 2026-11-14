@@ -308,6 +308,7 @@ struct ModelPropertiesPanel: View {
                         set("Change Description") { $0.description = v }
                     }
                 }
+                if let single { MeasureDescriptionButton(table: single.table, measure: single.measure.name) }
                 PropertyRow("Display folder") {
                     CommitField(value: ModelProperties.shared(measures.map(\.measure.displayFolder)) ?? "", placeholder: single == nil ? "Mixed" : "") { v in
                         set("Change Display Folder") { $0.displayFolder = v.trimmingCharacters(in: .whitespaces) }
