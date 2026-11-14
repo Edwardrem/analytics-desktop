@@ -107,8 +107,14 @@ public enum PBIPProject {
         }
         let ids = (report: existingID("Report") ?? UUID().lower, model: existingID("SemanticModel") ?? UUID().lower)
         let generated = files(for: document, name: safeName, options: options, logicalIDs: ids)
+        let managed = ["\(safeName).Report/definition", "\(safeName).SemanticModel/definition", "\(safeName).SemanticModel/.pbi/facet-cache",
+                       "\(safeName).Report/StaticResources/RegisteredResources"]
+        do { try fm.createDirectory(at: folder, withIntermediateDirectories: true) }
+        catch { throw InteropError.io("Couldn't write the project to “\(folder.path)”: \(error.localizedDescription)") }
+        guard let root = ProjectPaths.realPath(folder) else { throw InteropError.io("Couldn't open the project folder “\(folder.path)”.") }
+        // Check every target before writing anything, so a link planted in the project changes nothing.
+        for path in generated.files.map(\.path) + managed { try ProjectPaths.checkWritable(path, in: folder, root: root) }
         do {
-            try fm.createDirectory(at: folder, withIntermediateDirectories: true)
             var written = Set<String>()
             for (path, data) in generated.files {
                 written.insert(path)
@@ -116,25 +122,33 @@ public enum PBIPProject {
                 if let old = BoundedFile.readIfPresent(url, limit: max(data.count, 1)), old == data { continue }
                 try fm.writeCreatingDirectories(data, to: url)
             }
-            // Prune stale generated files.
-            for managed in ["\(safeName).Report/definition", "\(safeName).SemanticModel/definition", "\(safeName).SemanticModel/.pbi/facet-cache",
-                            "\(safeName).Report/StaticResources/RegisteredResources"] {
-                let base = folder.appendingPathComponent(managed)
-                guard let walker = fm.enumerator(atPath: base.path) else { continue }
-                var dirs: [URL] = []
-                for case let rel as String in walker {
-                    let url = base.appendingPathComponent(rel)
-                    if fm.isDirectory(url) { dirs.append(url); continue }
-                    if !written.contains(managed + "/" + rel) { try? fm.removeItem(at: url) }
-                }
-                for d in dirs.sorted(by: { $0.path.count > $1.path.count }) where (try? fm.contentsOfDirectory(atPath: d.path))?.isEmpty == true {
-                    try? fm.removeItem(at: d)
-                }
-            }
+            for base in managed { prune(base, keeping: written, in: folder, root: root) }
         } catch {
             throw InteropError.io("Couldn't write the project to “\(folder.path)”: \(error.localizedDescription)")
         }
         return generated.warnings
+    }
+
+    /// Removes generated files under `managed` that this save didn't write (deleted pages, visuals, tables).
+    /// Links are never followed or deleted, and nothing outside the project folder is touched.
+    static func prune(_ managed: String, keeping written: Set<String>, in folder: URL, root: String) {
+        let fm = FileManager.default
+        let base = folder.appendingPathComponent(managed)
+        let keys: [URLResourceKey] = [.isSymbolicLinkKey, .isDirectoryKey, .isRegularFileKey]
+        guard !ProjectPaths.isSymbolicLink(base), ProjectPaths.isInside(base, root: root), let baseReal = ProjectPaths.realPath(base),
+              let walker = fm.enumerator(at: base, includingPropertiesForKeys: keys, options: []) else { return }
+        var dirs: [URL] = []
+        // The URL enumerator lists a link but never descends into it; links themselves are left in place.
+        for case let url as URL in walker {
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            guard values?.isSymbolicLink == false, let real = ProjectPaths.realPath(url), real.hasPrefix(baseReal + "/") else { continue }
+            if values?.isDirectory == true { dirs.append(url); continue }
+            guard values?.isRegularFile == true, !written.contains(managed + "/" + real.dropFirst(baseReal.count + 1)) else { continue }
+            try? fm.removeItem(at: url)
+        }
+        for d in dirs.sorted(by: { $0.path.count > $1.path.count }) where (try? fm.contentsOfDirectory(atPath: d.path))?.isEmpty == true {
+            try? fm.removeItem(at: d)
+        }
     }
 
     /// Opens a project: pass the project folder, the `.pbip` file, or a `.Report` / `.SemanticModel` folder.
