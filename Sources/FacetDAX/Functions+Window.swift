@@ -99,6 +99,9 @@ extension DAXEngine {
         let width: Int
         /// ORDERBY keys: (column index, descending).
         let order: [(Int, Bool)]
+        /// Where blank order values go: nil keeps the natural order (blanks lowest), true puts
+        /// them first and false last, whatever the direction.
+        let blanksFirst: Bool?
         /// Partition key → row indices in window order.
         let partitions: [[Value]: [Int]]
         let partitionColumns: [Int]
@@ -128,10 +131,16 @@ extension DAXEngine {
         }
         func compare(_ a: [Value], _ b: [Value]) -> Int {
             for (i, x) in a.enumerated() {
-                let c = DAXOps.sortCompare(x, b[safe: i] ?? .null)
-                if c != 0 { return order[safe: i]?.1 == true ? -c : c }
+                let c = WindowSpec.compare(x, b[safe: i] ?? .null, descending: order[safe: i]?.1 == true, blanksFirst: blanksFirst)
+                if c != 0 { return c }
             }
             return 0
+        }
+        /// Orders two values of one ORDERBY key: negative when `x` comes first.
+        static func compare(_ x: Value, _ y: Value, descending: Bool, blanksFirst: Bool?) -> Int {
+            if let blanksFirst, x.isNull != y.isNull { return (x.isNull == blanksFirst) ? -1 : 1 }
+            let c = DAXOps.sortCompare(x, y)
+            return descending ? -c : c
         }
         /// The current rows, or an error when the context does not identify any column of the relation.
         func requireCurrent(_ fn: String, _ node: Node) throws -> [Int] {
@@ -170,6 +179,8 @@ extension DAXEngine {
         var relationNode: Node?
         var orderNodes: [(Node, Bool)] = []
         var partitionNodes: [Node] = []
+        var matchNodes: [Node] = []
+        var blanksFirst: Bool?
         for i in skip..<max(skip, args.count) where !args[i].isMissing {
             let (n, ac) = deref(args[i], ctx)
             if case .call(let name, let inner) = n.kind {
@@ -177,9 +188,16 @@ extension DAXEngine {
                     orderNodes += try orderPairs(inner, from: 0, ac, defaultDescending: false)
                     continue
                 }
-                if name == "PARTITIONBY" || name == "MATCHBY" {
-                    partitionNodes += inner
-                    continue
+                if name == "PARTITIONBY" { partitionNodes += inner; continue }
+                if name == "MATCHBY" { matchNodes += inner; continue }
+            }
+            // The blanks argument: where blank order values are placed.
+            if case .ident(let word) = n.kind, ac.vars?.lookup(word.daxKey) == nil {
+                switch word.uppercased() {
+                case "FIRST": blanksFirst = true; continue
+                case "LAST": blanksFirst = false; continue
+                case "KEEP", "DEFAULT": blanksFirst = nil; continue
+                default: break
                 }
             }
             if relationNode == nil, isTableNode(args[i], ctx) { relationNode = args[i] }
@@ -259,8 +277,9 @@ extension DAXEngine {
         func sorted(_ indices: [Int]) -> [Int] {
             indices.enumerated().sorted { x, y in
                 for (col, descending) in sortOrder {
-                    let c = DAXOps.sortCompare(rows[x.element][safe: col] ?? .null, rows[y.element][safe: col] ?? .null)
-                    if c != 0 { return descending ? c > 0 : c < 0 }
+                    let c = WindowSpec.compare(rows[x.element][safe: col] ?? .null, rows[y.element][safe: col] ?? .null,
+                                               descending: descending, blanksFirst: blanksFirst)
+                    if c != 0 { return c < 0 }
                 }
                 return x.offset < y.offset
             }.map(\.element)
@@ -276,12 +295,26 @@ extension DAXEngine {
         var current: [Int]?
         if let visual { current = [visual.row] }
         else {
-            let pinned = rel.cols.infos.enumerated().compactMap { k, info in outerValue(of: info, ctx).map { (k, $0) } }
+            // MATCHBY names the columns that identify the current row; without it every column of
+            // the relation that has a value in the context does.
+            var candidates = Array(rel.cols.infos.indices)
+            if !matchNodes.isEmpty {
+                candidates = try matchNodes.map { m in
+                    guard let k = relationColumn(m) else {
+                        throw DAXError("\(fn): MATCHBY expects columns of the relation.", range: m.range)
+                    }
+                    return k
+                }
+            }
+            let pinned = candidates.compactMap { k in outerValue(of: rel.cols.infos[k], ctx).map { (k, $0) } }
+            if !matchNodes.isEmpty, pinned.count != candidates.count {
+                throw DAXError("\(fn): a MATCHBY column has no single value in the row or filter context.", range: node.range)
+            }
             if !pinned.isEmpty {
                 current = all.filter { r in pinned.allSatisfy { DAXOps.strictEquals(rows[r][safe: $0.0] ?? .null, $0.1) } }
             }
         }
-        return WindowSpec(relation: extended, columns: rel.cols, width: width, order: order, partitions: partitions,
+        return WindowSpec(relation: extended, columns: rel.cols, width: width, order: order, blanksFirst: blanksFirst, partitions: partitions,
                           partitionColumns: partitionColumns, all: all, current: current)
     }
 

@@ -56,10 +56,11 @@ final class LiveCalculation: CalculationService {
     /// The category well follows the visual's drill state (see `drillPlan`). With a cross-highlight
     /// selection the result has one row per group of the unhighlighted query: `baseline` holds the
     /// unhighlighted values and `table` the values under the highlight (blank where a group has none).
-    func visualData(spec: VisualSpec, request: VisualRequest) -> VisualData {
+    func visualData(spec original: VisualSpec, request: VisualRequest) -> VisualData {
         let start = CFAbsoluteTimeGetCurrent()
-        if spec.type.isSlicer { return slicerData(spec, request) }
+        if original.type.isSlicer { return slicerData(original, request) }
 
+        let spec = resolvingFieldParameters(original, filters: filterTables(request))
         let drill = Self.drillPlan(spec)
         var groups: [(well: Well, field: FieldRef)] = []
         var values: [(well: Well, field: FieldRef)] = []
@@ -120,7 +121,7 @@ final class LiveCalculation: CalculationService {
                 let i = groups.count + k
                 roles[v.well.rawValue, default: []].append(i)
                 fields.append(v.field)
-                formats.append(formatString(for: v.field))
+                formats.append(formatString(for: v.field, filters: filters))
             }
             var result = table
             var baseline: DataTable?
@@ -138,7 +139,14 @@ final class LiveCalculation: CalculationService {
                     (try? engine.query(summarize(depth: depth, extra: extra, limited: false)))?.first
                 }
                 for calc in spec.visualCalculations {
-                    guard let computed = try? engine.visualCalculation(calc.expression, on: result, rowAxis: axisNames, levels: levels) else { continue }
+                    let computed: [Value]
+                    do {
+                        computed = try engine.visualCalculation(calc.expression, on: result, rowAxis: axisNames, levels: levels)
+                    } catch {
+                        // A calculation that cannot be evaluated is the visual's error, like a failing query.
+                        let reason = (error as? DAXError)?.message ?? error.localizedDescription
+                        throw DAXError("The visual calculation “\(calc.name)” could not be evaluated: \(reason)")
+                    }
                     result.columns.append(DataColumn(name: calc.name, type: .any, values: computed))
                     fields.append(nil)
                     formats.append(calc.formatString)
@@ -162,6 +170,43 @@ final class LiveCalculation: CalculationService {
             out.daxQuery = dax
             return out
         }
+    }
+
+    // MARK: Field parameters
+
+    /// The field parameter whose caption column this field is, if any.
+    private func fieldParameter(_ field: FieldRef) -> FieldParameter? {
+        guard field.kind == .column, field.aggregation == .none else { return nil }
+        return model.fieldParameters.first { ModelDAX.same($0.name, field.table) && ModelDAX.same($0.name, field.name) }
+    }
+
+    /// The visual with every well bound to a field parameter showing the parameter's fields
+    /// instead: the ones selected under the filters (all of them when the parameter is not
+    /// filtered), in parameter order. A slicer keeps the parameter column: it lists the choices.
+    private func resolvingFieldParameters(_ spec: VisualSpec, filters: [String]) -> VisualSpec {
+        guard !model.fieldParameters.isEmpty, spec.allFields.contains(where: { fieldParameter($0) != nil }) else { return spec }
+        var out = spec
+        var selections: [UUID: [FieldRef]] = [:]
+        for well in spec.type.wells {
+            let fields = spec.fields(well)
+            guard fields.contains(where: { fieldParameter($0) != nil }) else { continue }
+            out.setFields(well, fields.flatMap { field -> [FieldRef] in
+                guard let parameter = fieldParameter(field) else { return [field] }
+                if let known = selections[parameter.id] { return known }
+                let selected = selectedFields(of: parameter, filters: filters)
+                selections[parameter.id] = selected
+                return selected
+            })
+        }
+        return out
+    }
+
+    /// The fields of a parameter that are selected under the filters, in parameter order.
+    private func selectedFields(of parameter: FieldParameter, filters: [String]) -> [FieldRef] {
+        let order = ModelDAX.column(parameter.name, ParameterLogic.orderColumnName(parameter.name))
+        let dax = "EVALUATE CALCULATETABLE(VALUES(\(order))" + filters.map { ", " + $0 }.joined() + ")"
+        guard let positions = try? engine.query(dax).first?.columns.first?.values else { return parameter.fields }
+        return positions.compactMap { $0.asInt.map(Int.init) }.sorted().compactMap { parameter.fields[safe: $0] }
     }
 
     /// What a visual's category well groups by at its drill state, as Power BI does:
@@ -218,9 +263,12 @@ final class LiveCalculation: CalculationService {
         }
     }
 
-    private func formatString(for field: FieldRef) -> String {
-        if field.kind == .measure { return model.table(field.table)?.measure(field.name)?.formatString ?? "" }
-        return model.table(field.table)?.column(field.name)?.formatString ?? ""
+    /// The format string of a value column. A measure's is the one in effect under the visual's
+    /// filters: its dynamic format string and the format of a selected calculation item.
+    private func formatString(for field: FieldRef, filters: [String] = []) -> String {
+        guard field.kind == .measure else { return model.table(field.table)?.column(field.name)?.formatString ?? "" }
+        if let dynamic = try? engine.formatString(forMeasure: field.name, filterTables: filters) { return dynamic }
+        return model.table(field.table)?.measure(field.name)?.formatString ?? ""
     }
     /// Filter tables for the visual's filters, other slicers and cross-filter selections.
     private func filterTables(_ request: VisualRequest) -> [String] {

@@ -430,6 +430,7 @@ extension DAXEngine {
         i = ctx.frames.count - 1
         while i >= 0 {
             if case .base(let t, let r) = ctx.frames[i], let ci = db.tables[t].colIndex[b.nameKey] {
+                try checkColumnAccess(ColumnID(table: t, col: ci), n)
                 return cell(ColumnID(table: t, col: ci), r)
             }
             i -= 1
