@@ -276,21 +276,26 @@ final class DocumentStore: ObservableObject {
     // MARK: - Engine
 
     /// Reload the calculation engine with the current model and data, then requery the page.
+    /// DirectQuery tables' rows come from their sources (see `DirectQuerySession`).
     func reloadEngine() {
         engineGeneration += 1
         let gen = engineGeneration
-        let model = doc.model, data = doc.data
+        let model = doc.model
         let roles = viewAsRoles, user = viewAsUser
         let engine = services.makeCalculation()
-        calcQueue.async { [weak self] in
-            let errors = engine.load(model: model, data: data, roles: roles, userName: user)
-            let computed = engine.data
-            DispatchQueue.main.async {
-                guard let self, gen == self.engineGeneration else { return }
-                self.calculation = engine
-                self.modelErrors = errors
-                self.computedData = computed
-                self.refreshVisuals()
+        DirectQuerySession.of(self).data(for: doc, baseDirectory: fileURL?.deletingLastPathComponent()) { [weak self] data, problems in
+            guard let self, gen == self.engineGeneration else { return }
+            if !problems.isEmpty { self.status = StatusMessage(kind: .error, text: problems.joined(separator: "\n")) }
+            self.calcQueue.async { [weak self] in
+                let errors = engine.load(model: model, data: data, roles: roles, userName: user)
+                let computed = engine.data
+                DispatchQueue.main.async {
+                    guard let self, gen == self.engineGeneration else { return }
+                    self.calculation = engine
+                    self.modelErrors = errors
+                    self.computedData = computed
+                    self.refreshVisuals()
+                }
             }
         }
     }
@@ -1046,9 +1051,14 @@ final class DocumentStore: ObservableObject {
             return
         }
         let base = fileURL?.deletingLastPathComponent()
+        // DirectQuery tables aren't imported: Refresh makes their next query read the source again.
+        let direct = Set(DirectQuerySession.tables(doc.model, queries: queries).map(\.query))
+        let only = direct.isEmpty ? names : (names ?? queries.filter { $0.kind == .table && $0.loadEnabled && $0.includeInRefresh }.map(\.name))
+            .filter { !direct.contains($0) }
+        if !direct.isEmpty { DirectQuerySession.of(self).invalidate() }
         refreshProgress = RefreshProgress(query: "", message: "Starting refresh…", fraction: 0)
         Task {
-            let results = await services.query.refresh(queries: queries, only: names, baseDirectory: base) { p in
+            let results = await services.query.refresh(queries: queries, only: only, baseDirectory: base) { p in
                 DispatchQueue.main.async { self.refreshProgress = p }
             }
             var tables: [DataTable] = [], failures: [String] = []
@@ -1062,9 +1072,12 @@ final class DocumentStore: ObservableObject {
             if !tables.isEmpty {
                 self.installTables(tables, sourceQueries: Dictionary(uniqueKeysWithValues: tables.map { ($0.name, $0.name) }),
                                    actionName: "Refresh Data")
+            } else if !direct.isEmpty {
+                self.reloadEngine()
             }
             self.status = failures.isEmpty
-                ? StatusMessage(kind: .success, text: "Refreshed \(tables.count) table\(tables.count == 1 ? "" : "s").")
+                ? StatusMessage(kind: .success, text: "Refreshed \(tables.count) table\(tables.count == 1 ? "" : "s")."
+                                + (direct.isEmpty ? "" : " DirectQuery tables read their sources again."))
                 : StatusMessage(kind: .error, text: failures.joined(separator: "\n"))
         }
     }

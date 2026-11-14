@@ -43,7 +43,8 @@ extension RelationshipOps {
         guard let current = store.model.relationships.first(where: { $0.id == updated.id }) else { return "This relationship no longer exists." }
         if current == updated { return nil }
         let data = store.computedData.tables.isEmpty ? store.doc.data : store.computedData
-        let check = RelationshipEditLogic.check(updated, model: store.model, uniqueness: RelationshipEditLogic.uniqueness(updated, data: data))
+        let unique = RelationshipEditLogic.uniqueness(updated, data: data, skipping: RelationshipEditLogic.unvalidatedTables(store.model))
+        let check = RelationshipEditLogic.check(updated, model: store.model, uniqueness: unique)
         if let problem = check.problem { return problem }
         ModelOps.updateRelationships(store, [updated.id], name: "Edit Relationship") { $0 = updated }
         return nil

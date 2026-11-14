@@ -186,7 +186,7 @@ struct ModelPropertiesPanel: View {
                 problem(.table(name))
             }
             InspectorSection("Advanced") {
-                PropertyRow("Storage mode") { Text(ModelGlyph.label(for: table.storageMode)).font(Design.Typeface.caption) }
+                PropertyRow("Storage mode") { StorageModeControl(table: table) }
                 PropertyRow("Source") {
                     Text(table.isCalculated ? "Calculated table" : table.sourceQuery.map { "Query “\($0)”" } ?? "Loaded data")
                         .font(Design.Typeface.caption)

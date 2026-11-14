@@ -13,7 +13,7 @@ enum AppSettings {
         // Power Query Editor
         case pqFormulaBar, pqProfilingWholeDataset, pqColumnQuality, pqColumnDistribution, pqColumnProfile, pqMonospaced
         // DirectQuery
-        case dqMaxConnections, dqUnrestrictedMeasures, dqSkipRelationshipValidation
+        case dqMaxConnections, dqSkipRelationshipValidation
         // Scripting
         case pythonPath, rPath, allowScripts
         // Security & privacy
@@ -174,8 +174,10 @@ private struct DataSettings: View {
             }
             Section("DirectQuery") {
                 Stepper("Maximum connections per data source: \(connections)", value: $connections, in: 1...30)
-                Toggled("Allow unrestricted measures", .dqUnrestrictedMeasures)
-                Toggled("Edit relationships without validating against the source", .dqSkipRelationshipValidation)
+                Toggled("Edit relationships without validating against the source", .dqSkipRelationshipValidation,
+                        help: "Creating or editing a relationship doesn't read DirectQuery tables' rows to check its cardinality.")
+                Text("Measures over DirectQuery tables run in \(AppIdentity.name)'s engine on the rows the source returns, so every DAX function is available: there is no restricted mode to turn off.")
+                    .font(Design.Typeface.caption).foregroundStyle(.secondary)
             }
         }.formStyle(.grouped)
     }

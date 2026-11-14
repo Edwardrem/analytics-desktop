@@ -15,13 +15,21 @@ enum RelationshipEditLogic {
         var to: Bool?
     }
 
-    static func uniqueness(_ r: Relationship, data: DataStore) -> Uniqueness {
+    /// `skipping`: tables (lower-cased) whose values aren't checked, so their ends are unknown.
+    static func uniqueness(_ r: Relationship, data: DataStore, skipping: Set<String> = []) -> Uniqueness {
         func unique(_ table: String, _ column: String) -> Bool? {
-            guard let key = data.tables.keys.first(where: { ModelDAX.same($0, table) }),
+            guard !skipping.contains(table.lowercased()), let key = data.tables.keys.first(where: { ModelDAX.same($0, table) }),
                   let values = data.tables[key]?.column(column)?.values else { return nil }
             return RelationshipLogic.isUnique(values)
         }
         return Uniqueness(from: unique(r.fromTable, r.fromColumn), to: unique(r.toTable, r.toColumn))
+    }
+
+    /// DirectQuery tables whose rows aren't read to check a relationship's cardinality, when Settings ▸ Data ▸
+    /// "Edit relationships without validating against the source" is on.
+    static func unvalidatedTables(_ model: SemanticModel, defaults: UserDefaults = AppSettings.defaults) -> Set<String> {
+        guard defaults.bool(forKey: AppSettings.Key.dqSkipRelationshipValidation.rawValue) else { return [] }
+        return Set(model.tables.filter { $0.storageMode == .directQuery }.map { $0.name.lowercased() })
     }
 
     /// One-to-one relationships always filter both ways; the security filter option only applies to both-direction filters.
