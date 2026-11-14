@@ -44,16 +44,18 @@ enum StorageModeLogic {
     }
 
     /// Changes the mode. DirectQuery drops the imported rows (they are read from the source from then on);
-    /// leaving DirectQuery imports the table again, as Power BI does.
+    /// leaving DirectQuery imports the table again, as Power BI does. The switch and that import are one undo step.
     @MainActor static func set(_ mode: StorageMode, table: String, store: DocumentStore) {
         guard let t = store.model.table(table), t.storageMode != mode, choices.contains(mode) else { return }
         let wasDirect = t.storageMode == .directQuery
-        store.mutate("Storage Mode", invalidates: .model) { d in
-            guard let i = d.model.tableIndex(table) else { return }
-            d.model.tables[i].storageMode = mode
-            if mode == .directQuery { d.data[d.model.tables[i].name] = nil }
+        let group = store.undoGroup("Storage Mode") {
+            store.mutate("Storage Mode", invalidates: .model) { d in
+                guard let i = d.model.tableIndex(table) else { return }
+                d.model.tables[i].storageMode = mode
+                if mode == .directQuery { d.data[d.model.tables[i].name] = nil }
+            }
         }
-        if wasDirect, let q = t.sourceQuery { store.refreshData(only: [q]) }
+        if wasDirect, let q = t.sourceQuery { store.refreshData(only: [q], joiningUndo: group) }
     }
 
     static func note(for mode: StorageMode) -> String {
@@ -61,7 +63,9 @@ enum StorageModeLogic {
         case .directQuery:
             return "Rows are read from the source when visuals are queried (up to \(DirectQuerySession.rowLimit.formatted()) per table) and aren't saved in the file. Refresh reads them again."
         case .dual:
-            return "Imported and saved like Import, and marked as able to query its source when published. Here, queries use the imported rows."
+            // Power BI answers a query from a Dual table's cache unless it also touches a DirectQuery table, and then
+            // reads the source. Visuals here are answered from one set of rows, so a Dual table stays imported.
+            return "Here Dual works as Import: the rows are imported, saved in the file and imported again on Refresh, and every visual uses them, also beside DirectQuery tables (where Power BI would read this table from its source). Published, the service uses Dual as Power BI does."
         default:
             return ""
         }
