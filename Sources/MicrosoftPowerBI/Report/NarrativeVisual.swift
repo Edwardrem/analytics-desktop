@@ -8,8 +8,8 @@ import FacetDesign
 
 /// The narrative visual's assistant mode (Copilot's narrative): the author writes a prompt, and the assistant
 /// answers it from the page or the whole report. The prompt and the text the author kept are stored on the
-/// visual; when the page's numbers change (a slicer, a filter, a cross-highlight) the text is rewritten for
-/// display without changing the document.
+/// visual. When the page's numbers change (a slicer, a filter, a cross-highlight) the visual offers Update; only
+/// with "Rewrite when the data changes" on does it send the page again by itself, for display only.
 @MainActor
 enum NarrativeAssistant {
     enum Scope: String, CaseIterable {
@@ -29,6 +29,40 @@ enum NarrativeAssistant {
     static func text(_ spec: VisualSpec) -> String { spec.fmtString("narrative", "text", "") }
     static func scope(_ spec: VisualSpec) -> Scope { Scope(rawValue: spec.fmtString("narrative", "scope", "")) ?? .page }
     static func basis(_ spec: VisualSpec) -> String { spec.fmtString("narrative", "basis", "") }
+    /// Off by default: the page's data is only sent again when the author clicks Update.
+    static func autoRewrite(_ spec: VisualSpec) -> Bool { spec.fmtBool("narrative", "autoRewrite", false) }
+
+    /// The narrative's Format pane option (Visual tab ▸ Assistant).
+    nonisolated static func formatProperties(for type: VisualType) -> [FormatProperty] {
+        guard type == .narrative else { return [] }
+        return [FormatProperty(card: "narrative", cardLabel: "Assistant", key: "autoRewrite", label: "Rewrite when the data changes",
+                               kind: .bool, defaultValue: .bool(false))]
+    }
+
+    /// What a narrative with kept text should do now that the page's numbers are `now`.
+    enum RefreshAction: Equatable {
+        /// The text matches the numbers (or there is no assistant text).
+        case none
+        /// The numbers changed and rewriting is opt-in: offer Update.
+        case offerUpdate
+        /// The numbers changed and the author turned on "Rewrite when the data changes".
+        case rewrite
+    }
+
+    /// - Parameter shown: the basis of text already rewritten for display, if any.
+    static func refreshAction(for spec: VisualSpec, now: String, shown: String?) -> RefreshAction {
+        guard !text(spec).isEmpty, !prompt(spec).isEmpty, now != basis(spec), shown != now else { return .none }
+        return autoRewrite(spec) ? .rewrite : .offerUpdate
+    }
+
+    /// Update: rewrites the text from the numbers on the page now and keeps it (one undoable change).
+    @discardableResult
+    static func update(visual id: UUID, store: DocumentStore) async throws -> String {
+        guard let spec = store.visual(id), !prompt(spec).isEmpty else { throw NarrativeError.emptyPrompt }
+        let text = try await generate(prompt: prompt(spec), scope: scope(spec), excluding: id, store: store)
+        keep(text, prompt: prompt(spec), scope: scope(spec), visual: id, store: store, name: "Update Narrative")
+        return text
+    }
 
     /// The page without the narrative and other text-writing visuals, so the narrative never describes itself.
     private static func source(_ page: Page, excluding id: UUID) -> Page {
@@ -80,14 +114,16 @@ enum NarrativeAssistant {
 
     /// Stores the prompt and text on the visual as one undoable change. False when the visual is gone.
     @discardableResult
-    static func keep(_ text: String, prompt: String, scope: Scope, visual id: UUID, store: DocumentStore) -> Bool {
+    static func keep(_ text: String, prompt: String, scope: Scope, autoRewrite: Bool? = nil, visual id: UUID,
+                     store: DocumentStore, name: String = "Write Narrative") -> Bool {
         guard let spec = store.visual(id) else { return false }
         let basis = currentBasis(for: spec, store: store)
-        store.updateVisual(id, name: "Write Narrative", invalidates: .layout) { v in
+        store.updateVisual(id, name: name, invalidates: .layout) { v in
             v.setFmt("narrative", "prompt", .string(prompt))
             v.setFmt("narrative", "text", .string(text))
             v.setFmt("narrative", "scope", .string(scope.rawValue))
             v.setFmt("narrative", "basis", .string(basis))
+            if let autoRewrite { v.setFmt("narrative", "autoRewrite", .bool(autoRewrite)) }
         }
         return true
     }
@@ -95,7 +131,7 @@ enum NarrativeAssistant {
     /// Goes back to the on-device summary.
     static func clear(visual id: UUID, store: DocumentStore) {
         store.updateVisual(id, name: "Clear Narrative", invalidates: .layout) { v in
-            for key in ["prompt", "text", "scope", "basis"] { v.setFmt("narrative", key, nil) }
+            for key in ["prompt", "text", "scope", "basis", "autoRewrite"] { v.setFmt("narrative", key, nil) }
         }
     }
 
@@ -185,13 +221,37 @@ struct NarrativeView: View {
             Text(refreshing ? "Updating for the current filters…" : (refreshError ?? "Written by the assistant: \(NarrativeAssistant.prompt(spec))"))
                 .font(Design.Typeface.caption).foregroundStyle(.tertiary).lineLimit(2)
         }
+        if !refreshing, context.isInteractive, action == .offerUpdate {
+            Button {
+                Task { await update() }
+            } label: {
+                Label("Data changed — Update", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.link)
+            .font(Design.Typeface.caption)
+            .help("The page's numbers changed since this text was written. Rewrite it with the assistant (sends the page's values).")
+        }
+    }
+
+    private var action: NarrativeAssistant.RefreshAction {
+        NarrativeAssistant.refreshAction(for: spec, now: basis, shown: refreshed?.basis)
+    }
+
+    /// The Update click: rewrite from the numbers now and keep the text.
+    private func update() async {
+        refreshing = true
+        refreshError = nil
+        do { try await NarrativeAssistant.update(visual: spec.id, store: store) }
+        catch { refreshError = "Not updated: " + AssistantTasks.message(error) }
+        refreshing = false
     }
 
     /// Rewrites the text when the page's numbers no longer match what it was written from.
     private func refreshIfNeeded() async {
         let prompt = NarrativeAssistant.prompt(spec)
         let now = basis
-        guard !assistantText.isEmpty, !prompt.isEmpty, now != NarrativeAssistant.basis(spec), refreshed?.basis != now,
+        // Only when the author opted in: otherwise the page's data is sent only on Update.
+        guard NarrativeAssistant.refreshAction(for: spec, now: now, shown: refreshed?.basis) == .rewrite,
               store.loadingVisuals.isEmpty, AssistantTasks.isConfigured else { return }
         // Let a run of slicer clicks settle before asking.
         try? await Task.sleep(nanoseconds: 800_000_000)
@@ -240,11 +300,12 @@ struct NarrativePromptEditor: View {
     @State private var working = false
     @State private var failure: Error?
     @State private var configured = true
+    @State private var autoRewrite = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Design.Space.s) {
             Text("Narrative").font(Design.Typeface.headline)
-            Text("Tell the assistant what to write. It reads the values on the page as they are filtered now, and rewrites the text when they change.")
+            Text("Tell the assistant what to write. It reads the values on the page as they are filtered now.")
                 .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if !configured {
                 AssistantNotice(message: AssistantTasks.setupMessage, showsSettings: true)
@@ -260,6 +321,8 @@ struct NarrativePromptEditor: View {
                     ForEach(NarrativeAssistant.Scope.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                Toggle("Rewrite when the data changes", isOn: $autoRewrite)
+                    .help("On: the page's values are sent to the assistant each time they change. Off: the visual offers Update instead.")
                 if let failure { AssistantNotice(error: failure) }
                 if working {
                     HStack(spacing: Design.Space.s) {
@@ -287,7 +350,7 @@ struct NarrativePromptEditor: View {
                     .disabled(working || !configured || prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .help("Ask the assistant to write the narrative from this prompt")
                 Button("Keep") {
-                    NarrativeAssistant.keep(draft, prompt: prompt, scope: scope, visual: spec.id, store: store)
+                    NarrativeAssistant.keep(draft, prompt: prompt, scope: scope, autoRewrite: autoRewrite, visual: spec.id, store: store)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
@@ -301,6 +364,7 @@ struct NarrativePromptEditor: View {
             configured = AssistantTasks.isConfigured
             prompt = NarrativeAssistant.prompt(spec)
             scope = NarrativeAssistant.scope(spec)
+            autoRewrite = NarrativeAssistant.autoRewrite(spec)
         }
         .onReceive(NotificationCenter.default.publisher(for: .assistantConfigurationChanged)) { _ in configured = AssistantTasks.isConfigured }
     }

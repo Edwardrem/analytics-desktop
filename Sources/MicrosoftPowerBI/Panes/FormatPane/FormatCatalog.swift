@@ -73,7 +73,7 @@ enum FormatCatalog {
     /// Visual tab: every type-specific card the renderer of `type` honours, from
     /// `ComponentFormatCatalog` (components) or `ChartFormatCatalog` (charts).
     static func visualCards(for type: VisualType) -> [FormatCardModel] {
-        group(VisualFormatCatalog.properties(for: type))
+        group(VisualFormatCatalog.properties(for: type) + NarrativeAssistant.formatProperties(for: type))
     }
 
     /// General tab: Properties (position and size), the container chrome every visual shares
