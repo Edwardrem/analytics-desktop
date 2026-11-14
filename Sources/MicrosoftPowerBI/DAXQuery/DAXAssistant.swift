@@ -13,6 +13,7 @@ enum DAXAssistant {
     static func install() {
         DAXAssistantHook.explain = { query, store in try await explain(query, store: store) }
         DAXAssistantHook.write = { request, store in try await write(request, store: store) }
+        DAXAssistantHook.fix = { query, error, store in try await fix(query, error: error, store: store) }
     }
 
     static let explainInstructions = """
@@ -28,6 +29,13 @@ enum DAXAssistant {
     only tables, columns and measures that exist in the model, written as 'Table'[Column] and [Measure].
     """
 
+    static let fixInstructions = """
+    Fix DAX queries that fail against the semantic model described in the context. Keep the author's intent \
+    and change as little as possible. Reply with exactly one corrected DAX query in a ```dax code block and \
+    nothing else. The query must contain EVALUATE (optionally after DEFINE) and must use only tables, columns \
+    and measures that exist in the model, written as 'Table'[Column] and [Measure].
+    """
+
     static func explain(_ query: String, store: DocumentStore) async throws -> String {
         let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw DAXAssistantError.emptyQuery }
@@ -36,8 +44,24 @@ enum DAXAssistant {
 
     /// Writes a query for `request`; repairs it with the model's help until it parses and every name exists.
     static func write(_ request: String, store: DocumentStore) async throws -> String {
+        try await checkedQuery(instructions: writeInstructions, request: request, store: store)
+    }
+
+    /// Proposes a corrected version of a failing query from the query, its error and the model's schema. The
+    /// proposal passes the same checks as a written query; one that matches the original is not a fix.
+    static func fix(_ query: String, error: String, store: DocumentStore) async throws -> String {
+        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw DAXAssistantError.emptyQuery }
+        let request = "This DAX query fails:\n```dax\n\(text)\n```\nThe error is: \(error)"
+        let fixed = try await checkedQuery(instructions: fixInstructions, request: request, store: store)
+        guard fixed != text else { throw DAXAssistantError.invalidQuery(["The answer repeated the failing query."]) }
+        return fixed
+    }
+
+    /// Sends `request` with the schema as cached context and repairs the answer until it checks out.
+    private static func checkedQuery(instructions: String, request: String, store: DocumentStore) async throws -> String {
         let client = AssistantTasks.makeClient()
-        let system = [AssistantSystemBlock(AssistantTasks.role + writeInstructions),
+        let system = [AssistantSystemBlock(AssistantTasks.role + instructions),
                       AssistantSystemBlock(AssistantContext.model(store), cache: true)]
         var messages: [AssistantMessage] = [.user(request)]
         var problems: [String] = []
@@ -104,9 +128,9 @@ enum DAXAssistantError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .emptyQuery: return "There is no query to explain. Type or select a query first."
+        case .emptyQuery: return "There is no query to work with. Type or select a query first."
         case .invalidQuery(let problems):
-            return "The assistant could not write a query that works with this model. "
+            return "The assistant could not find a query that works with this model. "
                 + (problems.first.map { "Its last attempt failed the check: \($0)" } ?? "Try describing the result differently.")
         }
     }
