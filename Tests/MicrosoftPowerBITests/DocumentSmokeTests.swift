@@ -260,36 +260,49 @@ final class DocumentSmokeTests: XCTestCase {
             """.write(to: csvURL, atomically: true, encoding: .utf8)
         let store = await Smoke.emptyStore()
 
-        // Get Data ▸ Text/CSV ▸ Connect: the dialog's script, evaluated and loaded as the dialog does.
-        let connector = try XCTUnwrap(DataConnector.connector("csv"))
-        let args = ["path": csvURL.path]
-        let script = try XCTUnwrap(GetDataDialog.mScript(kind: "csv", args: args))
-        let name = GetDataDialog.queryName(for: connector, args: args, in: store)
-        XCTAssertEqual(name, "orders csv")
-        var table = try await QueryEngine(queries: [QueryDefinition(name: name, mScript: script)], environment: QueryEnvironment()).evaluate(name)
-        table.name = name
-        store.installTables([table], sourceQueries: [name: script], actionName: "Get Data")
-        store.mutate("Get Data", invalidates: .model) { $0.queries.append(QueryDefinition(name: name, mScript: script)) }
+        // Get Data ▸ Text/CSV ▸ Connect ▸ Load, as the dialog runs it (recent sources kept out of the user's defaults).
+        let suite = "DocumentSmokeTests-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let security = QuerySecurity(defaults: defaults)
+        let getData = GetDataSession(store: store, security: security)
+        getData.choose(try XCTUnwrap(DataConnector.connector("csv")), location: csvURL.path)
+        await getData.connect()
+        XCTAssertNil(getData.error)
+        XCTAssertEqual(getData.request.delimiter, ",")
+        XCTAssertTrue(getData.promoteHeaders, "the first row is taken as headers")
+        let loadedFromDialog = await getData.finish(.load)
+        XCTAssertTrue(loadedFromDialog, getData.error ?? "")
+        let name = "orders"
+        XCTAssertEqual(store.doc.queries.map(\.name), [name])
+        XCTAssertEqual(store.undoName, "Get Data")
         XCTAssertEqual(store.doc.data[name]?.rowCount, 8)
         XCTAssertEqual(store.doc.data[name]?.column("Product")?.values[2], .string("Gizmo, large"))
+        let loadedScript = store.doc.queries[0].mScript
+        XCTAssertEqual(MScript.steps(of: loadedScript).map(\.name), ["Source", "Promoted Headers", "Changed Type"])
 
-        // Power Query Editor: four transforms, each appended as a step as its command does.
+        // Power Query Editor: four transforms, each applied as a step as its command does.
+        let editor = QueryEditorSession(store: store, security: security)
+        XCTAssertEqual(editor.selectedQuery?.name, name)
         let transforms: [Transform] = [
             .changeType([("Order", .integer), ("Order Date", .date), ("Units", .integer), ("Unit Price", .decimal)], culture: "en-US"),
             .filterRows(.isNotNull(column: "Units")),
             .addCustomColumn(name: "Revenue", expression: "[Units] * [Unit Price]", type: .decimal),
             .renameColumns([("Region", "Sales Region")]),
         ]
-        for transform in transforms {
-            store.mutate("Edit Query", coalesce: "m-script", invalidates: .model) { d in
-                if let i = d.queries.firstIndex(where: { $0.name == name }) { d.queries[i].mScript = MScript.appending(transform, to: d.queries[i].mScript) }
-            }
-        }
-        XCTAssertEqual(MScript.steps(of: store.doc.queries[0].mScript).count, 7)
+        for transform in transforms { editor.apply(transform) }
+        await editor.waitForPreview()
+        XCTAssertNil(editor.previewError)
+        XCTAssertEqual(editor.preview?.table.rowCount, 7)
+        let script = try XCTUnwrap(editor.selectedQuery?.mScript)
+        XCTAssertEqual(MScript.steps(of: script).count, 7)
+        XCTAssertEqual(store.doc.queries[0].mScript, loadedScript, "nothing reaches the document before Apply")
+        XCTAssertTrue(editor.hasPendingChanges)
 
-        // Close & Apply: refresh through the Power Query service and load into the model.
+        // Close & Apply: write the queries and refresh through the Power Query service into the model.
         store.status = nil
-        AppCommands.run("data.refresh", store)
+        editor.applyChanges()
+        XCTAssertEqual(store.doc.queries[0].mScript, script)
         let finished = await Smoke.wait { store.status != nil }
         XCTAssertTrue(finished, "the refresh did not finish")
         XCTAssertEqual(store.status?.kind, .success, store.status?.text ?? "")

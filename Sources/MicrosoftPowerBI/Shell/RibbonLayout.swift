@@ -170,6 +170,8 @@ enum RibbonLayout {
             RibbonGroup(title: "Queries", items: [
                 large("data.transform", "Transform data", "wand.and.rays"),
                 large("data.refresh", "Refresh", "arrow.triangle.2.circlepath"),
+                small("data.sourceSettings", "Data source settings", "lock.shield"),
+                small("data.editParameters", "Edit parameters", "slider.horizontal.3"),
             ]),
             RibbonGroup(title: "Insert", items: [
                 gallery(),
