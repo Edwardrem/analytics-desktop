@@ -319,8 +319,11 @@ struct ModelPropertiesPanel: View {
             }
             InspectorSection("Formatting") {
                 PropertyRow("Format") {
-                    FormatControls(format: ModelProperties.shared(measures.map(\.measure.formatString)), dataType: .decimal) { format in
-                        set("Format Measure", coalesce: "format-measures", invalidates: .model) { $0.formatString = format }
+                    FormatControls(format: ModelProperties.shared(measures.map(\.measure.formatString)), dataType: .decimal,
+                                   dynamic: single.map { s in .init(isOn: s.measure.formatExpression != nil) {
+                                       DynamicFormat.edit(store, table: s.table, measure: s.measure.name)
+                                   } }) { format in
+                        set("Format Measure", coalesce: "format-measures", invalidates: .model) { $0.formatString = format; $0.formatExpression = nil }
                     }
                 }
                 PropertyRow("Data category") {

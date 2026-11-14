@@ -233,8 +233,10 @@ struct Ctx {
     var vars: VarScope?
     /// The filter context ALLSELECTED restores (the query's outer context).
     var selected: FilterContext?
-    /// The measure a calculation item is being applied to.
+    /// The measure a calculation item, or the measure's own dynamic format string, is being applied to.
     var selectedMeasure: MeasureDef?
+    /// True while a measure's own dynamic format string is evaluated: SELECTEDMEASUREFORMATSTRING() is then its static format string.
+    var formattingMeasure = false
     var visual: VisualCalcContext?
     var currentGroup: TableValue?
     var depth = 0

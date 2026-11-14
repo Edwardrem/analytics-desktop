@@ -103,9 +103,16 @@ enum ModelingToolCommands {
             },
             command("model.measure.format", "Measure Format", "number", enabled: has) { store in
                 guard let (t, m) = measure(store) else { return }
-                ModelMenuEntry.popUp(ColumnMenus.format(current: m.formatString) { format in
-                    ModelOps.updateMeasures(store, [(t.name, m.name)], name: "Format Measure") { $0.formatString = format }
+                let dynamic: ModelMenuEntry = .item(title: "Dynamic…", checked: m.formatExpression != nil) {
+                    DynamicFormat.edit(store, table: t.name, measure: m.name)
+                }
+                ModelMenuEntry.popUp(ColumnMenus.format(current: m.formatString, extra: [.separator, dynamic]) { format in
+                    ModelOps.updateMeasures(store, [(t.name, m.name)], name: "Format Measure") { $0.formatString = format; $0.formatExpression = nil }
                 })
+            },
+            command("model.measure.dynamicFormat", "Dynamic Format String…", "function", enabled: has,
+                    isOn: { measure($0)?.measure.formatExpression != nil }) { store in
+                if let (t, m) = measure(store) { DynamicFormat.edit(store, table: t.name, measure: m.name) }
             },
             command("model.measure.homeTable", "Home Table", "tablecells", enabled: has) { store in
                 if let (t, m) = measure(store) { ModelMenuEntry.popUp(ColumnMenus.homeTable(store, table: t.name, measure: m)) }
@@ -151,7 +158,7 @@ extension FormatComposer {
 extension ColumnMenus {
     /// The format choices as a menu: the presets `FormatControls` offers, plus decimal places and
     /// the thousands separator.
-    static func format(current: String, apply: @escaping (String) -> Void) -> [ModelMenuEntry] {
+    static func format(current: String, extra: [ModelMenuEntry] = [], apply: @escaping (String) -> Void) -> [ModelMenuEntry] {
         let c = FormatComposer(current)
         func preset(_ title: String, _ kind: FormatComposer.Kind, _ change: @escaping (inout FormatComposer) -> Void) -> ModelMenuEntry {
             .item(title: title, checked: c.kind == kind) {
@@ -193,6 +200,6 @@ extension ColumnMenus {
             .item(title: "Thousands separator", enabled: c.supportsThousands, checked: c.supportsThousands && c.thousands) {
                 apply(FormatComposer.togglingThousands(of: current))
             },
-        ]
+        ] + extra
     }
 }

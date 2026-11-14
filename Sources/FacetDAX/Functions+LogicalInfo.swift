@@ -96,19 +96,20 @@ extension DAXEngine {
             d[name] = { e, _, _, _ in .scalar(.string(e[keyPath: key])) }
         }
         d["SELECTEDMEASURE"] = { e, _, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURE can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURE can only be used inside a calculation item or a dynamic format string.") }
             return .scalar(try e.evalMeasure(m, c))
         }
         d["SELECTEDMEASURENAME"] = { _, _, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURENAME can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASURENAME can only be used inside a calculation item or a dynamic format string.") }
             return .scalar(.string(m.name))
         }
         d["SELECTEDMEASUREFORMATSTRING"] = { e, _, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASUREFORMATSTRING can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("SELECTEDMEASUREFORMATSTRING can only be used inside a calculation item or a dynamic format string.") }
+            if c.formattingMeasure { return .scalar(.string(m.formatString)) }
             return .scalar(.string(e.formatString(for: m, c)))
         }
         d["ISSELECTEDMEASURE"] = { e, a, c, _ in
-            guard let m = c.selectedMeasure else { throw DAXError("ISSELECTEDMEASURE can only be used inside a calculation item.") }
+            guard let m = c.selectedMeasure else { throw DAXError("ISSELECTEDMEASURE can only be used inside a calculation item or a dynamic format string.") }
             for arg in a {
                 if case .column(let table, let name, _) = (e.deref(arg, c)).0.kind {
                     if name.caseInsensitiveCompare(m.name) == .orderedSame { return .scalar(.bool(true)) }

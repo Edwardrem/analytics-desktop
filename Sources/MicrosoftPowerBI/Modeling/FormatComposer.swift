@@ -101,10 +101,16 @@ struct FormatComposer: Equatable {
 
 /// Format preset menu + decimal places + thousands separator, editing a single format string.
 struct FormatControls: View {
+    /// Format ▸ Dynamic, for a measure: whether it has a dynamic format string, and how to edit it.
+    struct Dynamic {
+        var isOn: Bool
+        var edit: () -> Void
+    }
     /// Current format; nil shows a mixed state (multi-select with different formats).
     let format: String?
     var dataType: DataType = .any
     var compact = true
+    var dynamic: Dynamic?
     let apply: (String) -> Void
     @State private var customText = ""
     @State private var showingCustom = false
@@ -138,6 +144,12 @@ struct FormatControls: View {
                 }
                 Divider()
                 Button("Custom…") { customText = format ?? ""; showingCustom = true }
+                if let dynamic {
+                    Divider()
+                    Button { dynamic.edit() } label: {
+                        if dynamic.isOn { Label("Dynamic…", systemImage: "checkmark") } else { Text("Dynamic…") }
+                    }
+                }
             } label: {
                 Text(title).lineLimit(1)
             }
@@ -146,7 +158,7 @@ struct FormatControls: View {
             .help("Format")
             .popover(isPresented: $showingCustom, arrowEdge: .bottom) { customEditor }
 
-            if format != nil, composer.supportsDecimals || composer.kind == .whole {
+            if format != nil, dynamic?.isOn != true, composer.supportsDecimals || composer.kind == .whole {
                 Stepper(value: Binding(get: { composer.decimals }, set: { v in
                     set { $0.decimals = max(0, min(10, v)); if $0.kind == .whole, v > 0 { $0.kind = .decimal } else if $0.kind == .decimal, v == 0 { $0.kind = .whole } }
                 }), in: 0...10) {
@@ -155,7 +167,7 @@ struct FormatControls: View {
                 .help("Decimal places")
                 .accessibilityLabel("Decimal places")
             }
-            if format != nil, composer.supportsThousands {
+            if format != nil, dynamic?.isOn != true, composer.supportsThousands {
                 Toggle(isOn: Binding(get: { composer.thousands }, set: { v in set { $0.thousands = v } })) {
                     Image(systemName: "textformat.123")
                 }
@@ -168,6 +180,7 @@ struct FormatControls: View {
     }
 
     private var title: String {
+        if dynamic?.isOn == true { return "Dynamic" }
         guard let format else { return "Mixed" }
         let c = composer
         switch c.kind {
