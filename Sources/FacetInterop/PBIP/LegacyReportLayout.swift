@@ -59,7 +59,7 @@ public enum LegacyReportLayout {
         let type: VisualType
         if let t = PowerBIMapping.facetType(forPowerBI: pbiType) { type = t }
         else {
-            type = visual["projections"]?.arrayValue?.isEmpty == false ? .table : .shape
+            type = visual["projections"]?.arrayValue?.isEmpty == false || visual["projections"]?.objectValue?.isEmpty == false ? .table : .shape
             warnings.append(ImportWarning("Visual type “\(pbiType)” isn't supported; it was imported as a \(type.displayName.lowercased()).", location: location))
         }
 
@@ -76,15 +76,29 @@ public enum LegacyReportLayout {
         for entry in visual["prototypeQuery"]?["Select"]?.arrayValue ?? [] {
             if let n = entry["Name"]?.stringValue, let f = PBIExpr.parseField(entry, aliases: aliases) { byName[n] = f }
         }
-        var fields: [FieldRef] = []
-        for p in visual["projections"]?.arrayValue ?? [] {
-            guard let ref = p["queryRef"]?.stringValue else { continue }
-            if let f = byName[ref] { fields.append(f); continue }
-            if let f = parseQueryRef(ref) { fields.append(f) }
-            else { warnings.append(ImportWarning("A field (“\(ref)”) of a \(type.displayName) couldn't be read and was skipped.", location: location)) }
+        func resolve(_ p: JSONValue) -> FieldRef? {
+            guard let ref = p["queryRef"]?.stringValue else { return nil }
+            if let f = byName[ref] ?? parseQueryRef(ref) { return f }
+            warnings.append(ImportWarning("A field (“\(ref)”) of a \(type.displayName) couldn't be read and was skipped.", location: location))
+            return nil
         }
-        if !fields.isEmpty {
-            for (well, fs) in assignWells(type, fields) { spec.wells[well] = fs }
+        if let byRole = visual["projections"]?.objectValue {
+            // Power BI Desktop writes projections keyed by data role ("Category", "Y"…), which names the well exactly.
+            var unplaced: [FieldRef] = []
+            for role in byRole.keys.sorted() {
+                let fields = (byRole[role]?.arrayValue ?? []).compactMap(resolve)
+                if let well = PowerBIMapping.well(forRole: role, in: type) { spec.wells[well.rawValue, default: []].append(contentsOf: fields) }
+                else { unplaced.append(contentsOf: fields) }
+            }
+            if !unplaced.isEmpty {
+                for (well, fs) in assignWells(type, unplaced) { spec.wells[well, default: []].append(contentsOf: fs) }
+            }
+        } else {
+            // Older files list the projections without roles; assign them by position.
+            let fields = (visual["projections"]?.arrayValue ?? []).compactMap(resolve)
+            if !fields.isEmpty {
+                for (well, fs) in assignWells(type, fields) { spec.wells[well] = fs }
+            }
         }
 
         spec.format = PBIExpr.parseObjects([visual["objects"], visual["vcObjects"], visual["visualContainerObjects"]])
@@ -247,7 +261,9 @@ public enum LegacyReportLayout {
 
     /// Legacy filters are JSON strings wrapping `{"filters": [...]}`.
     private static func parseFilterString(_ s: JSONValue?, warnings: inout [ImportWarning], location: String) -> [FilterSpec] {
-        guard let text = s?.stringValue, let parsed = try? JSONValue.parse(text) else { return [] }
+        guard let text = s?.stringValue, var parsed = try? JSONValue.parse(text) else { return [] }
+        // Power BI Desktop stores a bare array of filters; tolerate the wrapped form too.
+        if parsed.arrayValue != nil { parsed = jo(["filters": parsed]) }
         return PBIR.parseFilters(parsed, warnings: &warnings, location: location).filters
     }
 

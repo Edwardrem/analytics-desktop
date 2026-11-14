@@ -251,6 +251,8 @@ public struct IDTokenClaims: Sendable, Equatable {
     public let nonce: String?
     public let issuer: String?
     public let expiresAt: Date?
+    /// The `aud` claim: the application (client) ID the token was issued to.
+    public var audience: String? = nil
 
     /// Tenant ID that Microsoft uses for all personal (consumer) accounts.
     public static let personalTenantID = "9188040d-6c67-4c5b-b112-36a304b66dad"
@@ -273,7 +275,27 @@ public struct IDTokenClaims: Sendable, Equatable {
             subject: sub, objectID: payload["oid"]?.stringValue, tenantID: payload["tid"]?.stringValue,
             name: payload["name"]?.stringValue, preferredUsername: payload["preferred_username"]?.stringValue,
             email: payload["email"]?.stringValue, nonce: payload["nonce"]?.stringValue, issuer: payload["iss"]?.stringValue,
-            expiresAt: payload["exp"]?.doubleValue.map { Date(timeIntervalSince1970: $0) })
+            expiresAt: payload["exp"]?.doubleValue.map { Date(timeIntervalSince1970: $0) },
+            audience: payload["aud"]?.stringValue)
+    }
+
+    /// Checks the claims that bind the token to this app and authority: the audience must be `clientID`, the issuer must
+    /// be the sign-in authority (and name the token's own tenant), and the token must not have expired.
+    /// The signature is not checked: the token comes straight from the token endpoint over TLS.
+    public func validate(clientID: String, authorityHost: String?, now: Date = Date()) throws {
+        guard let audience, audience.caseInsensitiveCompare(clientID) == .orderedSame else {
+            throw MicrosoftAuthError.invalidIDToken("it was issued to a different application")
+        }
+        guard let issuer, let url = URL(string: issuer), url.scheme == "https", let host = url.host?.lowercased(),
+              host == authorityHost?.lowercased() else {
+            throw MicrosoftAuthError.invalidIDToken("it was issued by an unexpected authority")
+        }
+        if let tenantID, !tenantID.isEmpty, !url.path.lowercased().contains(tenantID.lowercased()) {
+            throw MicrosoftAuthError.invalidIDToken("its issuer does not match its tenant")
+        }
+        if let expiresAt, expiresAt.timeIntervalSince(now) < -300 {
+            throw MicrosoftAuthError.invalidIDToken("it has expired")
+        }
     }
 }
 

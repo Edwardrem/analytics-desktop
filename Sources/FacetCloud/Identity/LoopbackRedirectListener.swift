@@ -6,7 +6,10 @@ import Network
 /// (`http://localhost:<port>/?code=…&state=…`) from the system browser.
 ///
 /// Security properties:
-/// - binds to 127.0.0.1 (and, best effort, ::1) only, on an ephemeral port;
+/// - binds to 127.0.0.1 only, on an ephemeral port;
+/// - completes on the first request that carries the expected `state`, then stops listening at once;
+/// - gives up after `maxRejectedRequests` requests that are not the sign-in response, and drops connections
+///   that do not send a request within a few seconds;
 /// - rejects connections whose peer is not a loopback address;
 /// - serves only `GET /`; any other path or method gets 404/405 and does not complete the flow;
 /// - requires the `state` parameter to match (constant-time comparison); mismatches get 400 and are ignored,
@@ -62,14 +65,6 @@ public final class LoopbackRedirectListener: @unchecked Sendable {
         queue.sync {
             self.port = bound
             self.listeners.append(v4)
-        }
-        // Browsers may resolve "localhost" to ::1 first; also listen there on the same port when possible.
-        if let p = NWEndpoint.Port(rawValue: bound), let v6 = try? makeListener(host: .ipv6(.loopback), port: p) {
-            v6.stateUpdateHandler = { [weak v6] state in
-                if case .failed = state { v6?.cancel() }
-            }
-            v6.start(queue: queue)
-            queue.sync { self.listeners.append(v6) }
         }
         return bound
     }
@@ -130,7 +125,9 @@ public final class LoopbackRedirectListener: @unchecked Sendable {
             pendingResult = result
         }
         stopped = true
-        // Give in-flight responses a moment to flush before tearing the sockets down.
+        // Stop accepting at once; give the in-flight response a moment to flush before closing its socket.
+        for l in listeners { l.cancel() }
+        listeners.removeAll()
         queue.asyncAfter(deadline: .now() + 0.5) { [weak self] in self?.stopListeners() }
     }
 
@@ -140,6 +137,13 @@ public final class LoopbackRedirectListener: @unchecked Sendable {
         for c in connections.values { c.cancel() }
         connections.removeAll()
     }
+
+    /// Requests that were not the sign-in response (wrong path, wrong state, favicon probes…).
+    private var rejectedRequests = 0
+    /// After this many unexpected requests the sign-in attempt is abandoned.
+    public static let maxRejectedRequests = 20
+    static let maxOpenConnections = 8
+    static let connectionDeadline: TimeInterval = 10
 
     static func isLoopback(_ endpoint: NWEndpoint) -> Bool {
         guard case .hostPort(let host, _) = endpoint else { return false }
@@ -152,8 +156,13 @@ public final class LoopbackRedirectListener: @unchecked Sendable {
     }
 
     private func accept(_ connection: NWConnection) {
-        guard Self.isLoopback(connection.endpoint) else { connection.cancel(); return }
+        guard !stopped, Self.isLoopback(connection.endpoint), connections.count < Self.maxOpenConnections else { connection.cancel(); return }
         let id = ObjectIdentifier(connection)
+        queue.asyncAfter(deadline: .now() + Self.connectionDeadline) { [weak self, weak connection] in
+            guard let self, let connection, self.connections[id] != nil else { return }
+            connection.cancel()
+            self.connections[id] = nil
+        }
         connections[id] = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             switch state {
@@ -188,6 +197,10 @@ public final class LoopbackRedirectListener: @unchecked Sendable {
         switch Self.evaluate(requestLine: requestLine, expectedState: expectedState) {
         case .reject(let status, let message):
             respond(connection, status: status, html: SignInPages.error(title: "Request not accepted", detail: message))
+            rejectedRequests += 1
+            if rejectedRequests >= Self.maxRejectedRequests, !stopped {
+                finish(.failure(MicrosoftAuthError.listenerFailed("too many unexpected requests reached the sign-in listener")))
+            }
         case .complete(.code(let code)):
             respond(connection, status: "200 OK", html: SignInPages.success())
             finish(.success(code))

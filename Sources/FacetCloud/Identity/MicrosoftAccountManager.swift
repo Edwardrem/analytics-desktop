@@ -91,11 +91,12 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
         let cfg = sessionConfiguration ?? {
             let c = URLSessionConfiguration.ephemeral
             c.timeoutIntervalForRequest = 30
+            c.timeoutIntervalForResource = 120
             c.httpCookieStorage = nil
             c.urlCache = nil
             return c
         }()
-        self.authSession = URLSession(configuration: cfg)
+        self.authSession = URLSession(configuration: cfg, delegate: RedirectGuard(followRedirects: false), delegateQueue: nil)
         self.openURL = openURL ?? { NSWorkspace.shared.open($0) }
         self.accounts = ((try? secrets.getCodable([MicrosoftAccount].self, account: Self.accountsKey)) ?? nil) ?? []
         let storedActive = defaults.string(forKey: Self.activeAccountDefaultsKey)
@@ -123,9 +124,11 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
             try await listener.start()
             defer { listener.stop() }
             let redirect = listener.redirectURI
+            guard EndpointPolicy.isLoopbackRedirect(redirect) else { throw MicrosoftAuthError.listenerFailed("the redirect address is not a loopback address") }
             let scopes = builder.signInScopes(for: resource)
             let url = builder.authorizationURL(redirectURI: redirect, state: state, nonce: nonce, pkce: pkce,
                                                loginHint: loginHint, scopes: scopes)
+            guard policy.allowsSignInPage(url) else { throw MicrosoftAuthError.invalidResponse("the sign-in address is not a Microsoft sign-in page") }
             signInState = .waitingForBrowser
             guard openURL(url) else { throw MicrosoftAuthError.browserFailed }
             let code = try await listener.waitForCode(timeout: 300)
@@ -144,6 +147,9 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
         try await runSignIn { [self] in
             let builder = OAuthRequestBuilder(configuration: configuration)
             let device = try await deviceCodeCall(builder.deviceCodeRequest())
+            guard policy.allowsSignInPage(device.verificationURL) else {
+                throw MicrosoftAuthError.invalidResponse("the device sign-in address is not a Microsoft page")
+            }
             let expiresAt = Date().addingTimeInterval(device.expiresIn)
             signInState = .deviceCode(DeviceCodePrompt(userCode: device.userCode, verificationURL: device.verificationURL,
                                                        expiresAt: expiresAt, message: device.message))
@@ -201,6 +207,8 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
     private func completeSignIn(_ response: OAuthTokenResponse, expectedNonce: String?, resource: MicrosoftResource) throws -> MicrosoftAccount {
         guard let idToken = response.idToken else { throw MicrosoftAuthError.invalidResponse("no ID token was returned") }
         let claims = try IDTokenClaims.decode(jwt: idToken)
+        try claims.validate(clientID: configuration.clientID.trimmingCharacters(in: .whitespacesAndNewlines),
+                            authorityHost: configuration.cloud.authorityHost.host)
         if let expectedNonce {
             guard let nonce = claims.nonce, HTTPHelpers.constantTimeEquals(nonce, expectedNonce) else {
                 throw MicrosoftAuthError.nonceMismatch
@@ -312,9 +320,21 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
     private static func cacheKey(_ accountID: String, _ scope: String) -> String { accountID + "|" + scope.lowercased() }
     private static func refreshTokenKey(_ accountID: String) -> String { "rt." + accountID }
 
+    /// Hosts tokens and sign-in pages are limited to, for the configured cloud.
+    public var policy: EndpointPolicy { EndpointPolicy(cloud: configuration.cloud) }
+
+    /// Identity-platform call with a bounded response. Only ever sent to the configured authority over https.
+    private func identityCall(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        guard let url = request.url, url.scheme == "https", url.host?.lowercased() == configuration.cloud.authorityHost.host?.lowercased() else {
+            throw MicrosoftAuthError.invalidResponse("the sign-in service address is not the Microsoft authority")
+        }
+        do { return try await BoundedHTTP.data(for: request, session: authSession, limit: BoundedHTTP.identityLimit) }
+        catch is BoundedHTTP.TooLarge { throw MicrosoftAuthError.invalidResponse("the response was too large") }
+    }
+
     private func tokenCall(_ request: URLRequest) async throws -> OAuthTokenResponse {
         CloudLog.log("→ " + CloudLog.redactedDescription(of: request))
-        let (data, response) = try await authSession.data(for: request)
+        let (data, response) = try await identityCall(request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         CloudLog.log("← \(status) token endpoint")
         return try OAuthTokenResponse.parse(data, statusCode: status)
@@ -322,7 +342,7 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
 
     private func deviceCodeCall(_ request: URLRequest) async throws -> DeviceCodeResponse {
         CloudLog.log("→ " + CloudLog.redactedDescription(of: request))
-        let (data, response) = try await authSession.data(for: request)
+        let (data, response) = try await identityCall(request)
         return try DeviceCodeResponse.parse(data, statusCode: (response as? HTTPURLResponse)?.statusCode ?? 0)
     }
 
@@ -369,8 +389,9 @@ public final class MicrosoftAccountManager: ObservableObject, RefreshableAccessT
               let token = try? await accessToken(for: .graph, account: account) else { return }
         var request = URLRequest(url: configuration.cloud.graphEndpoint.appendingPathComponent("v1.0/me/photo/$value"))
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        guard let (data, response) = try? await authSession.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty, data.count < 4_000_000,
+        guard policy.allowsCredentials(for: request.url),
+              let (data, response) = try? await BoundedHTTP.data(for: request, session: authSession, limit: BoundedHTTP.photoLimit),
+              (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty,
               let i = accounts.firstIndex(where: { $0.id == accountID }) else { return }
         accounts[i].avatar = data
     }

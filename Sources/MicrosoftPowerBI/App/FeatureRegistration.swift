@@ -19,8 +19,8 @@ enum FeatureRegistration {
         AccountFeature.register()
         AIFeature.register()
         AnalyzeFeature.register()
-        #if !FACET_SHELL_ONLY
-        LiveBridge.register()
-        #endif
+        FileFormatsFeature.register()
+        DataExporters.register()
+        AgentBridgeFeature.register()
     }
 }
