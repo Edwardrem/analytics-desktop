@@ -646,35 +646,38 @@ final class DocumentStore: ObservableObject {
     func arrange(_ a: Arrangement) {
         let sel = selectedVisuals
         guard !sel.isEmpty else { return }
-        let page = currentPage
-        // With one visual selected, align to the page.
-        let bounds = sel.count == 1 ? CGRect(x: 0, y: 0, width: page.size.width, height: page.size.height)
-            : sel.map(\.frame.cgRect).reduce(sel[0].frame.cgRect) { $0.union($1) }
-        var frames = Dictionary(uniqueKeysWithValues: sel.map { ($0.id, $0.frame) })
+        // With one visual selected, align to the page. In the phone layout, arrange the phone frames.
+        let size = canvasSize
+        let rects = sel.map { frame(of: $0).cgRect }
+        let bounds = sel.count == 1 ? CGRect(x: 0, y: 0, width: size.width, height: size.height)
+            : rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+        var frames = Dictionary(uniqueKeysWithValues: sel.map { ($0.id, frame(of: $0)) })
+        func each(_ body: (inout Frame) -> Void) {
+            for k in Array(frames.keys) { if var f = frames[k] { body(&f); frames[k] = f } }
+        }
+        let first = frame(of: sel[0])
         switch a {
-        case .left: for k in frames.keys { frames[k]!.x = bounds.minX }
-        case .right: for k in frames.keys { frames[k]!.x = bounds.maxX - frames[k]!.width }
-        case .centerH: for k in frames.keys { frames[k]!.x = bounds.midX - frames[k]!.width / 2 }
-        case .top: for k in frames.keys { frames[k]!.y = bounds.minY }
-        case .bottom: for k in frames.keys { frames[k]!.y = bounds.maxY - frames[k]!.height }
-        case .centerV: for k in frames.keys { frames[k]!.y = bounds.midY - frames[k]!.height / 2 }
+        case .left: each { $0.x = bounds.minX }
+        case .right: each { $0.x = bounds.maxX - $0.width }
+        case .centerH: each { $0.x = bounds.midX - $0.width / 2 }
+        case .top: each { $0.y = bounds.minY }
+        case .bottom: each { $0.y = bounds.maxY - $0.height }
+        case .centerV: each { $0.y = bounds.midY - $0.height / 2 }
         case .distributeH:
-            let sorted = sel.sorted { $0.frame.x < $1.frame.x }
+            let sorted = sel.map { frame(of: $0) }.enumerated().sorted { $0.element.x < $1.element.x }
             guard sorted.count > 2 else { return }
-            let gap = (bounds.width - sorted.reduce(0) { $0 + $1.frame.width }) / Double(sorted.count - 1)
+            let gap = (bounds.width - sorted.reduce(0) { $0 + $1.element.width }) / Double(sorted.count - 1)
             var x = bounds.minX
-            for v in sorted { frames[v.id]!.x = x; x += v.frame.width + gap }
+            for (i, f) in sorted { frames[sel[i].id]?.x = x; x += f.width + gap }
         case .distributeV:
-            let sorted = sel.sorted { $0.frame.y < $1.frame.y }
+            let sorted = sel.map { frame(of: $0) }.enumerated().sorted { $0.element.y < $1.element.y }
             guard sorted.count > 2 else { return }
-            let gap = (bounds.height - sorted.reduce(0) { $0 + $1.frame.height }) / Double(sorted.count - 1)
+            let gap = (bounds.height - sorted.reduce(0) { $0 + $1.element.height }) / Double(sorted.count - 1)
             var y = bounds.minY
-            for v in sorted { frames[v.id]!.y = y; y += v.frame.height + gap }
-        case .sameWidth: let w = sel[0].frame.width; for k in frames.keys { frames[k]!.width = w }
-        case .sameHeight: let h = sel[0].frame.height; for k in frames.keys { frames[k]!.height = h }
-        case .sameSize:
-            let w = sel[0].frame.width, h = sel[0].frame.height
-            for k in frames.keys { frames[k]!.width = w; frames[k]!.height = h }
+            for (i, f) in sorted { frames[sel[i].id]?.y = y; y += f.height + gap }
+        case .sameWidth: each { $0.width = first.width }
+        case .sameHeight: each { $0.height = first.height }
+        case .sameSize: each { $0.width = first.width; $0.height = first.height }
         }
         setFrames(frames, name: "Arrange")
     }
