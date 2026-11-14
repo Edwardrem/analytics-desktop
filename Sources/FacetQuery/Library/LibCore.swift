@@ -7,6 +7,7 @@ extension MLibrary {
         registerCore, registerRecord,
         registerTable, registerList, registerText, registerNumber, registerDateTime,
         registerFiles, registerSQL, registerWeb, registerWebTables, registerScripts, registerAI,
+        registerParquet,
     ]
 
     /// Build a date from calendar components, or throw M's out-of-range error.

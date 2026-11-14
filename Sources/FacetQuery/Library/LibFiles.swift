@@ -175,7 +175,7 @@ extension MLibrary {
         registerJson(lib)
         registerXml(lib)
         registerExcel(lib)
-        for (name, what) in [("Parquet.Document", "Parquet files"), ("Pdf.Tables", "PDF files"), ("Access.Database", "Access databases")] {
+        for (name, what) in [("Pdf.Tables", "PDF files"), ("Access.Database", "Access databases")] {
             lib.fn(name, 0...4) { _, _ in
                 throw MError.dataSource("\(what) can't be read by this version of \(AppIdentity.name): the \(name) connector isn't available.")
             }
