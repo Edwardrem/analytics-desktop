@@ -18,6 +18,9 @@ public enum PBIDS {
         public var mScript: String
         /// One line describing the source, for messages.
         public var summary: String
+        /// What the connection points at, as Get Data's connection form asks for it: the file or folder path, the
+        /// web or feed address, the server, or the ODBC data source name.
+        public var location: String
         public var isDirectQuery: Bool { mode.caseInsensitiveCompare("DirectQuery") == .orderedSame }
     }
 
@@ -54,25 +57,26 @@ public enum PBIDS {
             return v
         }
         let mode = c["mode"]?.stringValue ?? "Import"
-        func make(_ name: String, _ source: String, _ summary: String) -> Connection {
-            Connection(protocolName: proto, mode: mode, queryName: name.isEmpty ? "Query \(index + 1)" : name, mScript: script(source), summary: summary)
+        func make(_ name: String, _ source: String, _ summary: String, location: String) -> Connection {
+            Connection(protocolName: proto, mode: mode, queryName: name.isEmpty ? "Query \(index + 1)" : name, mScript: script(source),
+                       summary: summary, location: location)
         }
         func database(_ function: String, _ label: String) throws -> Connection {
             let server = try need("server"), db = text("database")
             let source = db.isEmpty ? "\(function)(\(quote(server)))" : "\(function)(\(quote(server)), \(quote(db)))"
-            return make(db.isEmpty ? server : db, source, "\(label) \(server)" + (db.isEmpty ? "" : " / \(db)"))
+            return make(db.isEmpty ? server : db, source, "\(label) \(server)" + (db.isEmpty ? "" : " / \(db)"), location: server)
         }
         switch proto {
         case "tds":
             let server = try need("server"), db = text("database")
             let source = db.isEmpty ? "Sql.Databases(\(quote(server)))" : "Sql.Database(\(quote(server)), \(quote(db)))"
-            return make(db.isEmpty ? server : db, source, "SQL Server \(server)" + (db.isEmpty ? "" : " / \(db)"))
+            return make(db.isEmpty ? server : db, source, "SQL Server \(server)" + (db.isEmpty ? "" : " / \(db)"), location: server)
         case "postgresql": return try database("PostgreSQL.Database", "PostgreSQL")
         case "mysql": return try database("MySQL.Database", "MySQL")
         case "analysis-services": return try database("AnalysisServices.Database", "Analysis Services")
         case "oracle":
             let server = try need("server")
-            return make(server, "Oracle.Database(\(quote(server)))", "Oracle \(server)")
+            return make(server, "Oracle.Database(\(quote(server)))", "Oracle \(server)", location: server)
         case "file":
             let path = try need("path")
             let name = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
@@ -86,23 +90,23 @@ public enum PBIDS {
             case "parquet": source = "Parquet.Document(\(contents))"
             default: source = contents
             }
-            return make(name, source, "File \(path)")
+            return make(name, source, "File \(path)", location: path)
         case "folder":
             let path = try need("path")
-            return make((path as NSString).lastPathComponent, "Folder.Files(\(quote(path)))", "Folder \(path)")
+            return make((path as NSString).lastPathComponent, "Folder.Files(\(quote(path)))", "Folder \(path)", location: path)
         case "http":
             let url = try need("url")
-            return make(URL(string: url)?.host ?? "Web", "Web.Contents(\(quote(url)))", "Web \(url)")
+            return make(URL(string: url)?.host ?? "Web", "Web.Contents(\(quote(url)))", "Web \(url)", location: url)
         case "odata":
             let url = try need("url")
-            return make(URL(string: url)?.host ?? "OData", "OData.Feed(\(quote(url)))", "OData feed \(url)")
+            return make(URL(string: url)?.host ?? "OData", "OData.Feed(\(quote(url)))", "OData feed \(url)", location: url)
         case "sharepoint-list":
             let url = try need("url")
-            return make(URL(string: url)?.host ?? "SharePoint", "SharePoint.Tables(\(quote(url)), [ApiVersion = 15])", "SharePoint list \(url)")
+            return make(URL(string: url)?.host ?? "SharePoint", "SharePoint.Tables(\(quote(url)), [ApiVersion = 15])", "SharePoint list \(url)", location: url)
         case "odbc":
             let dsn = address?["options"]?["dsn"]?.stringValue ?? text("dsn")
             guard !dsn.isEmpty else { throw InteropError.invalidFormat("Connection \(index + 1) (odbc) is missing its “dsn”.") }
-            return make(dsn, "Odbc.DataSource(\(quote("dsn=" + dsn)), [HierarchicalNavigation = true])", "ODBC \(dsn)")
+            return make(dsn, "Odbc.DataSource(\(quote("dsn=" + dsn)), [HierarchicalNavigation = true])", "ODBC \(dsn)", location: dsn)
         case "":
             throw InteropError.invalidFormat("Connection \(index + 1) doesn't say which protocol it uses.")
         default:

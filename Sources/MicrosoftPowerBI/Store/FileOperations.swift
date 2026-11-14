@@ -79,8 +79,8 @@ enum FileOperations {
         if store.fileURL == nil, let saved = documentURL(for: url) { store.fileURL = saved }
         let ext = url.pathExtension.lowercased()
         if ["pbix", "pbit"].contains(ext) { files.importedFrom = url }
-        // A data source file starts in the Power Query Editor, where its data is chosen and loaded.
-        if ext == "pbids" { DispatchQueue.main.async { NotificationCenter.default.post(name: .facetOpenQueryEditor, object: store) } }
+        // A data source file starts in Get Data's navigator for its connection, where its data is chosen and loaded.
+        if ext == "pbids" { DispatchQueue.main.async { DataSourceFiles.startGetData(from: url, in: store) } }
         switch DocumentFiles.pending.removeValue(forKey: url.standardizedFileURL) {
         case .cloud(let link)?: files.cloud = link
         case .importedFrom(let original)?: files.importedFrom = original
