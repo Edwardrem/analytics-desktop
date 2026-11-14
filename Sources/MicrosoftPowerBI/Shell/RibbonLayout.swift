@@ -251,6 +251,7 @@ enum RibbonLayout {
             ]),
             RibbonGroup(title: "Q&A", items: [
                 small("model.prepForAI", "Prep data for AI", "sparkles"),
+                small("qna.setup", "Q&A setup", "questionmark.bubble"),
                 small("model.synonyms", "Synonyms", "character.book.closed"),
                 small("model.translations", "Translations", "globe"),
             ]),

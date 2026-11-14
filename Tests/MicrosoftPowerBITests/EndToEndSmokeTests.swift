@@ -106,7 +106,9 @@ final class EndToEndSmokeTests: XCTestCase {
         case .calendarHeatmap: return ([(.category, day), (.values, sales)], 1096)
         case .candlestick:
             return ([(.category, year), (.open, unitPrice), (.high, unitPrice), (.low, unitPrice), (.close, unitPrice)], 3)
-        case .narrative, .qna, .textBox, .image, .shape, .button, .pageNavigator, .bookmarkNavigator:
+        // The narrative's Values well holds what it must talk about.
+        case .narrative: return ([(.values, sales)], 1)
+        case .qna, .textBox, .image, .shape, .button, .pageNavigator, .bookmarkNavigator:
             return ([], nil)
         }
     }

@@ -236,6 +236,7 @@ struct TMDLWriter {
         if !model.aiInstructions.isEmpty { e.facet(l + 1, "aiInstructions", .string(model.aiInstructions)) }
         if !model.verifiedAnswers.isEmpty { e.facet(l + 1, "verifiedAnswers", encoding: model.verifiedAnswers) }
         if !model.qnaSynonyms.isEmpty { e.facet(l + 1, "qnaSynonyms", encoding: model.qnaSynonyms) }
+        if let terms = model.qnaTerms, !terms.isEmpty { e.facet(l + 1, "qnaTerms", encoding: terms) }
         if queries.count > 1 { e.facet(l + 1, "queryOrder", .array(queries.map { .string($0.name) })) }
         guard includeRefs else { return }
         e.blank()

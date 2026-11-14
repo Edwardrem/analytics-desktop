@@ -30,9 +30,11 @@ enum AIFeature {
 
     static let summarizePageID = "assistant.summarizePage"
     static let summarizeReportID = "assistant.summarizeReport"
+    static let qnaSetupID = "qna.setup"
 
     /// Assistant commands: measure descriptions (Data pane menu; the Model view properties panel links to the same
-    /// sheet) and the page and report summaries (Home ▸ Assistant), which open the Assistant pane with the answer.
+    /// sheet), the page and report summaries (Home ▸ Assistant), which open the Assistant pane with the answer, and
+    /// Q&A setup (Modeling ▸ Q&A).
     static func commands() -> [AppCommand] {
         [
             MeasureDescriptions.command,
@@ -47,6 +49,11 @@ enum AIFeature {
                        isEnabled: { ShellState.of($0).isAvailable(.assistant) }) { store in
                 showPane(store)
                 AssistantPaneModel.of(store).summarizeReport()
+            },
+            AppCommand(id: qnaSetupID, title: "Q&A Setup…", menu: .modeling, symbol: "questionmark.bubble",
+                       help: "Teach Q&A the words people use, and review the questions asked in this file",
+                       isEnabled: { !$0.model.tables.isEmpty }) { store in
+                store.present { QnASetupSheet(tab: .teach) }
             },
         ]
     }
