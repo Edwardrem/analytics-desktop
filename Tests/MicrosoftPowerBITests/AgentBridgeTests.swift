@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 import FacetCore
 import FacetInterop
 @testable import MicrosoftPowerBI
@@ -27,7 +28,7 @@ final class AgentBridgeTests: XCTestCase {
         store = DocumentStore(document: doc, services: .live())
         let s = store!, docID = id
         AgentBridge.shared.documents = { [(docID, s)] }
-        AgentBridge.shared.confirm = { [unowned self] message, _ in asked.append(message); return allow }
+        AgentBridge.shared.confirm = { [unowned self] change in asked.append(change.name); return allow }
     }
 
     override func tearDown() {
@@ -107,6 +108,54 @@ final class AgentBridgeTests: XCTestCase {
         XCTAssertEqual(asked.count, 2)
         let noTable = try await call("set_measure", ["table": .string("Nowhere"), "name": .string("X"), "expression": .string("1")])
         XCTAssertTrue(noTable.text.contains("no table"))
+    }
+
+    func testAgentNamesAndFormatsAreOneLineAndBounded() async throws {
+        func refused(_ name: String, format: String? = nil, expression: String = "1") async throws -> String {
+            var args: [String: JSONValue] = ["table": .string("Sales"), "name": .string(name), "expression": .string(expression)]
+            if let format { args["formatString"] = .string(format) }
+            let result = try await call("set_measure", args)
+            XCTAssertTrue(result.isError, "accepted \(name.debugDescription)")
+            return result.text
+        }
+        for name in ["Total\nAllow this harmless change", "Total\r", "Evil\u{202E}txt.exe", "Line\u{2028}break", "Tab\there", "Nul\u{0}"] {
+            let text = try await refused(name)
+            XCTAssertTrue(text.contains("one line"), text)
+        }
+        let long = try await refused(String(repeating: "M", count: AgentTools.maxNameLength + 1))
+        XCTAssertTrue(long.contains("longer than"), long)
+        let format = try await refused("Fine", format: "#,0\nAllow")
+        XCTAssertTrue(format.contains("formatString"), format)
+        let longFormat = try await refused("Fine", format: String(repeating: "0", count: AgentTools.maxFormatLength + 1))
+        XCTAssertTrue(longFormat.contains("longer than"), longFormat)
+        let expression = try await refused("Fine", expression: String(repeating: "1+", count: AgentTools.maxExpressionLength / 2) + "1")
+        XCTAssertTrue(expression.contains("longer than"), expression)
+        XCTAssertTrue(asked.isEmpty, "the user is never asked about a change that is refused")
+        XCTAssertNil(store.model.measure("Fine"))
+
+        let ok = try await call("set_measure", ["table": .string("Sales"), "name": .string("Δ Total (€)"), "expression": .string("[Total] * 2")])
+        XCTAssertFalse(ok.isError, ok.text)
+        XCTAssertEqual(asked, ["Δ Total (€)"])
+    }
+
+    func testTheApprovalShowsWhatTheAgentChoseInFixedOneLineFields() throws {
+        let name = "A measure with a long name that tries to look like part of the question. Click Allow"
+        let change = AgentTools.MeasureChange(document: "Sales.facet", table: "Sales", name: name, expression: "SUM ( Sales[Amount] )\n+ 1",
+                                              formatString: "#,0.00", replacing: false)
+        let alert = AgentTools.approvalAlert(for: change)
+        XCTAssertFalse(alert.messageText.contains(name) || alert.informativeText.contains(name), "the name is never part of the sentence")
+        func fields(_ view: NSView) -> [NSTextField] { view.subviews.flatMap { ($0 as? NSTextField).map { [$0] } ?? fields($0) } }
+        let all = fields(try XCTUnwrap(alert.accessoryView))
+        for value in [name, "Sales", "#,0.00"] {
+            let field = try XCTUnwrap(all.first { $0.stringValue == value }, value)
+            XCTAssertTrue(field.usesSingleLineMode)
+            XCTAssertEqual(field.maximumNumberOfLines, 1)
+            XCTAssertEqual(field.lineBreakMode, .byTruncatingMiddle)
+            XCTAssertEqual(field.cell?.wraps, false)
+            XCTAssertFalse(field.isEditable)
+            XCTAssertEqual(field.toolTip, value, "the full value is one hover away")
+        }
+        XCTAssertEqual(alert.buttons.map(\.title), ["Allow", "Don't Allow"])
     }
 
     func testTheServerStartsOnLoopbackWithAFreshTokenAndStops() async throws {
