@@ -68,7 +68,8 @@ struct TableValue {
     func rows(_ db: Database) -> [[Value]] {
         guard let b = base else { return data }
         let table = db.tables[b.table]
-        let stores = table.columns.indices.filter { !table.hiddenColumns.contains($0) }.map { table.columns[$0].values }
+        let omitted = table.omittedColumns
+        let stores = table.columns.indices.filter { !omitted.contains($0) }.map { table.columns[$0].values }
         return b.rows.map { r in r < 0 ? [Value](repeating: .null, count: stores.count) : stores.map { $0[Int(r)] } }
     }
     func materialized(_ db: Database) -> TableValue { base == nil ? self : TableValue(cols: cols, rows: rows(db)) }
@@ -93,9 +94,10 @@ extension TableStore {
     /// Column metadata (with lineage) for the columns of this table the current role may see,
     /// cached until columns change.
     var cols: Columns {
-        if let c = colsCache, c.count == columns.count - hiddenColumns.count { return c }
+        let omitted = omittedColumns
+        if let c = colsCache, c.count == columns.count - omitted.count { return c }
         let c = Columns(columns.enumerated().compactMap { i, col in
-            hiddenColumns.contains(i) ? nil : ColInfo(name: col.name, table: name, lineage: ColumnID(table: index, col: i), type: col.type)
+            omitted.contains(i) ? nil : ColInfo(name: col.name, table: name, lineage: ColumnID(table: index, col: i), type: col.type)
         })
         colsCache = c
         return c
@@ -231,8 +233,10 @@ struct Ctx {
     var vars: VarScope?
     /// The filter context ALLSELECTED restores (the query's outer context).
     var selected: FilterContext?
-    /// The measure a calculation item is being applied to.
+    /// The measure a calculation item, or the measure's own dynamic format string, is being applied to.
     var selectedMeasure: MeasureDef?
+    /// True while a measure's own dynamic format string is evaluated: SELECTEDMEASUREFORMATSTRING() is then its static format string.
+    var formattingMeasure = false
     var visual: VisualCalcContext?
     var currentGroup: TableValue?
     var depth = 0

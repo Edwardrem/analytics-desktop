@@ -135,7 +135,7 @@ final class LiveCalculation: CalculationService {
             for (i, g) in groups.enumerated() {
                 roles[g.well.rawValue, default: []].append(i)
                 fields.append(g.field)
-                formats.append(model.table(g.field.table)?.column(g.field.name)?.formatString ?? "")
+                formats.append(g.field.dateLevel == nil ? model.table(g.field.table)?.column(g.field.name)?.formatString ?? "" : "")
             }
             for (k, v) in values.enumerated() {
                 let i = groups.count + k
@@ -484,6 +484,7 @@ final class LiveQuery: QueryService {
     func refresh(queries: [QueryDefinition], only: [String]?, baseDirectory: URL?,
                  progress: @escaping (RefreshProgress) -> Void) async -> [String: Result<DataTable, Error>] {
         let engine = QueryEngine(queries: queries, environment: .app(baseDirectory: baseDirectory))
+        DataLoadOptions.configure(engine)
         return await engine.refreshAll(only: only) { p in
             let fraction = p.total > 0 ? Double(min(p.completed, p.total)) / Double(p.total) : 0
             let message: String

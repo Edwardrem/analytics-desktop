@@ -34,7 +34,7 @@ final class ModelingToolCommandsTests: XCTestCase {
                        ["model.column.dataType", "model.column.format", "model.column.summarizeBy", "model.column.dataCategory",
                         "model.column.hide", "model.column.rename", "model.column.editFormula", "model.column.delete"])
         XCTAssertEqual(ids.filter { $0.hasPrefix("model.measure.") },
-                       ["model.measure.edit", "model.measure.format", "model.measure.homeTable", "model.measure.hide",
+                       ["model.measure.edit", "model.measure.format", "model.measure.dynamicFormat", "model.measure.homeTable", "model.measure.hide",
                         "model.measure.rename", "model.measure.delete"])
         XCTAssertTrue(ids.contains("model.sortByColumn"), "the Column tools tab places it by this id")
         let repeated = Dictionary(grouping: ids, by: { $0 }).filter { $0.value.count > 1 }.keys.sorted()

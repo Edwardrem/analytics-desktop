@@ -44,6 +44,7 @@ struct TMDLBuilder {
     var synthesized = Set<UUID>()
     private var refOrder: [String: [String]] = [:]   // keyword → names in `ref` order
     private var queryOrder: [String]?
+    var aggregationState = TMDLAggregations.ReadState()
 
     private mutating func warn(_ m: String, _ node: TMDLNode, _ file: String?) {
         warnings.append(ImportWarning(m, severity: .info, location: file.map { "\($0):\(node.line)" }))
@@ -100,11 +101,12 @@ struct TMDLBuilder {
                 } else { model.calculationGroups.append(g) }
                 model.tables.removeAll { same($0.name, g.name) }
             } else {
-                var (t, q) = try table(node, file: file)
+                var (t, q, alternates) = try table(node, file: file)
                 if let i = model.tableIndex(t.name) {
                     inheritIDs(&t, from: model.tables[i])
                     model.tables[i] = t
                 } else { model.tables.append(t) }
+                TMDLAggregations.reconcile(table: t.name, columns: alternates, model: &model, state: &aggregationState)
                 model.calculationGroups.removeAll { same($0.name, t.name) }
                 if let q { upsert(q, into: &queries) }
             }
@@ -176,7 +178,8 @@ struct TMDLBuilder {
         guard let i = model.tableIndex(node.name) else {
             throw TMDLError("The script refers to table “\(node.name)”, which doesn't exist in the model.", file: file, line: node.line)
         }
-        let (partial, q) = try table(node, file: file)
+        let (partial, q, alternates) = try table(node, file: file)
+        TMDLAggregations.reconcile(table: model.tables[i].name, columns: alternates, model: &model, state: &aggregationState)
         var t = model.tables[i]
         for var c in partial.columns {
             if let j = t.columns.firstIndex(where: { same($0.name, c.name) }) {
@@ -202,6 +205,7 @@ struct TMDLBuilder {
             t.storageMode = partial.storageMode
             if let q { upsert(q, into: &queries) }
         }
+        if !node.children("refreshPolicy").isEmpty { t.incrementalRefresh = partial.incrementalRefresh }
         model.tables[i] = t
     }
 
@@ -222,6 +226,7 @@ struct TMDLBuilder {
         model.perspectives = reorder(model.perspectives, by: refOrder["perspective"]) { $0.name }
         model.translations = reorder(model.translations, by: refOrder["cultureinfo"]) { $0.culture }
         queries = reorder(queries, by: queryOrder) { $0.name }
+        TMDLAggregations.finish(&model, state: &aggregationState)
     }
 
     // MARK: Model
@@ -229,21 +234,26 @@ struct TMDLBuilder {
     private mutating func applyModel(_ node: TMDLNode, to model: inout SemanticModel, file: String?) {
         if let c = node.prop("culture") { model.culture = c }
         if let v = node.facet("autoDateTime")?.boolValue { model.autoDateTime = v }
+        if let v = node.annotation("__PBI_TimeIntelligenceEnabled") { model.autoDateTime = v.trimmingCharacters(in: .whitespaces) == "1" }
+        if let v = node.facet("autodetectRelationships")?.boolValue { model.autodetectRelationships = v }
         if let v = node.facet("fieldParameters", as: [FieldParameter].self) { model.fieldParameters = v }
         if let v = node.facet("whatIfParameters", as: [WhatIfParameter].self) { model.whatIfParameters = v }
-        if let v = node.facet("aggregations", as: [AggregationMapping].self) { model.aggregations = v }
+        if let v = node.facet("aggregations", as: [AggregationMapping].self) {
+            model.aggregations = v
+            aggregationState.flagged.formUnion(TMDLAggregations.flagged(in: node.facet("aggregations")))
+        }
         if let v = node.facet("layouts", as: [ModelLayout].self) { model.layouts = v }
         if let v = node.facet("aiExcludedFields", as: [String].self) { model.aiExcludedFields = v }
         if let v = node.facet("aiInstructions")?.stringValue { model.aiInstructions = v }
         if let v = node.facet("verifiedAnswers", as: [VerifiedAnswer].self) { model.verifiedAnswers = v }
         if let v = node.facet("qnaSynonyms", as: [String: [String]].self) { model.qnaSynonyms = v }
         if let v = node.facet("queryOrder", as: [String].self) { queryOrder = v }
-        if node.annotation("__PBI_TimeIntelligenceEnabled") == "1" { model.autoDateTime = true }
     }
 
     // MARK: Tables
 
-    private mutating func table(_ node: TMDLNode, file: String?) throws -> (ModelTable, QueryDefinition?) {
+    private mutating func table(_ node: TMDLNode, file: String?) throws
+        -> (ModelTable, QueryDefinition?, [(name: String, native: AggregationMapping?)]) {
         var t = ModelTable(name: node.name)
         t.id = id(node.prop("lineageTag"))
         t.description = node.description
@@ -252,6 +262,7 @@ struct TMDLBuilder {
         t.measures = node.children("measure").map { measure($0, file: file) }
         t.hierarchies = node.children("hierarchy").map { hierarchy($0, file: file) }
         var query: QueryDefinition?
+        var partitionM: String?
         let partitions = node.children("partition")
         if partitions.count > 1 { warn("Table “\(node.name)” has \(partitions.count) partitions; only the first is used.", node, file) }
         if let p = partitions.first {
@@ -264,6 +275,7 @@ struct TMDLBuilder {
                 q.name = p.name
                 t.sourceQuery = p.name
                 query = q
+                partitionM = source
             case "calculated":
                 t.expression = source
             default:
@@ -281,10 +293,20 @@ struct TMDLBuilder {
         t.rowLabelColumn = node.facet("rowLabelColumn")?.stringValue
         t.keyColumn = node.facet("keyColumn")?.stringValue
         t.calendars = node.facet("calendars", as: [CalendarDefinition].self) ?? []
-        t.incrementalRefresh = node.facet("incrementalRefresh", as: IncrementalRefreshPolicy.self)
+        if let rp = node.children("refreshPolicy").first {
+            let annotated = node.facet(TMDLRefreshPolicy.dateColumnAnnotation)?.stringValue
+            let (policy, problems) = TMDLRefreshPolicy.parse(rp, partitionSource: partitionM, annotatedDateColumn: annotated)
+            t.incrementalRefresh = policy
+            for m in problems { warn(m, rp, file) }
+            noteUnknown(rp, properties: TMDLRefreshPolicy.properties, children: [], expressions: TMDLRefreshPolicy.expressions, file: file)
+        } else {
+            t.incrementalRefresh = node.facet("incrementalRefresh", as: IncrementalRefreshPolicy.self)   // files before refreshPolicy
+        }
+        let (alternates, problems) = TMDLAggregations.columns(of: node, table: t.name)
+        for (m, n) in problems { warn(m, n, file) }
         noteUnknown(node, properties: ["lineagetag", "ishidden", "datacategory"],
-                    children: ["column", "measure", "hierarchy", "partition"], file: file)
-        return (t, query)
+                    children: ["column", "measure", "hierarchy", "partition", "refreshpolicy"], file: file)
+        return (t, query, alternates)
     }
 
     private mutating func column(_ node: TMDLNode, file: String?) -> ModelColumn {
@@ -306,7 +328,7 @@ struct TMDLBuilder {
         c.synonyms = node.facet("synonyms", as: [String].self) ?? []
         c.grouping = node.facet("grouping", as: ColumnGrouping.self)
         noteUnknown(node, properties: ["datatype", "formatstring", "ishidden", "iskey", "isnullable", "lineagetag", "summarizeby",
-                                       "sourcecolumn", "sortbycolumn", "displayfolder", "datacategory"], children: [], file: file)
+                                       "sourcecolumn", "sortbycolumn", "displayfolder", "datacategory"], children: ["alternateof"], file: file)
         return c
     }
 

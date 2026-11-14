@@ -109,7 +109,8 @@ enum CoreCommands {
         var first = true
         for type in VisualType.allCases where !type.isPageElement {
             c.append(AppCommand(id: "insert.visual.\(type.rawValue)", title: type.displayName, menu: .insert,
-                                symbol: VisualCatalog.symbol(for: type), separatorBefore: first) { s in
+                                symbol: VisualCatalog.symbol(for: type), separatorBefore: first,
+                                isEnabled: { _ in PreviewFeatures.offers(type) }) { s in
                 s.view = .report
                 if let v = s.selectedVisual, !v.type.isPageElement, v.allFields.isEmpty || NSEvent.modifierFlags.contains(.option) {
                     s.changeType(of: v.id, to: type)
@@ -288,7 +289,11 @@ extension Notification.Name {
 
 /// Icons and grouping for the visual gallery.
 enum VisualCatalog {
-    static let groups: [(name: String, types: [VisualType])] = [
+    /// The groups, without visuals whose preview feature is turned off.
+    static var groups: [(name: String, types: [VisualType])] {
+        allGroups.map { ($0.name, $0.types.filter(PreviewFeatures.offers)) }
+    }
+    static let allGroups: [(name: String, types: [VisualType])] = [
         ("Comparison", [.clusteredColumn, .stackedColumn, .stackedColumn100, .clusteredBar, .stackedBar, .stackedBar100, .bullet, .radar]),
         ("Trend", [.line, .area, .stackedArea, .stackedArea100, .lineClusteredColumn, .lineStackedColumn, .ribbon, .candlestick, .calendarHeatmap]),
         ("Part to whole", [.pie, .donut, .treemap, .sunburst, .funnel, .waterfall, .sankey]),

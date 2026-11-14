@@ -264,7 +264,7 @@ extension DAXEngine {
             let fyEnd = try e.arg(a, 0).map { Int(try DAXOps.number(e.scalar($0, c))) } ?? 12
             guard (1...12).contains(fyEnd) else { throw DAXError("CALENDARAUTO: the fiscal year end month must be between 1 and 12.") }
             var lo: Date?, hi: Date?
-            for t in e.db.tables where t.model?.expression == nil && !e.autoDateTables.contains(t.index) {
+            for t in e.db.tables where t.model?.expression == nil {
                 for col in t.columns where col.type.isTemporal && col.model?.expression == nil {
                     for v in col.values {
                         if case .date(let dt) = v { lo = lo.map { min($0, dt) } ?? dt; hi = hi.map { max($0, dt) } ?? dt }

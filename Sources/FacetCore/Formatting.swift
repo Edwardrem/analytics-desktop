@@ -4,22 +4,34 @@ import Foundation
 /// "0", "0.00", "#,0", "#,0.00", "0%", "0.0%", "$#,0.00", "#,0.0,,\"M\"", "General Number",
 /// "Currency", "Percent", "Scientific", "Short Date", "Long Date", "yyyy-MM-dd", "mmm yyyy", …
 public enum ValueFormatter {
+    private static let cultureLock = NSLock()
+    private static var currentCulture = FormatCulture.enUS
+    /// The culture values are shown in when no culture is given: the active document's model language.
+    public static var culture: FormatCulture {
+        get { cultureLock.lock(); defer { cultureLock.unlock() }; return currentCulture }
+        set { cultureLock.lock(); currentCulture = newValue; cultureLock.unlock() }
+    }
+
     public static func format(_ value: Value, _ fmt: String = "") -> String {
+        format(value, fmt, culture: culture)
+    }
+
+    public static func format(_ value: Value, _ fmt: String, culture c: FormatCulture) -> String {
         switch value {
         case .null: return ""
         case .string(let s): return s
         case .bool(let b): return b ? "True" : "False"
-        case .date(let d): return formatDate(d, fmt)
+        case .date(let d): return formatDate(d, fmt, culture: c)
         case .int(let i):
             // General format, as in Power BI: a whole number with no format string has no separators (a year is 2024).
             if fmt.isEmpty { return String(i) }
-            if isDateFormat(fmt) { return formatDate(Value.date(fromSerial: Double(i)), fmt) }
-            return formatNumber(Double(i), fmt)
+            if isDateFormat(fmt) { return formatDate(Value.date(fromSerial: Double(i)), fmt, culture: c) }
+            return formatNumber(Double(i), fmt, culture: c)
         case .double(let d):
             if !d.isFinite { return d.isNaN ? "NaN" : (d > 0 ? "∞" : "-∞") }
-            if fmt.isEmpty { return general(d) }
-            if isDateFormat(fmt) { return formatDate(Value.date(fromSerial: d), fmt) }
-            return formatNumber(d, fmt)
+            if fmt.isEmpty { return c.localize(general(d)) }
+            if isDateFormat(fmt) { return formatDate(Value.date(fromSerial: d), fmt, culture: c) }
+            return formatNumber(d, fmt, culture: c)
         }
     }
 
@@ -29,7 +41,7 @@ public enum ValueFormatter {
         func f(_ v: Double, _ suffix: String) -> String {
             var s = String(format: "%.\(decimals)f", v)
             if s.contains(".") { while s.hasSuffix("0") { s.removeLast() }; if s.hasSuffix(".") { s.removeLast() } }
-            return s + suffix
+            return culture.localize(s) + suffix
         }
         switch a {
         case 1e12...: return f(d / 1e12, "T")
@@ -65,13 +77,17 @@ public enum ValueFormatter {
     }
 
     public static func formatNumber(_ value: Double, _ fmt: String) -> String {
+        formatNumber(value, fmt, culture: culture)
+    }
+
+    public static func formatNumber(_ value: Double, _ fmt: String, culture c: FormatCulture) -> String {
         switch fmt.lowercased() {
-        case "general number", "general": return general(value)
-        case "currency": return (value < 0 ? "-$" : "$") + grouped(abs(value), decimals: 2)
-        case "fixed": return grouped(value, decimals: 2, grouping: false)
-        case "standard": return grouped(value, decimals: 2)
-        case "percent": return grouped(value * 100, decimals: 2, grouping: false) + "%"
-        case "scientific": return String(format: "%.2E", value)
+        case "general number", "general": return c.localize(general(value))
+        case "currency": return c.isUS ? (value < 0 ? "-$" : "$") + grouped(abs(value), decimals: 2) : c.currency(value)
+        case "fixed": return c.localize(grouped(value, decimals: 2, grouping: false))
+        case "standard": return c.localize(grouped(value, decimals: 2))
+        case "percent": return c.localize(grouped(value * 100, decimals: 2, grouping: false)) + "%"
+        case "scientific": return c.localize(String(format: "%.2E", value))
         case "yes/no": return value != 0 ? "Yes" : "No"
         case "true/false": return value != 0 ? "True" : "False"
         case "on/off": return value != 0 ? "On" : "Off"
@@ -119,7 +135,7 @@ public enum ValueFormatter {
         if body.hasPrefix("-") { neg = true; body.removeFirst() }
         let digits = body.prefix { $0 != "." }.filter(\.isNumber).count
         if digits < minInts { body = String(repeating: "0", count: minInts - digits) + body }
-        return (neg ? "-" : "") + prefix + body + suffix
+        return (neg ? "-" : "") + prefix + c.localize(body) + suffix
     }
 
     static func splitSections(_ fmt: String) -> [String] {
@@ -140,18 +156,26 @@ public enum ValueFormatter {
     }
 
     public static func formatDate(_ d: Date, _ fmt: String) -> String {
+        formatDate(d, fmt, culture: culture)
+    }
+
+    public static func formatDate(_ d: Date, _ fmt: String, culture c: FormatCulture) -> String {
         let hasTime = d.timeIntervalSince1970.truncatingRemainder(dividingBy: 86400) != 0
+        let pattern: String
         switch fmt.lowercased() {
-        case "": return DateParsing.string(d, format: hasTime ? "d MMM yyyy HH:mm" : "d MMM yyyy")
-        case "general date": return DateParsing.string(d, format: hasTime ? "M/d/yyyy h:mm:ss a" : "M/d/yyyy")
-        case "short date": return DateParsing.string(d, format: "M/d/yyyy")
-        case "medium date": return DateParsing.string(d, format: "d MMM yyyy")
-        case "long date": return DateParsing.string(d, format: "EEEE, MMMM d, yyyy")
-        case "short time": return DateParsing.string(d, format: "HH:mm")
-        case "medium time": return DateParsing.string(d, format: "h:mm a")
-        case "long time": return DateParsing.string(d, format: "h:mm:ss a")
-        default: return DateParsing.string(d, format: translateDatePattern(fmt))
+        case "": pattern = hasTime ? "d MMM yyyy HH:mm" : "d MMM yyyy"
+        case "general date":
+            pattern = c.isUS ? (hasTime ? "M/d/yyyy h:mm:ss a" : "M/d/yyyy")
+                : c.datePattern("ddMMyyyy") + (hasTime ? " " + c.datePattern("jjmmss") : "")
+        case "short date": pattern = c.isUS ? "M/d/yyyy" : c.datePattern("ddMMyyyy")
+        case "medium date": pattern = c.isUS ? "d MMM yyyy" : c.datePattern("dMMMyyyy")
+        case "long date": pattern = c.isUS ? "EEEE, MMMM d, yyyy" : c.datePattern("EEEEdMMMMyyyy")
+        case "short time": pattern = c.isUS ? "HH:mm" : c.datePattern("HHmm")
+        case "medium time": pattern = c.isUS ? "h:mm a" : c.datePattern("jjmm")
+        case "long time": pattern = c.isUS ? "h:mm:ss a" : c.datePattern("jjmmss")
+        default: pattern = translateDatePattern(fmt)
         }
+        return c.isUS ? DateParsing.string(d, format: pattern) : DateParsing.string(d, format: pattern, locale: c.locale)
     }
 
     /// Translate an Excel/DAX date pattern (case-insensitive, "m" ambiguous) to a Unicode pattern.

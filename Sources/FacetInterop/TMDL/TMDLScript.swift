@@ -208,7 +208,7 @@ public extension TMDL {
         case .column(let table, let name):
             try inTable(table) { t in
                 guard let c = t.column(name) else { throw missing("column \(table)[\(name)]") }
-                w.emitColumn(e, 2, c)
+                w.emitColumn(e, 2, c, table: t.name)
             }
         case .measure(let table, let name):
             try inTable(table) { t in
@@ -283,6 +283,7 @@ public extension TMDL {
     static func apply(script: String, to model: SemanticModel, queries: [QueryDefinition]) throws -> TMDLApplyResult {
         let parsed = try parseScript(script)
         var builder = TMDLBuilder()
+        builder.aggregationState.scriptMode = true
         var newModel = model
         var newQueries = queries
         for node in parsed.nodes { try builder.merge(node, into: &newModel, queries: &newQueries) }

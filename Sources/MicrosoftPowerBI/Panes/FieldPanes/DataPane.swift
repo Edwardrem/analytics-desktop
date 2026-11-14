@@ -1,5 +1,6 @@
 import SwiftUI
 import FacetCore
+import FacetDAX
 import FacetDesign
 
 /// One row of the Data pane's tree.
@@ -11,6 +12,9 @@ struct DataNode: Identifiable {
         case measure(Measure)
         case hierarchy(Hierarchy)
         case level(column: ModelColumn, hierarchy: String)
+        /// A date column's auto date/time hierarchy, and one of its levels.
+        case dateHierarchy(column: ModelColumn)
+        case dateLevel(column: ModelColumn, level: String)
     }
     var id: String
     var depth: Int
@@ -26,7 +30,17 @@ struct DataNode: Identifiable {
         case .level(let c, _): return .column(table, c.name)
         case .measure(let m): return .measure(table, m.name)
         case .hierarchy(let h): return h.levels.first.map { .column(table, $0) }
+        case .dateHierarchy(let c): return AutoDateTime.levels.first.map { .dateLevel(table, c.name, $0) }
+        case .dateLevel(let c, let level): return .dateLevel(table, c.name, level)
         case .table, .folder: return nil
+        }
+    }
+    /// The fields a row stands for: every level of a hierarchy, else its one field.
+    var fieldRefs: [FieldRef] {
+        switch kind {
+        case .hierarchy(let h): return h.levels.map { .column(table, $0) }
+        case .dateHierarchy(let c): return AutoDateTime.levels.map { .dateLevel(table, c.name, $0) }
+        default: return fieldRef.map { [$0] } ?? []
         }
     }
     var name: String {
@@ -37,6 +51,8 @@ struct DataNode: Identifiable {
         case .measure(let m): return m.name
         case .hierarchy(let h): return h.name
         case .level(let c, _): return c.name
+        case .dateHierarchy: return "Date Hierarchy"
+        case .dateLevel(_, let level): return level
         }
     }
 }
@@ -98,6 +114,7 @@ struct DataPane: View {
         var out: [DataNode] = []
         let tables = store.model.tables.filter { showHidden || !$0.isHidden }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let dated = Set(AutoDateTime.eligibleColumns(in: store.model).map { "\($0.table)\u{1F}\($0.column)".lowercased() })
         for t in tables {
             let tableMatches = searching && matches(t.name, t.synonyms)
             func keep(_ name: String, _ synonyms: [String] = []) -> Bool { !searching || tableMatches || matches(name, synonyms) }
@@ -121,7 +138,19 @@ struct DataPane: View {
                 case .measure(let m):
                     out.append(DataNode(id: "m|\(t.name)|\(m.name)", depth: depth, kind: .measure(m), table: t.name, isDimmed: m.isHidden || t.isHidden))
                 case .column(let c):
-                    out.append(DataNode(id: "c|\(t.name)|\(c.name)", depth: depth, kind: .column(c), table: t.name, isDimmed: c.isHidden || t.isHidden))
+                    let cid = "c|\(t.name)|\(c.name)"
+                    let hasDates = dated.contains("\(t.name)\u{1F}\(c.name)".lowercased())
+                    out.append(DataNode(id: cid, depth: depth, kind: .column(c), table: t.name, isExpandable: hasDates, isDimmed: c.isHidden || t.isHidden))
+                    // Auto date/time: Column › Date Hierarchy › Year, Quarter, Month, Day.
+                    if hasDates, open.contains(cid) {
+                        let hid = "dh|\(t.name)|\(c.name)"
+                        out.append(DataNode(id: hid, depth: depth + 1, kind: .dateHierarchy(column: c), table: t.name, isExpandable: true, isDimmed: c.isHidden || t.isHidden))
+                        if open.contains(hid) {
+                            for level in AutoDateTime.levels {
+                                out.append(DataNode(id: "\(hid)|\(level)", depth: depth + 2, kind: .dateLevel(column: c, level: level), table: t.name, isDimmed: c.isHidden || t.isHidden))
+                            }
+                        }
+                    }
                 case .hierarchy(let h):
                     let hid = "h|\(t.name)|\(h.name)"
                     out.append(DataNode(id: hid, depth: depth, kind: .hierarchy(h), table: t.name, isExpandable: true, isDimmed: h.isHidden || t.isHidden))
@@ -157,18 +186,15 @@ struct DataPane: View {
         return out
     }
 
-    /// Fields used by the selected visual, as "kind|table|name".
+    /// Fields used by the selected visual, as "kind|table|name" (plus "|level" for date hierarchy levels).
     private var usedFields: Set<String> {
         guard let v = store.selectedVisual else { return [] }
-        return Set(v.allFields.map { "\($0.kind.rawValue)|\($0.table)|\($0.name)" })
+        return Set(v.allFields.map(Self.usageKey))
     }
+    static func usageKey(_ f: FieldRef) -> String { "\(f.kind.rawValue)|\(f.table)|\(f.name)" + (f.dateLevel.map { "|\($0)" } ?? "") }
     func isUsed(_ node: DataNode, _ used: Set<String>) -> Bool {
-        switch node.kind {
-        case .hierarchy(let h): return !h.levels.isEmpty && h.levels.allSatisfy { used.contains("column|\(node.table)|\($0)") }
-        default:
-            guard let r = node.fieldRef else { return false }
-            return used.contains("\(r.kind.rawValue)|\(r.table)|\(r.name)")
-        }
+        let refs = node.fieldRefs
+        return !refs.isEmpty && refs.allSatisfy { used.contains(Self.usageKey($0)) }
     }
 
     // MARK: Body
@@ -280,7 +306,10 @@ struct DataPane: View {
 
     private func isOpen(_ node: DataNode) -> Bool {
         if expanded.contains(node.id) { return true }
-        if case .hierarchy = node.kind { return false }
+        switch node.kind {
+        case .hierarchy, .column, .dateHierarchy: return false
+        default: break
+        }
         return !search.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
@@ -290,24 +319,24 @@ struct DataPane: View {
         case .folder: return FieldGlyph.folder
         case .column(let c), .level(let c, _): return FieldGlyph.symbol(column: c)
         case .measure: return FieldGlyph.measure
-        case .hierarchy: return FieldGlyph.hierarchy
+        case .hierarchy, .dateHierarchy: return FieldGlyph.hierarchy
+        case .dateLevel: return FieldGlyph.dateLevel
         }
     }
 
     // MARK: Using fields
 
-    private func addToVisual(_ node: DataNode) {
-        if case .hierarchy(let h) = node.kind { addHierarchy(h, table: node.table); return }
-        if let ref = node.fieldRef { store.addField(ref) }
+    func addToVisual(_ node: DataNode) {
+        switch node.kind {
+        case .hierarchy, .dateHierarchy: addLevels(node.fieldRefs)
+        default: if let ref = node.fieldRef { store.addField(ref) }
+        }
     }
 
     private func toggleUse(_ node: DataNode) {
         guard let v = store.selectedVisual, isUsed(node, usedFields) else { addToVisual(node); return }
-        let names: Set<String>
-        if case .hierarchy(let h) = node.kind { names = Set(h.levels) } else { names = [node.name] }
-        let kind: FieldRef.Kind = { if case .measure = node.kind { return .measure }; return .column }()
-        let table = node.table
-        func hit(_ f: FieldRef) -> Bool { f.kind == kind && f.table == table && names.contains(f.name) }
+        let keys = Set(node.fieldRefs.map(Self.usageKey))
+        func hit(_ f: FieldRef) -> Bool { keys.contains(Self.usageKey(f)) }
         store.updateVisual(v.id, name: "Remove Field") { s in
             for w in s.type.wells { s.setFields(w, s.fields(w).filter { !hit($0) }) }
             s.sort.removeAll { hit($0.field) }
@@ -315,8 +344,8 @@ struct DataPane: View {
         }
     }
 
-    private func addHierarchy(_ h: Hierarchy, table: String) {
-        let refs = h.levels.map { FieldRef.column(table, $0) }
+    /// Adds a hierarchy's levels to the selected visual's grouping well, or to a new visual.
+    private func addLevels(_ refs: [FieldRef]) {
         guard let first = refs.first else { return }
         if let v = store.selectedVisual, let well = v.type.wells.first(where: \.isGrouping) {
             store.updateVisual(v.id, name: "Add Hierarchy") { s in
@@ -357,7 +386,8 @@ private struct DataRow: View {
         case .folder: return FieldGlyph.folder
         case .column(let c), .level(let c, _): return FieldGlyph.symbol(column: c)
         case .measure: return FieldGlyph.measure
-        case .hierarchy: return FieldGlyph.hierarchy
+        case .hierarchy, .dateHierarchy: return FieldGlyph.hierarchy
+        case .dateLevel: return FieldGlyph.dateLevel
         }
     }
     private var badge: (String, String)? {
@@ -385,6 +415,8 @@ private struct DataRow: View {
         case .table(let t): return t.description.isEmpty ? t.name : t.description
         case .hierarchy(let h): return h.levels.joined(separator: " › ")
         case .folder(let f): return f
+        case .dateHierarchy(let c): return "Auto date/time for \(c.name): " + AutoDateTime.levels.joined(separator: " › ")
+        case .dateLevel(let c, let level): return "\(level) of \(c.name)"
         }
     }
 

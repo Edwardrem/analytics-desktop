@@ -276,21 +276,31 @@ final class DocumentStore: ObservableObject {
     // MARK: - Engine
 
     /// Reload the calculation engine with the current model and data, then requery the page.
+    /// DirectQuery tables' rows come from their sources (see `DirectQuerySession`).
     func reloadEngine() {
         engineGeneration += 1
         let gen = engineGeneration
-        let model = doc.model, data = doc.data
+        let model = doc.model
         let roles = viewAsRoles, user = viewAsUser
         let engine = services.makeCalculation()
-        calcQueue.async { [weak self] in
-            let errors = engine.load(model: model, data: data, roles: roles, userName: user)
-            let computed = engine.data
-            DispatchQueue.main.async {
-                guard let self, gen == self.engineGeneration else { return }
-                self.calculation = engine
-                self.modelErrors = errors
-                self.computedData = computed
-                self.refreshVisuals()
+        DirectQuerySession.of(self).data(for: doc, baseDirectory: fileURL?.deletingLastPathComponent()) { [weak self] data, problems in
+            guard let self, gen == self.engineGeneration else { return }
+            if !problems.isEmpty { self.status = StatusMessage(kind: .error, text: problems.joined(separator: "\n")) }
+            self.calcQueue.async { [weak self] in
+                let start = DispatchTime.now()
+                let errors = engine.load(model: model, data: data, roles: roles, userName: user)
+                let computed = engine.data
+                TraceLog.shared.record("engine.load", ["ms": .milliseconds(TraceLog.milliseconds(since: start)),
+                                                       "tables": .count(model.tables.count), "errors": .count(errors.count),
+                                                       "rows": .count(computed.tables.values.reduce(0) { $0 + $1.rowCount })])
+                DispatchQueue.main.async {
+                    guard let self, gen == self.engineGeneration else { return }
+                    self.calculation = engine
+                    self.modelErrors = errors
+                    self.computedData = computed
+                    self.engineDidLoad()
+                    self.refreshVisuals()
+                }
             }
         }
     }
@@ -449,6 +459,9 @@ final class DocumentStore: ObservableObject {
                 let data = engine.visualData(spec: spec, request: request)
                 let overlay = spec.analytics.isEmpty ? AnalyticsOverlays() : analytics.overlays(spec: spec, data: data)
                 let total = (CFAbsoluteTimeGetCurrent() - start) * 1000
+                TraceLog.shared.record("visual.query", ["visualType": .name(spec.type.rawValue), "ms": .milliseconds(total),
+                                                        "queryMs": .milliseconds(data.queryMilliseconds),
+                                                        "rows": .count(data.table.rowCount), "failed": .flag(data.error != nil)])
                 DispatchQueue.main.async {
                     guard let self else { return }
                     self.loadingVisuals.remove(spec.id)
@@ -986,9 +999,11 @@ final class DocumentStore: ObservableObject {
 
     // MARK: - Data
 
-    /// Install freshly loaded tables and make sure the model has matching table metadata.
+    /// Install freshly loaded tables and make sure the model has matching table metadata. Tables new to the
+    /// model get the relationships autodetect finds, in the same undo step, when the option is on.
     func installTables(_ tables: [DataTable], sourceQueries: [String: String] = [:], actionName: String = "Load Data") {
         mutate(actionName, invalidates: .model) { d in
+            var added = Set<String>()
             for t in tables {
                 d.data[t.name] = t
                 if let i = d.model.tableIndex(t.name) {
@@ -1006,7 +1021,11 @@ final class DocumentStore: ObservableObject {
                     var mt = ModelTable(name: t.name, columns: t.columns.map(Self.modelColumn))
                     mt.sourceQuery = sourceQueries[t.name]
                     d.model.tables.append(mt)
+                    added.insert(t.name)
                 }
+            }
+            if DataLoadOptions.autodetectRelationships(for: d) {
+                d.model.relationships += DataLoadOptions.relationships(afterLoading: added, in: d)
             }
         }
     }
@@ -1040,11 +1059,18 @@ final class DocumentStore: ObservableObject {
             return
         }
         let base = fileURL?.deletingLastPathComponent()
+        // DirectQuery tables aren't imported: Refresh makes their next query read the source again.
+        let direct = Set(DirectQuerySession.tables(doc.model, queries: queries).map(\.query))
+        let only = direct.isEmpty ? names : (names ?? queries.filter { $0.kind == .table && $0.loadEnabled && $0.includeInRefresh }.map(\.name))
+            .filter { !direct.contains($0) }
+        if !direct.isEmpty { DirectQuerySession.of(self).invalidate() }
         refreshProgress = RefreshProgress(query: "", message: "Starting refresh…", fraction: 0)
+        let start = DispatchTime.now()
         Task {
-            let results = await services.query.refresh(queries: queries, only: names, baseDirectory: base) { p in
+            let results = await services.query.refresh(queries: queries, only: only, baseDirectory: base) { p in
                 DispatchQueue.main.async { self.refreshProgress = p }
             }
+            Self.trace(refresh: results, since: start)
             var tables: [DataTable] = [], failures: [String] = []
             for (name, result) in results {
                 switch result {
@@ -1056,11 +1082,29 @@ final class DocumentStore: ObservableObject {
             if !tables.isEmpty {
                 self.installTables(tables, sourceQueries: Dictionary(uniqueKeysWithValues: tables.map { ($0.name, $0.name) }),
                                    actionName: "Refresh Data")
+            } else if !direct.isEmpty {
+                self.reloadEngine()
             }
             self.status = failures.isEmpty
-                ? StatusMessage(kind: .success, text: "Refreshed \(tables.count) table\(tables.count == 1 ? "" : "s").")
+                ? StatusMessage(kind: .success, text: "Refreshed \(tables.count) table\(tables.count == 1 ? "" : "s")."
+                                + (direct.isEmpty ? "" : " DirectQuery tables read their sources again."))
                 : StatusMessage(kind: .error, text: failures.joined(separator: "\n"))
         }
+    }
+}
+
+extension DocumentStore {
+    /// Settings ▸ Diagnostics ▸ tracing: each query's row count or failure, and the refresh's duration.
+    nonisolated static func trace(refresh results: [String: Result<DataTable, Error>], since start: DispatchTime) {
+        var failures = 0
+        for (name, result) in results.sorted(by: { $0.key < $1.key }) {
+            switch result {
+            case .success(let t): TraceLog.shared.record("refresh.query", ["query": .name(name), "rows": .count(t.rowCount)])
+            case .failure: failures += 1; TraceLog.shared.record("refresh.query", ["query": .name(name), "failed": .flag(true)])
+            }
+        }
+        TraceLog.shared.record("refresh", ["ms": .milliseconds(TraceLog.milliseconds(since: start)),
+                                           "queries": .count(results.count), "failures": .count(failures)])
     }
 }
 
