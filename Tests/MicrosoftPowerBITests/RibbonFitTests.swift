@@ -1,5 +1,7 @@
 import XCTest
 import FacetCore
+import SwiftUI
+import FacetDesign
 @testable import MicrosoftPowerBI
 
 /// Fitting the ribbon into the window: groups size to their content and give way from the right,
@@ -106,6 +108,32 @@ final class RibbonFitTests: XCTestCase {
                 }
             }
         }
+    }
+
+    /// The fit measures captions with AppKit; the ribbon draws them with SwiftUI. Every small
+    /// caption, drawn as `RibbonButton` draws it (with the drop-down chevron on menus), must be no
+    /// wider than the room the fit leaves it, or it would be clipped.
+    func testDrawnCaptionsFitTheMeasuredRoom() {
+        let real = RibbonFit.standard
+        var checked = 0
+        for tab in everyTab {
+            for group in tab.groups {
+                for case .stack(let items) in RibbonLayout.columns(group) {
+                    for item in items {
+                        let label = RibbonFit.label(of: item)
+                        var caption = Text(label).font(Design.Typeface.caption)
+                        if RibbonFit.isMenu(item) {
+                            caption = caption + Text(" ") + Text(Image(systemName: "chevron.down")).font(.system(size: 7, weight: .semibold))
+                        }
+                        let drawn = NSHostingView(rootView: caption.lineLimit(1).fixedSize()).fittingSize.width
+                        let room = real.smallWidth(item, compact: false) - (real.metrics.smallPadding * 2 + real.metrics.smallIcon + real.metrics.smallSpacing)
+                        XCTAssertLessThanOrEqual(Double(drawn), room, "\(tab.title) ▸ \(group.title) ▸ \(label) is drawn wider than its room")
+                        checked += 1
+                    }
+                }
+            }
+        }
+        XCTAssertGreaterThan(checked, 20)
     }
 
     /// From the 1000-pt minimum window up, every tab fits without scrolling, and a wider window
