@@ -516,30 +516,18 @@ final class LiveAnalytics: AnalyticsService {
     func overlays(spec: VisualSpec, data: VisualData) -> AnalyticsOverlays {
         var out = AnalyticsOverlays()
         guard !data.isEmpty, data.error == nil else { return out }
-        let valueIndices = data.indices(.values)
-        let categoryIndex = data.indices(.category).first ?? data.indices(.legend).first ?? data.indices(.details).first
+        let valueIndices = data.indices(.values).filter { $0 < data.table.columnCount }
+        // A forecast or anomaly search runs along one series: with a legend the rows are several.
+        let oneSeries = data.indices(.legend).isEmpty
         for item in spec.analytics {
             switch item.kind {
-            case .forecast:
+            case .forecast where oneSeries:
                 for column in valueIndices.prefix(3) {
-                    let values = (0..<data.table.rowCount).map { r -> Double? in
-                        let v = data.table[r, column]
-                        return v.isNumber ? v.asDouble : nil
-                    }
-                    let axis = categoryIndex.map { ci in (0..<data.table.rowCount).map { r in data.table[r, ci] } } ?? []
-                    if let forecast = try? Forecaster.overlay(axis: axis, values: values, seriesColumn: column,
-                                                              horizon: max(1, Int(item.value)), confidence: item.secondaryValue / 100) {
-                        out.forecasts.append(forecast)
-                    }
+                    if let forecast = AnalyticsSeries.forecast(item, data: data, column: column) { out.forecasts.append(forecast) }
                 }
-            case .anomalies:
+            case .anomalies where oneSeries:
                 for column in valueIndices.prefix(1) {
-                    let values = (0..<data.table.rowCount).map { r -> Double? in
-                        let v = data.table[r, column]
-                        return v.isNumber ? v.asDouble : nil
-                    }
-                    AnomalyDetector.apply(to: &out, values: values, seriesColumn: column,
-                                          sensitivity: item.value <= 0 ? 70 : item.value)
+                    AnalyticsSeries.anomalies(item, data: data, column: column, into: &out)
                 }
             case .clusters:
                 // Tooltip values describe the points; they are not dimensions to cluster on.

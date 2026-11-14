@@ -384,6 +384,10 @@ public struct AnalyticsItem: Codable, Identifiable, Hashable, Sendable {
     public var style: String = "dashed"
     public var showLabel = true
     public var seriesKey: String?         // limit to one measure
+    /// Forecast: the season length in points; nil detects it, 1 forecasts without seasonality.
+    public var seasonality: Int?
+    /// Forecast: trailing points left out of the fit and forecast instead ("Ignore the last").
+    public var ignoreLast: Int?
     public init(kind: Kind) { self.kind = kind }
 }
 

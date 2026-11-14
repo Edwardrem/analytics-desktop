@@ -366,13 +366,29 @@ private struct AnalyticsItemEditor: View {
         case .forecast:
             PropertyRow("Length") {
                 HStack(spacing: Design.Space.xs) {
-                    CommitNumberField(value: item.value, range: 1...1000) { v in edit { $0.value = v.rounded() } }
+                    CommitNumberField(value: item.value, range: 1...Double(AnalyticsSeries.maxForecastLength)) { v in edit { $0.value = v.rounded() } }
                     Text("points").font(Design.Typeface.caption).foregroundStyle(.secondary)
+                }
+            }
+            PropertyRow("Ignore the last") {
+                HStack(spacing: Design.Space.xs) {
+                    CommitNumberField(value: Double(item.ignoreLast ?? 0), range: 0...Double(AnalyticsSeries.maxForecastLength)) { v in
+                        edit { $0.ignoreLast = v >= 1 ? Int(v.rounded()) : nil }
+                    }
+                    Text("points").font(Design.Typeface.caption).foregroundStyle(.secondary)
+                }
+            }
+            PropertyRow("Seasonality") {
+                HStack(spacing: Design.Space.xs) {
+                    OptionalNumberField(value: item.seasonality.map(Double.init)) { v in
+                        edit { $0.seasonality = v.flatMap { $0.isFinite ? Int(min(max($0.rounded(), 1), 1000)) : nil } }
+                    }
+                    Text(ForecastCard.seasonalityHint(item.seasonality)).font(Design.Typeface.caption).foregroundStyle(.tertiary).lineLimit(1)
                 }
             }
             PropertyRow("Confidence") {
                 Picker("Confidence interval", selection: Binding(get: { item.secondaryValue }, set: { v in edit { $0.secondaryValue = v } })) {
-                    ForEach([75.0, 80, 85, 90, 95, 99], id: \.self) { c in Text("\(Int(c))%").tag(c) }
+                    ForEach(ForecastCard.confidenceLevels, id: \.self) { c in Text("\(Int(c))%").tag(c) }
                 }
                 .labelsHidden().controlSize(.small).fixedSize()
             }

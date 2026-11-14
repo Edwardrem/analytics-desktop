@@ -160,13 +160,25 @@ struct CartesianAnalytics {
         }
         let fItem = items.first { $0.kind == .forecast }, aItem = items.first { $0.kind == .anomalies }
         for fc in overlays.forecasts {
-            guard let s = model.series.first(where: { $0.column == fc.seriesColumn }),
-                  let lastCat = s.values.lastIndex(where: { $0 != nil }), let lastV = s.values[lastCat] else { continue }
+            guard let s = model.series.first(where: { $0.column == fc.seriesColumn }) else { continue }
+            // The line starts at the last point the forecast was fitted to: the series' last point,
+            // or the one before the trailing points it was told to ignore.
+            let anchor = fc.anchorRow.flatMap { cat(s, row: $0) } ?? s.values.lastIndex(where: { $0 != nil })
+            guard let start = anchor, let startV = s.values[safe: start] ?? nil else { continue }
             let color = fItem?.color.map { Color(hex: $0) } ?? colors.seriesColor(s.index, name: s.name)
-            var pts = [BandPoint(x: L.catPos[lastCat], y: plotY(lastV, s), lo: plotY(lastV, s), hi: plotY(lastV, s))]
+            var pts = [BandPoint(x: L.catPos[start], y: plotY(startV, s), lo: plotY(startV, s), hi: plotY(startV, s))]
             let lastX = L.catPos.max() ?? 0
+            let ignored = fc.ignoredRows.map { cat(s, row: $0) }
             for k in fc.values.indices {
-                let x = L.isContinuous ? (fc.labels[safe: k]?.asDouble ?? lastX + Double(k + 1) * L.halfBand * 2) : lastX + Double(k + 1)
+                let x: Double
+                if k < ignored.count {
+                    // A re-forecast trailing point, drawn over the actual one.
+                    guard let c = ignored[k], let p = L.catPos[safe: c] else { continue }
+                    x = p
+                } else {
+                    let future = k - ignored.count
+                    x = L.isContinuous ? (fc.labels[safe: k]?.asDouble ?? lastX + Double(future + 1) * L.halfBand * 2) : lastX + Double(future + 1)
+                }
                 pts.append(BandPoint(x: x, y: plotY(fc.values[k], s), lo: plotY(fc.lower[safe: k] ?? fc.values[k], s),
                                      hi: plotY(fc.upper[safe: k] ?? fc.values[k], s)))
             }
