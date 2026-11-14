@@ -77,12 +77,4 @@ extension MLibrary {
             }
         }
     }
-
-    static func registerAI(_ lib: MLibrary) {
-        for name in ["AI.Sentiment", "AI.KeyPhrases", "AI.DetectLanguage", "AI.TagImage", "AIInsights.Contents", "AzureML.Contents"] {
-            lib.fn(name, 0...3) { _, _ in
-                throw MError.dataSource("\(name) needs an Azure AI service (Text Analytics, Vision or Azure Machine Learning), which this version of \(AppIdentity.name) can't connect to.")
-            }
-        }
-    }
 }

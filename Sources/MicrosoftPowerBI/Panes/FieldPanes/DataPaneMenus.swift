@@ -120,6 +120,7 @@ extension DataPane {
     private func measureMenu(_ m: Measure, table: String) -> some View {
         let ref = FieldRef.measure(table, m.name)
         modelCommand("Edit", "model.editMeasure", table: table, field: ref)
+        modelCommand("Generate description…", MeasureDescriptions.commandID, table: table, field: ref)
         Button("Rename") { beginRename("m|\(table)|\(m.name)", m.name) }
         Button(m.isHidden ? "Unhide" : "Hide") {
             store.updateModel(m.isHidden ? "Unhide Measure" : "Hide Measure") { model in

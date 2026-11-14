@@ -277,8 +277,10 @@ final class QueryEditorPlansTests: XCTestCase {
 
     func testUnavailableAICommandsSayWhy() {
         let s = QueryEditorSession(store: DocumentStore(services: .live()))
-        for id in ["pq.ai.text", "pq.ai.vision", "pq.ai.ml"] {
-            XCTAssertEqual(EditorCommands.command(id)?.blocker(s), "Needs Azure Cognitive Services with a Microsoft sign-in, which the query engine cannot reach.")
+        XCTAssertEqual(EditorCommands.command("pq.ai.ml")?.blocker(s), "Needs Azure Machine Learning with a Microsoft sign-in, which the query engine cannot reach.")
+        // The text and image transforms run on this Mac and only need a column (AIInsightsOnDeviceTests runs them).
+        for id in ["pq.ai.sentiment", "pq.ai.keyPhrases", "pq.ai.language", "pq.ai.vision"] {
+            XCTAssertEqual(EditorCommands.command(id)?.blocker(s), "Select a query first.", id)
         }
     }
 }

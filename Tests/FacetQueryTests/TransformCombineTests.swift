@@ -221,8 +221,12 @@ final class TransformCombineTests: TransformTestCase {
         func message(_ t: Transform) async -> String {
             do { let v = try await apply(t, on: sales); return (try? tableRows(v).first?.last) ?? "no error" } catch { return MError.wrap(error).description }
         }
+        // Without the app's on-device engine (AIInsightsTests covers it installed) every row says why.
+        let installed = AIInsights.provider
+        AIInsights.provider = nil
+        defer { AIInsights.provider = installed }
         let preview = try await engine([("Q", script([.aiSentiment(column: "Product", newColumn: "S")], on: sales))]).evaluatePreview("Q")
-        XCTAssertTrue(preview.cellErrors[4]?[0]?.contains("Azure AI") ?? false, "\(preview.cellErrors)")
+        XCTAssertTrue(preview.cellErrors[4]?[0]?.contains("on-device language and image models") ?? false, "\(preview.cellErrors)")
         for t in [Transform.aiKeyPhrases(column: "Product", newColumn: "S"), .aiDetectLanguage(column: "Product", newColumn: "S"), .aiTagImage(column: "Product", newColumn: "S")] {
             let p = try await engine([("Q", script([t], on: sales))]).evaluatePreview("Q")
             XCTAssertEqual(p.cellErrors[4]?.count, 5, t.stepName)
