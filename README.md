@@ -56,19 +56,40 @@ Analytics Desktop updates itself from this repository's GitHub releases.
   publishes the zip, its `.sig` and `latest.json`. `Scripts/release.sh <version>` does the same locally into
   `dist/`.
 
-## Microsoft account (optional)
-OneDrive, SharePoint, the OneLake catalog, Publish and sensitivity labels need your own Microsoft Entra app
-registration. No client id is built in.
-1. Register an app in Entra ID. Set the redirect URI to `http://localhost` (Mobile and desktop
-   applications) and turn **Allow public client flows** on.
-2. Add these delegated permissions:
-   - Microsoft Graph: `User.Read`, `Files.ReadWrite.All`, `Sites.Read.All`, `offline_access`;
-   - Power BI Service and Fabric: the permissions for what you use (workspaces, datasets, reports, items).
-3. In **Settings ▸ Microsoft account**, enter the client id and tenant, then sign in. Sign-in works through the
-   browser (PKCE) or with a device code.
+## Data sources
+Get Data lists every connector Power BI Desktop has. The ones that work:
+- **Files:** Excel (.xlsx, .xlsm), Text/CSV, XML, JSON, Parquet (flat schemas; uncompressed, Snappy or gzip), folders.
+- **Databases**, with no driver to install: SQLite (built into macOS), and through the app's own protocol clients
+  SQL Server, Azure SQL, Azure Synapse and Fabric warehouses, PostgreSQL, Azure Database for PostgreSQL, Amazon
+  Redshift, MySQL, Azure Database for MySQL and MariaDB. All fold queries, offer DirectQuery and run a typed SQL
+  statement only after you approve it.
+- **Microsoft cloud** (work or school account): SharePoint folders and Online lists, OneDrive and SharePoint files,
+  Dataverse and Dynamics 365, Azure Blob Storage and ADLS Gen2, Fabric lakehouses (OneLake Files only), Azure Data
+  Explorer, and Power BI semantic models (imported as a snapshot of at most 100,000 rows per table or query).
+- **Other:** Web, OData, Python and R scripts, Blank query, Enter data, `.pbids` files.
 
-Refresh tokens are stored in the macOS Keychain only. Tokens are sent only to Microsoft's sign-in, Graph,
-Power BI, Fabric and OneLake hosts.
+Sign-in methods are Anonymous, Basic, Web API key, Organizational account, and account key or SAS for Azure Storage.
+Credentials are kept in the macOS Keychain, never in documents. Edit them in **Data source settings ▸ Edit
+Permissions**. When a source refuses during Get Data, the app asks for them. SQL Server takes a database user or a
+Microsoft account; Windows authentication isn't available on a Mac.
+
+The rest are listed but dimmed, with the reason: Oracle, Db2, Snowflake, BigQuery and other databases that need a
+vendor driver, ODBC, PDF, .xls / .xlsb, dataflows, Fabric KQL databases, other online services and custom
+`.mez` connectors.
+
+## Microsoft account (optional)
+OneDrive and SharePoint files, the OneLake catalog, Publish, sensitivity labels and the Microsoft cloud data sources
+need a Microsoft account. All but OneDrive files need a work or school account.
+- **App registration.** The app signs in with its own multi-tenant Entra registration, whose client ID comes from
+  the `AnalyticsEntraClientID` key in `Resources/Info.plist`. That key is empty until the owner sets it. Until then,
+  or if your organisation requires its own registration, enter an application ID (and optionally a tenant and
+  cloud) in **Settings ▸ Microsoft account**. **How to Register…** there lists the steps and permissions. The
+  default authority is `organizations` (any work or school account).
+- **Sign-in** works through the browser (PKCE on a `http://localhost` redirect) or with a device code. No client
+  secret is used.
+- **Tokens.** Each service gets its own token. The first time a feature needs a new service, Microsoft may ask for
+  consent to just that service. Every token is bound to the hosts allowed for its service, and refresh tokens
+  are kept only in the Keychain.
 
 ## Architecture
 SwiftPM package: one app target on top of eight library targets.
@@ -78,7 +99,7 @@ SwiftPM package: one app target on top of eight library targets.
 | `FacetCore` | Values and tables, the semantic model, report / visual / filter / bookmark / theme types, `.facet` package I/O, formatting |
 | `FacetDesign` | Design tokens and small shared components |
 | `FacetDAX` | DAX lexer, parser, evaluator, function catalog, formatter, and the visual query layer |
-| `FacetQuery` | Power Query M interpreter, standard library, connectors, query folding for SQLite, privacy firewall (see `Sources/FacetQuery/API.md`) |
+| `FacetQuery` | Power Query M interpreter, standard library, file, database and cloud connectors (TDS, PostgreSQL and MySQL clients), query folding, privacy firewall (see `Sources/FacetQuery/API.md`) |
 | `FacetAnalytics` | Forecasting, anomalies, clustering, key influencers, smart narrative, Q&A parsing, statistics |
 | `FacetCloud` | Microsoft sign-in (PKCE loopback, device code), Keychain, Graph / OneDrive / SharePoint, Power BI and Fabric REST |
 | `FacetInterop` | ZIP, TMDL, PBIP / PBIR, `.pbix` / `.pbit` / `.pbids`, themes, Excel / CSV export, the local MCP server |
@@ -118,14 +139,15 @@ smoke suite that drives the real store and services. It:
 - **`.pbix` model.** The `DataModel` stream inside a `.pbix` is a compressed binary that cannot be decoded.
   Importing one brings its pages and queries, but not its data or measures. Use `.pbit` or PBIP to bring the model.
 - **Untested against Microsoft.** The Microsoft service features have only been tested against local stand-in
-  servers, never against live Microsoft services. These are sign-in, Graph, Power BI, Fabric and Purview labels.
+  servers, never against live Microsoft services. These are sign-in, Graph, Power BI, Fabric, Purview labels
+  and the cloud data sources.
 - **Publishing.** The Power BI service cannot read `.facet`. Publish therefore uploads the model as TMDL and the
   report as PBIR, without data. The sheet lists the sources that will not refresh in the service.
-- **Connectors.** Get Data reads Excel (.xlsx), CSV, XML, JSON, folders, SQLite, web pages and URLs,
-  OData, Python and R scripts, entered data and `.pbids`. Connectors that need a database driver or an online
-  service this app does not include (SQL Server, Oracle, PostgreSQL, MySQL, ODBC, Parquet, PDF, .xls / .xlsb,
-  SharePoint lists, Azure and Fabric sources, custom `.mez` connectors) are listed but marked unavailable,
-  with the reason.
+- **Connectors.** See Data sources above. SQL Server has been tested only against a stand-in server, and MySQL
+  and MariaDB never against a real server. Not supported: RSA key exchange for MySQL over an unencrypted
+  connection, Redshift's SHA-256 sign-in, MariaDB's ed25519 sign-in. Dataverse lookups load as `_x_value` ids,
+  lakehouses read Files but not Delta tables, and DirectQuery reads the folded table and computes visuals
+  locally rather than sending one query per visual.
 - **Sensitivity labels.** Labels are stored and shown, but nothing is encrypted.
 - **PBIP safety rules.** A project's report and model folders must be inside the folder that holds its `.pbip`,
   so a thin report bound to a model in another project folder won't open. A project that contains symbolic
