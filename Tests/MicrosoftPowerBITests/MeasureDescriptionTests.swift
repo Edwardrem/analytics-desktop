@@ -71,7 +71,7 @@ final class MeasureDescriptionTests: XCTestCase {
     func testCommandOpensTheReviewSheetForTheDataPaneMeasure() {
         let store = ReportFixture.store()
         let command = AppCommands.command(MeasureDescriptions.commandID)
-        XCTAssertNotNil(command, "registered, so the Data pane menu and the Measure tools ribbon show it")
+        XCTAssertNotNil(command, "registered, so the Data pane menu shows it")
         XCTAssertNil(store.sheet)
         FieldPaneContext.run(MeasureDescriptions.commandID, table: "Sales", field: .measure("Sales", "Total"), store)
         XCTAssertNotNil(store.sheet, "the review sheet opens; nothing is sent until Generate")

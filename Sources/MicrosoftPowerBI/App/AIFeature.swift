@@ -23,9 +23,32 @@ enum AIFeature {
         }
     }
 
-    /// Assistant commands: measure descriptions (Data pane menu; the Model view properties panel links to the same sheet).
+    static let summarizePageID = "assistant.summarizePage"
+    static let summarizeReportID = "assistant.summarizeReport"
+
+    /// Assistant commands: measure descriptions (Data pane menu; the Model view properties panel links to the same
+    /// sheet) and the page and report summaries (Home ▸ Assistant), which open the Assistant pane with the answer.
     static func commands() -> [AppCommand] {
-        [MeasureDescriptions.command]
+        [
+            MeasureDescriptions.command,
+            AppCommand(id: summarizePageID, title: "Summarize Page", menu: .view, symbol: "doc.text.magnifyingglass",
+                       help: "The assistant summarizes what the current page shows, in the Assistant pane",
+                       isEnabled: { ShellState.of($0).isAvailable(.assistant) }) { store in
+                showPane(store)
+                AssistantPaneModel.of(store).summarizePage()
+            },
+            AppCommand(id: summarizeReportID, title: "Summarize Report", menu: .view, symbol: "doc.richtext",
+                       help: "The assistant summarizes every visible page, in the Assistant pane",
+                       isEnabled: { ShellState.of($0).isAvailable(.assistant) }) { store in
+                showPane(store)
+                AssistantPaneModel.of(store).summarizeReport()
+            },
+        ]
+    }
+
+    /// Brings the Assistant pane forward; without a key it shows how to set one up.
+    static func showPane(_ store: DocumentStore) {
+        ShellState.of(store).show(.assistant)
     }
 }
 

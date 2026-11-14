@@ -103,10 +103,10 @@ enum AssistantStub {
         AssistantStubProtocol.reset(replies: [])
     }
 
-    /// The text of every message in a recorded request, in order.
+    /// The text of every message in a recorded request, in order. A system note's content is a plain string.
     static func messageTexts(_ seen: AssistantStubProtocol.Seen) -> [String] {
         (seen.body["messages"]?.arrayValue ?? []).map { m in
-            (m["content"]?.arrayValue ?? []).compactMap { $0["text"]?.stringValue }.joined()
+            m["content"]?.stringValue ?? (m["content"]?.arrayValue ?? []).compactMap { $0["text"]?.stringValue }.joined()
         }
     }
 

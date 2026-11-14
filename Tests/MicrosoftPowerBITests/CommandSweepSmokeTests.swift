@@ -21,6 +21,8 @@ final class CommandSweepSmokeTests: XCTestCase {
         "externalTools.openFolder": "opens a folder in Finder",
         "account.signIn": "opens Microsoft sign-in in the browser once a client ID is set",
         "account.signOut": "removes the signed-in Microsoft accounts from the Keychain",
+        "assistant.summarizePage": "sends the page to the Anthropic API when a key is saved (AssistantPaneTests runs it against a stub)",
+        "assistant.summarizeReport": "sends the report to the Anthropic API when a key is saved (AssistantPaneTests runs it against a stub)",
     ]
     static func isSkipped(_ id: String) -> Bool {
         skipped[id] != nil || id.hasPrefix("externalTools.tool.")   // external tools launch other apps
