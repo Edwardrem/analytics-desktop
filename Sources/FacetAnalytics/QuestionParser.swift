@@ -27,6 +27,8 @@ public final class QuestionParser {
     private var valueIndex: [String: [(field: FieldRef, value: Value)]]?
     private var valueIndexMaxWords = 1
     private var columnValues: [String: [String: Value]] = [:]
+    /// Terms taught as filters (Q&A setup), longest first, with the normalised words they match.
+    private let taught: [(words: [String], term: QnATerm)]
 
     /// - Parameters:
     ///   - model: the semantic model whose tables, columns, measures and synonyms form the vocabulary.
@@ -37,6 +39,17 @@ public final class QuestionParser {
         self.model = model
         self.lexicon = QuestionLexicon(model: model, synonyms: synonyms)
         self.distinctValues = distinctValues
+        self.taught = (model.qnaTerms ?? [])
+            .filter { Self.exists($0.filter.field, in: model) }
+            .map { (QuestionTokenizer.tokenize($0.term).map(\.norm), $0) }
+            .filter { !$0.0.isEmpty }
+            .sorted { $0.0.count > $1.0.count }
+    }
+
+    /// True when the field a taught term filters on is still in the model.
+    public static func exists(_ field: FieldRef, in model: SemanticModel) -> Bool {
+        guard let t = model.table(field.table) else { return false }
+        return field.kind == .measure ? t.measure(field.name) != nil : t.column(field.name) != nil
     }
 
     // MARK: Parse state
@@ -82,6 +95,11 @@ public final class QuestionParser {
             for (k, w) in phrase.enumerated() where lower[j + k] != w || tokens[j + k].quoted { return false }
             return true
         }
+        func matchPhraseNorm(_ phrase: [String], at j: Int) -> Bool {
+            guard j + phrase.count <= tokens.count else { return false }
+            for (k, w) in phrase.enumerated() where tokens[j + k].norm != w || tokens[j + k].quoted { return false }
+            return true
+        }
         func firstMatch(_ phrases: [[String]], at j: Int) -> Int? {
             phrases.first { matchPhrase($0, at: j) }?.count
         }
@@ -92,6 +110,12 @@ public final class QuestionParser {
                 if let hit = matchValue(words: QuestionText.words(of: tok.text)) { addValueFilter(&st, hit) }
                 else { st.unrecognized.append(tok.text) }
                 i += 1; continue
+            }
+            // 0. Terms the author taught as filters win over everything else.
+            if let hit = taught.first(where: { !$0.words.isEmpty && matchPhraseNorm($0.words, at: i) }) {
+                st.filters.append((hit.term.filter, "\(hit.term.term) (\(ReportDescriber.describe(hit.term.filter)))"))
+                st.recognized.append(hit.term.term)
+                i += hit.words.count; continue
             }
             // 1. Multi-word model terms win over keywords ("Total Sales" is a measure, not SUM(sales)).
             if let (entity, len) = matchEntity(tokens, at: i, state: st, minWords: 2) {

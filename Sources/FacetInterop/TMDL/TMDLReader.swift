@@ -237,6 +237,7 @@ struct TMDLBuilder {
         if let v = node.facet("aiInstructions")?.stringValue { model.aiInstructions = v }
         if let v = node.facet("verifiedAnswers", as: [VerifiedAnswer].self) { model.verifiedAnswers = v }
         if let v = node.facet("qnaSynonyms", as: [String: [String]].self) { model.qnaSynonyms = v }
+        if let v = node.facet("qnaTerms", as: [QnATerm].self), !v.isEmpty { model.qnaTerms = v }
         if let v = node.facet("queryOrder", as: [String].self) { queryOrder = v }
         if node.annotation("__PBI_TimeIntelligenceEnabled") == "1" { model.autoDateTime = true }
     }
