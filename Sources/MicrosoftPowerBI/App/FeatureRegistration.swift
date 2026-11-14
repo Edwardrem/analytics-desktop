@@ -23,5 +23,6 @@ enum FeatureRegistration {
         FileFormatsFeature.register()
         DataExporters.register()
         AgentBridgeFeature.register()
+        UpdatesFeature.register()
     }
 }

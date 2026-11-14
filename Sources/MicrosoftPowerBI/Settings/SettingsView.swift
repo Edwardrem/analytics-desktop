@@ -28,6 +28,8 @@ enum AppSettings {
         case previewGantt, previewNewQueryEditor, previewCalendarTI, previewUserContextColumns, previewFullTextSearch
         // Developer: agent bridge, Power BI projects
         case mcpServerEnabled, pbipDataCache
+        // Updates
+        case checkForUpdates, includeBetaUpdates
     }
     static let initial: [String: Any] = [
         Key.appearance.rawValue: "system", Key.detectTypes.rawValue: true, Key.autodetectRelationships.rawValue: true,
@@ -39,6 +41,7 @@ enum AppSettings {
         Key.allowScripts.rawValue: false, Key.previewGantt.rawValue: true, Key.previewNewQueryEditor.rawValue: true, Key.previewCalendarTI.rawValue: true,
         Key.previewUserContextColumns.rawValue: true, Key.previewFullTextSearch.rawValue: true,
         Key.mcpServerEnabled.rawValue: false, Key.pbipDataCache.rawValue: false, Key.autoRecoveryLocation.rawValue: "",
+        Key.checkForUpdates.rawValue: true, Key.includeBetaUpdates.rawValue: false,
     ]
     static func registerDefaults() { defaults.register(defaults: initial) }
     static func bool(_ k: Key) -> Bool { defaults.bool(forKey: k.rawValue) }
@@ -138,7 +141,7 @@ private struct GeneralSettings: View {
                 RecoveryLocationRow().managed(.autoRecoveryLocation)
             }
             Section("Updates and usage data") {
-                Note("\(AppIdentity.name) has no automatic updater: new versions come from wherever you installed it. It sends no usage data or telemetry, and never sends your data or documents anywhere you didn't ask.")
+                Note("\(AppIdentity.name) installs new versions from its GitHub releases: see Updates for how often it checks, and what a check sends. It sends no usage data or telemetry, and never sends your data or documents anywhere you didn't ask.")
             }
         }.formStyle(.grouped)
     }
