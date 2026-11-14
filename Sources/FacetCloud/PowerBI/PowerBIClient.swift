@@ -142,6 +142,9 @@ public final class PowerBIClient {
     public func exportReport(_ reportID: String, in workspace: PowerBIWorkspaceRef = .myWorkspace, suggestedName: String = "Report.pbix",
                              destination: URL? = nil, progress: TransferProgressHandler? = nil) async throws -> URL {
         var request = URLRequest(url: try url(workspace.pathPrefix + "/reports/\(seg(reportID))/Export"))
+        guard rest.policy.allowsCredentials(for: request.url) else {
+            throw CloudAPIError(service: rest.service, kind: .badRequest, statusCode: 0, message: "Refused to send your sign-in to an address that is not Power BI.")
+        }
         let token = try await rest.tokenProvider.accessToken(resource: rest.scope)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return try await FileDownloader.download(request, service: rest.service, suggestedName: suggestedName, destination: destination,

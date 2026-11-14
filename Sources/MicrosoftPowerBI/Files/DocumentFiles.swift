@@ -62,8 +62,8 @@ final class DocumentFiles: ObservableObject {
     }
     var cloudWebURL: URL? {
         switch cloud {
-        case .packedDocument(let ref): return ref.webURL.flatMap(URL.init(string:))
-        case .folder(_, _, _, let web): return web.flatMap(URL.init(string:))
+        case .packedDocument(let ref): return ServiceLinks.openable(ref.webURL.flatMap(URL.init(string:)))
+        case .folder(_, _, _, let web): return ServiceLinks.openable(web.flatMap(URL.init(string:)))
         case nil: return nil
         }
     }

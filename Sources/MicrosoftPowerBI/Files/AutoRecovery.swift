@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import FacetCore
+import FacetInterop
 
 /// Periodic recovery copies of open documents with unsaved changes, offered back on the next launch after the app
 /// quit without the user deciding about them (a crash, a forced quit, power loss).
@@ -142,7 +143,7 @@ final class AutoRecovery {
         d.dateDecodingStrategy = .iso8601
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         return files.filter { $0.pathExtension == "json" }.compactMap { url -> Entry? in
-            guard let data = try? Data(contentsOf: url), data.count < 64 * 1024, let entry = try? d.decode(Entry.self, from: data),
+            guard let data = try? BoundedFile.read(url, limit: 64 * 1024), let entry = try? d.decode(Entry.self, from: data),
                   entry.id == url.deletingPathExtension().lastPathComponent, !live.contains(entry.id),
                   FileManager.default.fileExists(atPath: directory.appendingPathComponent("\(entry.id).facet").path) else { return nil }
             return entry

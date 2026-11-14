@@ -75,6 +75,15 @@ final class AccountSetupTests: XCTestCase {
         XCTAssertEqual(AccountMessages.describe(plain), plain.errorDescription)
     }
 
+    func testOnlySecureServiceLinksAreOpened() {
+        XCTAssertNotNil(ServiceLinks.openable(URL(string: "https://app.powerbi.com/groups/w1/reports/r1")))
+        XCTAssertNotNil(ServiceLinks.openable(URL(string: "https://contoso-my.sharepoint.com/personal/a/Documents/Sales.facet")))
+        for bad in ["http://app.powerbi.com/x", "file:///etc/passwd", "javascript:alert(1)", "https://user@evil.example/", "ms-excel:ofe|u|https://x"] {
+            XCTAssertNil(ServiceLinks.openable(URL(string: bad)), bad)
+        }
+        XCTAssertNil(ServiceLinks.openable(nil))
+    }
+
     func testInitialsForAccountsWithoutAPhoto() {
         XCTAssertEqual(AccountMessages.initials("Rufaro Mutepfa"), "RM")
         XCTAssertEqual(AccountMessages.initials("ana.lopes@contoso.com"), "AL")

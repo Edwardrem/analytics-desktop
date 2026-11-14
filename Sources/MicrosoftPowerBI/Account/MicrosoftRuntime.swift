@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import Combine
 import FacetCore
 import FacetCloud
@@ -105,6 +106,17 @@ enum EntraRegistration {
             out.append("The tenant is “common”, “organizations”, “consumers”, a tenant ID or a domain such as contoso.onmicrosoft.com.")
         }
         return out
+    }
+}
+
+/// Web addresses that come back from the services (report and file links) are opened only when they are https.
+enum ServiceLinks {
+    static func openable(_ url: URL?) -> URL? {
+        guard let url, url.scheme?.lowercased() == "https", url.host?.isEmpty == false, url.user == nil else { return nil }
+        return url
+    }
+    static func open(_ url: URL?) {
+        if let url = openable(url) { NSWorkspace.shared.open(url) }
     }
 }
 

@@ -151,7 +151,7 @@ struct PublishSheet: View {
                 Text("Next, in the service: open the semantic model's settings, enter data source credentials, and refresh it.")
                     .font(Design.Typeface.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
-            if let url = outcome.reportURL { Button("Open in Power BI") { NSWorkspace.shared.open(url) } }
+            if let url = ServiceLinks.openable(outcome.reportURL) { Button("Open in Power BI") { NSWorkspace.shared.open(url) } }
         }
     }
 

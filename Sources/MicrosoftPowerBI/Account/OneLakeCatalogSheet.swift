@@ -274,7 +274,8 @@ struct OneLakeCatalogSheet: View {
         let powerBI = MicrosoftRuntime.shared.services.powerBI
         let ref = workspaceRef
         Task { @MainActor in
-            if let web = (try? await powerBI.reports(in: ref))?.first(where: { $0.id == item.id })?.webUrl, let url = URL(string: web) {
+            if let web = (try? await powerBI.reports(in: ref))?.first(where: { $0.id == item.id })?.webUrl,
+               let url = ServiceLinks.openable(URL(string: web)) {
                 NSWorkspace.shared.open(url)
             } else {
                 failure = "The service didn't return an address for “\(item.name)”."

@@ -360,6 +360,9 @@ public final class FabricClient {
                                     progress: TransferProgressHandler? = nil) async throws -> URL {
         var request = URLRequest(url: try oneLakeURL("/\(seg(workspaceID))/\(HTTPHelpers.encodePath(path))"))
         request.setValue("2023-11-03", forHTTPHeaderField: "x-ms-version")
+        guard oneLake.policy.allowsCredentials(for: request.url) else {
+            throw CloudAPIError(service: "OneLake", kind: .badRequest, statusCode: 0, message: "Refused to send your sign-in to an address that is not OneLake.")
+        }
         let token = try await oneLake.tokenProvider.accessToken(resource: oneLake.scope)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return try await FileDownloader.download(request, service: "OneLake", suggestedName: (path as NSString).lastPathComponent,
